@@ -1,0 +1,9 @@
+.DS_Store
+.env
+.env.*
+node_modules/
+.local/
+!.env.example
+
+# Suites (§29) are installed here, each from its own package or repository; never committed here.
+/suites/

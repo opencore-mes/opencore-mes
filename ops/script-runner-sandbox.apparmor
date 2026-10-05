@@ -1,0 +1,17 @@
+# Lets bubblewrap make the script runner's namespaces on Ubuntu 23.10 and later (DESIGN §12.4), where
+# kernel.apparmor_restrict_unprivileged_userns=1 refuses user namespaces to any program without a
+# profile that allows them (ops/script-runner-sandbox.sh explains the wrapper). The pattern is
+# Ubuntu's own for programs that sandbox (a browser, flatpak's bwrap): unconfined, plus `userns`.
+# What runs inside has no capabilities anyway: the wrapper drops them all (--cap-drop ALL).
+#   install -m 0644 ops/script-runner-sandbox.apparmor /etc/apparmor.d/open-mes-bwrap
+#   apparmor_parser -r /etc/apparmor.d/open-mes-bwrap
+# Not needed where the restriction is off or absent (Debian, RHEL, older Ubuntu), nor where another
+# profile already covers /usr/bin/bwrap (Ubuntu's bwrap-userns-restrict, from apparmor-profiles).
+abi <abi/4.0>,
+include <tunables/global>
+
+profile open-mes-bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+
+  include if exists <local/open-mes-bwrap>
+}

@@ -1,0 +1,287 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opencoremes.com/contracts/http-apis/1.0/schema.json",
+  "title": "http-apis 1.0",
+  "description": "What OpenCore MES's HTTP APIs promise in /v1 and how that may change: the AI design API (/ai/v1) operation by operation, the web services' envelope (/svc/v1), the headers every answer carries, and the operations deprecated, with their notice. The specification is README.md beside this file; surface.mjs compares a live OpenAPI document with this; kit.mjs checks a running instance.",
+  "type": "object",
+  "x-contract": {
+    "name": "http-apis",
+    "version": "1.0"
+  },
+  "x-policy": {
+    "minor": "adds: an operation, an optional request field, a field in an answer. Recorded here and in CHANGELOG.md first.",
+    "breaking": "removes or changes what is promised (an operation, its scope, a path parameter, a request field read, the error envelope, a status's meaning). Never in /v1: it goes to /v2, which runs beside /v1 at least until /v1's sunset.",
+    "minNoticeDays": 180,
+    "notice": "what /v1 will lose is marked deprecated here first (since, sunset at least minNoticeDays later, successor); every answer to it then carries Deprecation, Sunset and Link headers, and its use is logged."
+  },
+  "x-headers": {
+    "API-Version": "every answer of /ai/v1 and /svc/v1: the version of this contract the core provides (1.0)",
+    "Deprecation": "RFC 9745: on an answer to a deprecated operation or web service, when it was deprecated (@seconds)",
+    "Sunset": "RFC 8594: on the same, the date after which it may change or go",
+    "Link": "rel=\"successor-version\": where to go instead; rel=\"deprecation\": what changes"
+  },
+  "x-apis": {
+    "/ai/v1": {
+      "openapi": "/ai/v1/openapi.json",
+      "surface": {
+        "GET /me": {
+          "scope": "any",
+          "params": [],
+          "fields": []
+        },
+        "GET /contract": {
+          "scope": "design:read",
+          "params": [],
+          "fields": []
+        },
+        "GET /contracts/{name}": {
+          "scope": "design:read",
+          "params": [
+            "name"
+          ],
+          "fields": []
+        },
+        "GET /catalog": {
+          "scope": "design:read",
+          "params": [],
+          "fields": []
+        },
+        "GET /objects/{object}": {
+          "scope": "design:read",
+          "params": [
+            "object"
+          ],
+          "fields": []
+        },
+        "GET /scripts/{name}": {
+          "scope": "design:read",
+          "params": [
+            "name"
+          ],
+          "fields": []
+        },
+        "GET /changes": {
+          "scope": "design:read",
+          "params": [],
+          "fields": []
+        },
+        "POST /changes": {
+          "scope": "design:draft",
+          "params": [],
+          "fields": [
+            "connection",
+            "flow",
+            "label",
+            "object",
+            "organization",
+            "screen",
+            "service",
+            "transaction"
+          ]
+        },
+        "GET /model": {
+          "scope": "design:read",
+          "params": [],
+          "fields": []
+        },
+        "POST /model/preview": {
+          "scope": "design:read",
+          "params": [],
+          "fields": [
+            "file"
+          ]
+        },
+        "POST /model/changes": {
+          "scope": "design:draft",
+          "params": [],
+          "fields": [
+            "file"
+          ]
+        },
+        "GET /changes/{id}": {
+          "scope": "design:read",
+          "params": [
+            "id"
+          ],
+          "fields": []
+        },
+        "PUT /changes/{id}": {
+          "scope": "design:draft",
+          "params": [
+            "id"
+          ],
+          "fields": [
+            "connections",
+            "definitions",
+            "flows",
+            "layouts",
+            "organization",
+            "reason",
+            "screens",
+            "scripts",
+            "services",
+            "title",
+            "transactions"
+          ]
+        },
+        "POST /changes/{id}/include": {
+          "scope": "design:draft",
+          "params": [
+            "id"
+          ],
+          "fields": [
+            "kind",
+            "name"
+          ]
+        },
+        "POST /changes/{id}/fitness": {
+          "scope": "design:read",
+          "params": [
+            "id"
+          ],
+          "fields": []
+        },
+        "POST /changes/{id}/submit": {
+          "scope": "design:submit",
+          "params": [
+            "id"
+          ],
+          "fields": []
+        },
+        "POST /validate": {
+          "scope": "design:read",
+          "params": [],
+          "fields": [
+            "connections",
+            "definitions",
+            "flows",
+            "layouts",
+            "screens",
+            "scripts",
+            "services",
+            "transactions"
+          ]
+        },
+        "GET /flows/{name}": {
+          "scope": "design:read",
+          "params": [
+            "name"
+          ],
+          "fields": []
+        },
+        "POST /flows/check": {
+          "scope": "design:read",
+          "params": [],
+          "fields": [
+            "definitions",
+            "flow",
+            "id",
+            "name"
+          ]
+        },
+        "POST /flows/layout": {
+          "scope": "design:read",
+          "params": [],
+          "fields": [
+            "flow"
+          ]
+        },
+        "POST /flows/explain": {
+          "scope": "design:read",
+          "params": [],
+          "fields": [
+            "flow",
+            "id",
+            "name"
+          ]
+        },
+        "POST /flows/walk": {
+          "scope": "design:read",
+          "params": [],
+          "fields": [
+            "flow",
+            "id",
+            "name",
+            "values"
+          ]
+        },
+        "POST /scenarios/try": {
+          "scope": "design:read",
+          "params": [],
+          "fields": [
+            "flow",
+            "id",
+            "scenario",
+            "transaction"
+          ]
+        },
+        "POST /scripts/{name}/test": {
+          "scope": "design:read",
+          "params": [
+            "name"
+          ],
+          "fields": [
+            "source",
+            "tests"
+          ]
+        },
+        "POST /pipe/run": {
+          "scope": "design:read",
+          "params": [],
+          "fields": [
+            "ctx",
+            "definition",
+            "lookups",
+            "object",
+            "scripts"
+          ]
+        },
+        "POST /dry-run": {
+          "scope": "design:read",
+          "params": [],
+          "fields": [
+            "connections",
+            "kind",
+            "name",
+            "run",
+            "service",
+            "source"
+          ]
+        },
+        "POST /access/simulate": {
+          "scope": "design:read",
+          "params": [],
+          "fields": [
+            "definition",
+            "explain",
+            "object",
+            "record",
+            "roles"
+          ]
+        }
+      }
+    },
+    "/svc/v1": {
+      "openapi": "/svc/v1/openapi.json (the web services this token's person may call: the plant's designs)",
+      "request": "POST /svc/v1/{service} with Authorization: Bearer <token> (scope service:call), Content-Type: application/json, optional Idempotency-Key (8 to 100 characters: the first answer is given again)",
+      "answers": {
+        "200": "{ output, ... } as the service answers",
+        "400": "bad input: { error, fields }",
+        "401": "no or bad token: { error, code: token.missing }",
+        "403": "missing scope or not among its callers: { error, code }",
+        "404": "no such web service: { error }",
+        "409": "the first request with this Idempotency-Key still runs: { error, code: idempotency.running }, Retry-After",
+        "413": "the body is too large: { error }",
+        "415": "not JSON: { error }",
+        "422": "refused by the service, a rule or a policy: { error, fields?, code? }",
+        "500": "the service failed: { error }",
+        "502": "a system it depends on could not be reached: { error }"
+      },
+      "error": "{ error: words a person reads, code?: a stable identifier, fields?: { input: words } }",
+      "services": "each web service's input and answer are the plant's promise to its callers, governed by its change requests: a change that would break callers who called in the last 30 days needs the notice first (the service deprecated with a sunset, its callers told on every call) or a new name"
+    }
+  },
+  "x-deprecated": {
+    "/ai/v1": {}
+  }
+}

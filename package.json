@@ -1,0 +1,29 @@
+{
+  "name": "opencoremes",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "description": "Low-code, AI-supported MES built on the Juris framework (proof of concept)",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "db:reset": "node app/mes/db/reset.mjs",
+    "db:reset:suites": "node app/mes/db/reset.mjs --blank --suites",
+    "sso:sim": "node app/mes/sso-sim.mjs",
+    "dev": "node --watch-path=app/mes --watch-path=src app/mes/server.mjs --env .env",
+    "db:migrate": "node app/mes/db/migrate.mjs",
+    "training": "node --env-file-if-exists=.env app/mes/training.mjs",
+    "training:reset": "node --env-file-if-exists=.env app/mes/training.mjs --reset",
+    "test": "node --test \"app/mes/test/*.test.mjs\"",
+    "test:framework": "node --test \"tests/framework/*.test.mjs\"",
+    "test:all": "node tests/pipeline.mjs",
+    "test:quick": "node tests/pipeline.mjs --quick"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.129.0",
+    "echarts": "6.1.0",
+    "pg": "^8.13.0"
+  }
+}

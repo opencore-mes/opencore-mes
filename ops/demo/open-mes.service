@@ -1,0 +1,25 @@
+[Unit]
+Description=OpenCore MES public demo
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+User=openmes
+Group=openmes
+WorkingDirectory=/srv/open-mes/current
+EnvironmentFile=/srv/open-mes/current/ops/demo/demo.env
+EnvironmentFile=-/srv/open-mes/current/BUILD.env
+# The copilot's provider and key, set on the server only (root:openmes, 0640), never in the repository.
+EnvironmentFile=-/etc/open-mes/ai.env
+ExecStart=/usr/local/bin/node app/mes/server.mjs
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/open-mes
+
+[Install]
+WantedBy=multi-user.target

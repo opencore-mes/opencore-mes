@@ -1,0 +1,40 @@
+# demo.opencoremes.com: HTTPS by Caddy (Let's Encrypt), to the OpenCore MES server on this machine.
+demo.opencoremes.com {
+	encode gzip
+	# An application behind a sign-in: nothing on it is for any crawler, AI or search.
+	respond /robots.txt `User-agent: *
+Disallow: /
+` 200
+	reverse_proxy 127.0.0.1:3000
+	# The app writes its own Content-Security-Policy, nosniff and referrer policy on every page.
+	header Strict-Transport-Security "max-age=31536000"
+}
+
+# opencoremes.com: the landing page (site/), static: one small script of its own (glow.js, the pointer's
+# light), nothing from elsewhere.
+opencoremes.com {
+	root * /srv/opencoremes-site
+	encode gzip
+	file_server
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+		Cache-Control "public, max-age=300"
+	}
+}
+
+# www: the same site under its plain name.
+www.opencoremes.com {
+	redir https://opencoremes.com{uri} permanent
+}
+
+# The names it had before (openmesai.com): every address goes on to the same place under the new one,
+# for as long as those names still point here.
+demo.openmesai.com {
+	redir https://demo.opencoremes.com{uri} permanent
+}
+openmesai.com {
+	redir https://opencoremes.com{uri} permanent
+}

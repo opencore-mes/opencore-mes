@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#2b303a">
+<title>OpenCore MES · offline</title>
+<style>
+  :root { --bg: #f6f7f9; --panel: #fff; --ink: #1d2230; --muted: #667085; --accent: #2b303a; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #0f1115; --panel: #171a21; --ink: #e6e8ee; --muted: #9aa3b2; } }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { background: var(--panel); border-radius: 12px; padding: 28px 32px; max-width: 420px; margin: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  p { margin: 8px 0; color: var(--muted); }
+  button { margin-top: 12px; padding: 8px 16px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font: inherit; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+  <img src="/icons/icon.svg" width="48" height="48" alt="">
+  <h1>The MES server cannot be reached</h1>
+  <p>This device or the server is offline. Nothing you had not saved was sent.</p>
+  <p id="state">Trying again every few seconds; the page comes back by itself.</p>
+  <button type="button" onclick="location.reload()">Try now</button>
+</main>
+<script>
+  // Back as soon as the server answers.
+  const check = () => fetch("/version", { cache: "no-store" }).then((r) => { if (r.ok) location.reload(); }).catch(() => {});
+  setInterval(check, 5000);
+  addEventListener("online", check);
+</script>
+</body>
+</html>

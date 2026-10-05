@@ -1,0 +1,76 @@
+<!-- The Flow designer's guide (DESIGN.md §33). Drawn through an allowlist: an element with
+     data-highlight="<CSS selector>" outlines what the selector finds in the Flow designer's window. -->
+<article data-title="The Flow designer">
+  <p>A flow template is drawn here: a <strong>route</strong> a lot goes along step by step, or a
+  <strong>plan</strong> (an OCAP) an event sets off. It is approved like every other design.</p>
+
+  <h3>Its tabs</h3>
+  <dl>
+    <dt data-highlight=".subtabs">The tabs</dt>
+    <dd>Flow is the canvas; General, its kind and when a run ends early; Context, the values every run
+    carries; Participants, its records and what the template itself may do; Stewards, who approves it;
+    Scenarios, its evidence; Changes, what differs from the live version; JSON, all of it as data.</dd>
+    <dt data-highlight=".subtabs .subtab:nth-child(7)">Scenarios</dt>
+    <dd>A record walked through it in a sandbox, each step expecting the node reached: made in the
+    sandbox, run again by the fitness test on every submit.</dd>
+    <dt data-highlight=".subtabs .subtab:first-child">Copilot</dt>
+    <dd>Ask the AI to draft, check or explain the template. It works as you, and never submits.</dd>
+  </dl>
+
+  <h3>Drawing</h3>
+  <dl>
+    <dt data-highlight=".flow-palette">Add (the palette)</dt>
+    <dd>Adds a node of that kind. A route has Start, Sequence, Auto decision and End; a plan has Start,
+    Wait, Auto and Manual decision, Input screen, Sub flow and End.</dd>
+    <dt data-highlight=".flow-palette button[title^='Arrange']">Tidy</dt>
+    <dd>Lays the nodes out, left to right from the start, branches below.</dd>
+    <dt data-highlight=".flow-canvas-wrap">The canvas</dt>
+    <dd>Drag a node to move it. Click a node or a wire to open its settings. Where a node sits is part of
+    the design, compared and approved with the rest.</dd>
+    <dt data-highlight=".flow-edge">Wires</dt>
+    <dd>Where a run goes next. Draw one with <em>Wire from here…</em> in a node's settings, then click the
+    node it goes to. A wire's words: its choice, <em>if …</em> (a condition), <em>otherwise</em>, or
+    <em>retry</em> (dashed, a wait's way back).</dd>
+    <dt data-highlight=".flow-node.bad, .flow-edge.bad">Problems</dt>
+    <dd>A node or wire outlined in red has something wrong; its settings say what.</dd>
+  </dl>
+
+  <h3>The nodes</h3>
+  <dl>
+    <dt data-highlight=".flow-node.kind-start">Start</dt>
+    <dd>Where every run begins: one per template, with the condition that starts it.</dd>
+    <dt data-highlight=".flow-node.kind-sequence">Sequence</dt>
+    <dd>A step of a route. Entering it sets the lot's step and, if you say so, its state. It offers its
+    transactions on the resources it allows; Move out (or any change of the lot's step) takes it on.</dd>
+    <dt data-highlight=".flow-node.kind-auto_decision">Auto decision</dt>
+    <dd>Decides at once from the run's context: its wires' conditions in order, the last may be
+    <em>otherwise</em>.</dd>
+    <dt data-highlight=".flow-node.kind-manual_decision">Manual decision</dt>
+    <dd>A person picks one of its wires; each wire's label is the choice they see.</dd>
+    <dt data-highlight=".flow-node.kind-wait">Wait</dt>
+    <dd>Shows a message and the time remaining. It goes on by itself, waits to be acknowledged, or also
+    offers Retry.</dd>
+    <dt data-highlight=".flow-node.kind-input_screen">Input screen</dt>
+    <dd>Collects into the context: list choices, typed values, files, images and links.</dd>
+    <dt data-highlight=".flow-node.kind-sub_flow">Sub flow</dt>
+    <dd>Runs another template, passing values in and taking some back.</dd>
+    <dt data-highlight=".flow-node.kind-end">End</dt>
+    <dd>Closes the run, with its outcome.</dd>
+  </dl>
+
+  <h3>A node's settings</h3>
+  <dl>
+    <dt data-highlight=".flow-side.open">The drawer</dt>
+    <dd>Opens over the canvas when a node or wire is selected; × closes it.</dd>
+    <dt data-highlight=".flow-side.open .checks">Checkboxes</dt>
+    <dd>Tick each that applies: the transactions done at a step, those that take the lot on, who acts.</dd>
+    <dt data-highlight=".flow-side.open select">Drop-downs</dt>
+    <dd>Pick one: the state a step marks, its screen, a script to run.</dd>
+    <dt data-highlight=".flow-side.open .expr-input">Conditions and settings</dt>
+    <dd>Written as data, such as <code>{"gt": [{"context": "lot.qty"}, 5]}</code>; outlined red until it
+    reads correctly.</dd>
+    <dt data-highlight=".flow-lifecycle">Scripts</dt>
+    <dd>A rule script run on entering and on leaving the node: the context in and out. What it asks to
+    write goes through the record's own rules.</dd>
+  </dl>
+</article>

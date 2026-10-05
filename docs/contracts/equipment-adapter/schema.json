@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opencoremes.com/contracts/equipment-adapter/1.0/schema.json",
+  "title": "equipment-adapter 1.0",
+  "description": "The contract between an equipment adapter (one protocol: SECS/GEM over HSMS, OPC UA, MQTT, ...) and the process that loads it. Above the adapter there are only the tool type's names. The data shapes are JSON Schema; the calls are in x-calls. The specification is README.md beside this file.",
+  "type": "object",
+  "x-contract": { "name": "equipment-adapter", "version": "1.0" },
+  "x-module": {
+    "description": "The adapter module's default export.",
+    "members": {
+      "name": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$", "description": "The name an interface gives in `adapter`." },
+      "label": { "type": "string", "description": "What a person reads." },
+      "contract": { "type": "string", "pattern": "^1\\.[0-9]+$", "description": "The version of this contract it implements." },
+      "serves": { "type": "array", "items": { "enum": ["command", "recipes", "gem300"] }, "uniqueItems": true },
+      "check": { "x-call": "check" },
+      "connect": { "x-call": "connect" }
+    },
+    "required": ["name", "label", "contract", "serves", "check", "connect"]
+  },
+  "x-calls": {
+    "check": { "args": [{ "$ref": "#/$defs/mapping" }, { "type": "object", "properties": { "toolType": { "$ref": "#/$defs/toolType" } } }], "returns": { "type": "array", "items": { "type": "string" } }, "pure": true, "description": "The adapter's own part of an interface, checked. Problems in words; empty when none. No I/O." },
+    "connect": { "args": [{ "$ref": "#/$defs/machine" }, { "$ref": "#/$defs/hooks" }], "returns": { "$ref": "#/$defs/session" }, "description": "Opens the link without waiting for the tool; reports through hooks.emit; reconnects by itself until stop()." },
+    "session.status": { "args": [{ "type": "array", "items": { "type": "string" } }, { "$ref": "#/$defs/target" }], "returns": { "$ref": "#/$defs/statusAnswer" } },
+    "session.command": { "args": [{ "type": "string" }, { "type": "object" }, { "$ref": "#/$defs/target" }], "returns": { "$ref": "#/$defs/commandAnswer" }, "throws": { "$ref": "#/$defs/refusal" }, "requires": "serves contains command", "description": "Sent once, never retried by the adapter." },
+    "session.recipes.list": { "args": [], "returns": { "type": "array", "items": { "type": "string" } }, "requires": "serves contains recipes" },
+    "session.recipes.read": { "args": [{ "type": "string" }], "returns": { "oneOf": [{ "type": "object", "properties": { "body": { "type": "string" }, "binary": { "type": "boolean" } }, "required": ["body"] }, { "type": "object", "properties": { "missing": { "const": true } }, "required": ["missing"] }] }, "requires": "serves contains recipes", "description": "A binary body travels as base64." },
+    "session.recipes.send": { "args": [{ "type": "string" }, { "type": "string" }, { "type": "object", "properties": { "binary": { "type": "boolean" }, "replace": { "type": "boolean" } } }], "returns": { "type": "object", "properties": { "sent": { "const": true } } }, "throws": { "$ref": "#/$defs/refusal" }, "requires": "serves contains recipes" },
+    "session.gem300.carrier": { "args": [{ "type": "object" }], "returns": { "type": "object" }, "requires": "serves contains gem300", "description": "SEMI E87 carrier action (ProceedWithCarrier, CancelCarrier)." },
+    "session.gem300.job": { "args": [{ "type": "object" }], "returns": { "type": "object" }, "requires": "serves contains gem300", "description": "SEMI E40 process job and E94 control job, created and started." },
+    "session.gem300.access": { "args": [{ "type": "object", "properties": { "mode": { "enum": ["MANUAL", "AUTO"] }, "ports": { "type": "array", "items": { "type": "integer" } } } }], "returns": { "type": "object" }, "requires": "serves contains gem300", "description": "SEMI E87 load port access mode (manual, or automatic for the AMHS, E84)." },
+    "session.gem300.reserve": { "args": [{ "type": "object", "properties": { "port": { "type": "integer" }, "reserve": { "type": "boolean" } } }], "returns": { "type": "object" }, "requires": "serves contains gem300", "description": "SEMI E87 load port reservation, or its cancellation." },
+    "session.stop": { "args": [], "returns": { "type": "null" }, "description": "Resolves once nothing more will be emitted." }
+  },
+  "$defs": {
+    "name": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_]{0,47}$", "description": "A tool type's name for a variable, event, command or parameter." },
+    "conversion": { "description": "An expression over `value`: a number, { value: null } (the tool's value), or { add | sub | mul | div: [a, b] } | { round: [a, digits] }." },
+    "toolType": {
+      "type": "object",
+      "properties": {
+        "variables": { "type": "object", "additionalProperties": { "type": "object", "properties": { "units": { "type": "string" }, "values": { "type": "array", "items": { "type": "string" } } } } },
+        "events": { "type": "object", "additionalProperties": { "type": "object", "properties": { "values": { "type": "array", "items": { "$ref": "#/$defs/name" } } } } },
+        "commands": { "type": "object", "additionalProperties": { "type": "array", "items": { "$ref": "#/$defs/name" } } }
+      }
+    },
+    "mapping": {
+      "type": "object",
+      "description": "A machine's interface. The keys under variables, events, alarms and commands are the tool's own ids, written as the adapter says; each entry maps onto a tool-type name and carries the adapter's own fields.",
+      "properties": {
+        "adapter": { "type": "string" },
+        "variables": { "type": "object", "additionalProperties": { "type": "object", "properties": { "as": { "$ref": "#/$defs/name" }, "units": { "type": "string" }, "convert": { "$ref": "#/$defs/conversion" }, "values": { "type": "object", "additionalProperties": { "type": "string" } } }, "required": ["as"] } },
+        "events": { "type": "object", "additionalProperties": { "type": "object", "properties": { "name": { "type": "string" }, "as": { "$ref": "#/$defs/name" }, "report": { "type": "array", "items": { "$ref": "#/$defs/name" } } }, "required": ["name"] } },
+        "alarms": { "type": "object", "additionalProperties": { "type": "object", "properties": { "name": { "type": "string" } }, "required": ["name"] } },
+        "commands": { "type": "object", "additionalProperties": { "type": "object" } },
+        "modules": { "type": "object", "additionalProperties": { "type": "object" } }
+      },
+      "required": ["adapter"]
+    },
+    "machine": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" }, "title": { "type": "string" },
+        "address": { "type": "object", "properties": { "host": { "type": "string" }, "port": { "type": "integer" }, "deviceId": { "type": ["integer", "string", "null"] } }, "required": ["host", "port"] },
+        "mapping": { "$ref": "#/$defs/mapping" },
+        "toolType": { "$ref": "#/$defs/toolType" },
+        "modules": { "type": "array", "items": { "type": "object", "properties": { "id": { "type": "string" }, "title": { "type": "string" }, "module": { "type": "string" }, "mapping": { "$ref": "#/$defs/mapping" }, "toolType": { "$ref": "#/$defs/toolType" } }, "required": ["id", "module", "mapping"] } },
+        "secret": { "x-call": "secret(name) → string | undefined" },
+        "dir": { "type": "string" }
+      },
+      "required": ["id", "title", "address", "mapping"]
+    },
+    "hooks": { "type": "object", "properties": { "emit": { "x-call": "emit(item)", "x-item": { "$ref": "#/$defs/item" } }, "log": { "x-call": "info | warn | error (words)" } } },
+    "target": { "type": "object", "properties": { "module": { "type": "string", "description": "The tool's id for one of its modules; absent for the machine itself." } } },
+    "item": {
+      "oneOf": [
+        { "type": "object", "properties": { "kind": { "const": "state" }, "communicating": { "type": "boolean" }, "detail": { "type": "string" } }, "required": ["kind", "communicating", "detail"] },
+        { "type": "object", "properties": { "kind": { "const": "event" }, "code": { "type": ["string", "integer"] }, "name": { "type": "string", "description": "The tool type's event." }, "label": { "type": "string", "description": "The mapping's own name for it." }, "values": { "type": "object" }, "id": { "type": ["string", "integer"] }, "module": { "type": "string" }, "unknown": { "type": "boolean" } }, "required": ["kind", "code", "name", "values"] },
+        { "type": "object", "properties": { "kind": { "const": "alarm" }, "code": { "type": ["string", "integer"] }, "name": { "type": "string" }, "set": { "type": "boolean" }, "text": { "type": "string" }, "category": { "type": ["integer", "null"] }, "module": { "type": "string" }, "unknown": { "type": "boolean" } }, "required": ["kind", "code", "name", "set"] },
+        { "type": "object", "properties": { "kind": { "const": "alarms" }, "active": { "type": "array", "items": { "type": "object", "properties": { "code": { "type": ["string", "integer"] }, "text": { "type": "string" }, "category": { "type": ["integer", "null"] } }, "required": ["code"] } }, "module": { "type": "string" } }, "required": ["kind", "active"] }
+      ]
+    },
+    "session": { "type": "object", "properties": { "status": { "x-call": "session.status" }, "command": { "x-call": "session.command" }, "recipes": { "type": "object" }, "gem300": { "type": "object" }, "stop": { "x-call": "session.stop" } }, "required": ["status", "stop"] },
+    "statusAnswer": { "type": "object", "properties": { "values": { "type": "object" }, "at": { "type": "string", "format": "date-time" } }, "required": ["values", "at"] },
+    "commandAnswer": { "type": "object", "properties": { "accepted": { "const": true }, "later": { "type": "boolean" } }, "required": ["accepted"] },
+    "refusal": { "type": "object", "properties": { "refused": { "const": true }, "message": { "type": "string" } }, "required": ["refused", "message"] }
+  }
+}

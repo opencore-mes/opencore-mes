@@ -1,0 +1,47 @@
+<!-- The designer's guide (DESIGN.md §33): a change request, or a live design viewed. -->
+<article data-title="The designer">
+  <p>Every change reaches the plant the same way: <strong>designed</strong> here, <strong>reviewed</strong>,
+  <strong>approved</strong> by everyone it concerns, then <strong>executed</strong>. A live design is
+  shown read only until you start a change.</p>
+
+  <h3>The change</h3>
+  <dl>
+    <dt data-highlight=".change-head .title">Its title and state</dt>
+    <dd>What this change is called, and where it stands.</dd>
+    <dt data-highlight=".change-head .stepper">The four steps</dt>
+    <dd>Design, Review, Approval, Execution: the one lit is where it is now.</dd>
+    <dt data-highlight=".view-actions">Change it, Designer</dt>
+    <dd>On a live design: start a change of it, or go back to the designer's home.</dd>
+  </dl>
+
+  <h3>Its windows</h3>
+  <dl>
+    <dt data-highlight=".el-picker">This window shows</dt>
+    <dd>A drop-down of the change's parts (objects, transactions, screens, flow templates): pick the one
+    to work on.</dd>
+    <dt data-highlight=".pane-bar select[title='Add to this change']">+ service, + flow template…</dt>
+    <dd>Adds another part to the change.</dd>
+    <dt data-highlight=".pane-bar button[title^='Open another window']">Split</dt>
+    <dd>Opens another window beside this one (up to three), to compare or copy.</dd>
+    <dt data-highlight=".maximize-btn">Maximize</dt>
+    <dd>Fills the browser window with the designer; Restore brings the navigator back.</dd>
+    <dt data-highlight=".subtabs">Its tabs</dt>
+    <dd>Each part's settings, by topic. A number on a tab counts what differs from the live version.</dd>
+  </dl>
+
+  <h3>Beside it</h3>
+  <dl>
+    <dt data-highlight=".change-side .why-toggle">Why this change</dt>
+    <dd>The reason reviewers and approvers read first. Required before submitting.</dd>
+    <dt data-highlight=".change-side .problems">Problems</dt>
+    <dd>What must be fixed before it can be submitted, each naming the part concerned.</dd>
+    <dt data-highlight=".change-side .sbx-link">Try it in a sandbox</dt>
+    <dd>Runs the draft on copies of real records, in a database of its own: nothing real changes.</dd>
+    <dt data-highlight=".change-side .fitness">Fitness test</dt>
+    <dd>The checks, every script's test cases and the transactions' scenarios. Submitting runs it again.</dd>
+    <dt data-highlight=".change-side .route-list">Will need approval from</dt>
+    <dd>The departments that approve it, and because of what.</dd>
+    <dt data-highlight=".change-side .btn.primary">Submit for review</dt>
+    <dd>Sends it to its reviewer. Until then, only you and your co-designers see it.</dd>
+  </dl>
+</article>

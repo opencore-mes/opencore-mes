@@ -1,0 +1,9 @@
+[Unit]
+Description=OpenCore MES public demo: back to the demo seed
+After=postgresql.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/systemctl stop open-mes
+ExecStart=/bin/su -s /bin/sh openmes -c 'cd /srv/open-mes/current && set -a && . ops/demo/demo.env && set +a && /usr/local/bin/node app/mes/db/reset.mjs'
+ExecStartPost=/bin/systemctl start open-mes

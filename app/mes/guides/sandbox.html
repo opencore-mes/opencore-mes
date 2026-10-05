@@ -1,0 +1,83 @@
+<!-- The sandbox's guide (DESIGN.md §33, §5.11): trying a change's draft on copies of real records. -->
+<article data-title="The sandbox">
+  <p>The sandbox runs this change's draft on <strong>copies</strong> of real records, in a database of
+  its own: nothing in the live database is written. You pick the records it starts with, run steps on
+  them as any person, and keep what you ran as a <strong>scenario</strong>: the evidence the fitness
+  test runs again whenever the change is submitted.</p>
+
+  <dl>
+    <dt data-highlight=".sandbox .change-head .title">The sandbox of this change</dt>
+    <dd>Back to the change returns to its design. A sandbox closes by itself after a quarter of an hour
+    unused.</dd>
+  </dl>
+
+  <h3>1. The records it starts with</h3>
+  <dl>
+    <dt data-highlight=".sbx-records table.grid">The list</dt>
+    <dd>Each record the sandbox starts with, by its key (<code>@lot</code>): picked from live, or given
+    here; and, once open, what it is in the sandbox now. Records they refer to come with them.</dd>
+    <dt data-highlight=".sbx-records [data-guide='sbx:key']">Key</dt>
+    <dd>A text field: the short name later steps use for it, written <code>@key</code>.</dd>
+    <dt data-highlight=".sbx-records [data-guide='sbx:object']">Object</dt>
+    <dd>A drop-down: the kind of record (a lot, a machine).</dd>
+    <dt data-highlight=".sbx-records [data-guide='sbx:how']">How</dt>
+    <dd>A drop-down: <em>picked from live</em> (a copy of a real record) or <em>given here</em> (made
+    from the data you write).</dd>
+    <dt data-highlight=".sbx-records [data-guide='sbx:record']">Record</dt>
+    <dd>Picked from live: scan or type its label, then press Enter.</dd>
+    <dt data-highlight=".sbx-records [data-guide='sbx:where']">Where</dt>
+    <dd>Or say where to find one, such as <code>{"state": ["waiting"]}</code>: if the record picked is
+    gone or has moved on when a scenario runs again, the newest that matches is used.</dd>
+    <dt data-highlight=".sbx-records [data-guide='sbx:its-data'], .sbx-records [data-guide='sbx:state']">Its data, State</dt>
+    <dd>Given here: its fields as JSON (<code>"@key"</code> names another record of the sandbox), and the
+    state it starts in.</dd>
+    <dt data-highlight=".sbx-records .sbx-add .btn">Add</dt>
+    <dd>Puts it on the list.</dd>
+    <dt data-highlight=".sbx-records .view-actions .btn.primary">Open the sandbox</dt>
+    <dd>Makes the sandbox with these records (copies of what you may see; records you may not see are
+    not copied). Start again makes fresh copies; Close drops it.</dd>
+  </dl>
+
+  <h3>2. Run a step</h3>
+  <dl>
+    <dt data-highlight=".sbx-run [data-guide='sbx:what']">What</dt>
+    <dd>A drop-down: run a transaction, take a record's action, edit a record, make one, call a service,
+    open a screen, or answer a plan.</dd>
+    <dt data-highlight=".sbx-run [data-guide='sbx:plan'], .sbx-run [data-guide='sbx:how'], .sbx-run [data-guide='sbx:choice'], .sbx-run [data-guide='sbx:values']">Answer a plan</dt>
+    <dd>The plan waiting on a record: fill its input screen in (Values, as JSON), pick a manual
+    decision's Choice, acknowledge or retry its wait, or let the wait's time pass (only here).</dd>
+    <dt data-highlight=".sbx-run [data-guide='sbx:which'], .sbx-run [data-guide='sbx:object'], .sbx-run [data-guide='sbx:record'], .sbx-run [data-guide='sbx:action']">Which, Record, Action</dt>
+    <dd>Drop-downs: which transaction (those of this change marked so), which record of the sandbox, which
+    of its actions.</dd>
+    <dt data-highlight=".sbx-run [data-guide='sbx:as']">As</dt>
+    <dd>A drop-down of people: the step runs as them, their roles deciding as they will live.</dd>
+    <dt data-highlight=".sbx-inputs">Its inputs</dt>
+    <dd>The transaction's own fields: drop-downs of the sandbox's records, text and number fields, a
+    checkbox for yes or no, a table's rows as JSON.</dd>
+    <dt data-highlight=".sbx-run input[type=checkbox]">Signed</dt>
+    <dd>A checkbox: tick it to sign, for a transaction that asks for a signature.</dd>
+    <dt data-highlight=".sbx-run [data-guide='sbx:data'], .sbx-run [data-guide='sbx:input'], .sbx-run [data-guide='sbx:name-it-for-later-steps']">Data, Input, Name it</dt>
+    <dd>An edit's or a new record's fields, or a service's input, as JSON; a record made can be named for
+    the steps after it.</dd>
+    <dt data-highlight=".sbx-run .view-actions .btn.primary">Run</dt>
+    <dd>Runs it in the sandbox, as the person chosen.</dd>
+    <dt data-highlight=".sbx-planned">A scenario's steps</dt>
+    <dd>Opened from a scenario: its steps, to run again in one go.</dd>
+  </dl>
+
+  <h3>3. What ran</h3>
+  <dl>
+    <dt data-highlight=".sbx-step.ran">Ran</dt>
+    <dd>A step that ran: the states it left, the records it made.</dd>
+    <dt data-highlight=".sbx-nodes">Where its runs are</dt>
+    <dd>The route step or plan node each record has reached after the step.</dd>
+    <dt data-highlight=".sbx-step.refused">Refused</dt>
+    <dd>A step that was refused, in the words the person would see. A scenario may expect that too.</dd>
+    <dt data-highlight=".sbx-steps [data-guide='sbx:keep-it-as-a-scenario-of'], .sbx-steps [data-guide='sbx:named']">Keep it as a scenario of, Named</dt>
+    <dd>A drop-down of this change's transactions and flow templates, and a name saying what it shows. A
+    template's scenario keeps the node each record reached.</dd>
+    <dt data-highlight=".sbx-steps .btn.primary">Save the scenario</dt>
+    <dd>Keeps the records and steps, with what each did, in the transaction's draft. It goes with every
+    version of it, and the fitness test runs it again.</dd>
+  </dl>
+</article>
