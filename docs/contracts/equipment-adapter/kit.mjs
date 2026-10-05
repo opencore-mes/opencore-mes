@@ -8,6 +8,7 @@
 // It imports nothing of the core: an adapter's author runs it with only this file and their fixture.
 import os from "node:os";
 import path from "node:path";
+import { realpathSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { pathToFileURL, fileURLToPath } from "node:url";
 
@@ -195,7 +196,8 @@ export async function runKit(fixture, { timeoutMs = 10_000, reconnectMs = 45_000
 }
 
 // As a command: the fixture's path, and --json for a program to read.
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// (Real paths: an npm package's command is a link to this file.)
+if (process.argv[1] && realpathSync(path.resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))) {
     const file = process.argv.slice(2).find((x) => !x.startsWith("--"));
     if (!file) { console.error("node kit.mjs path/to/fixture.mjs [--json]"); process.exit(2); }
     const fixture = (await import(pathToFileURL(path.resolve(file)).href)).default;

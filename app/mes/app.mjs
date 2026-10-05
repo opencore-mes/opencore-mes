@@ -1,5 +1,7 @@
 // OpenCore MES, the server: one createJurisServer call (Juris README, "Your first app"). The database is
 // passed in, so a test can pass its own.
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createJurisServer } from "../../src/server/kernel.js";
 import { clientIp } from "../../src/server/http.js";
 import { CALL_KIND } from "../../src/live-protocol.js";
@@ -43,6 +45,9 @@ import { runServiceScript, scriptRunnerIsolation } from "./server/rules.js";
 import { organizationSettings } from "./server/organization.js";
 import { formatsOf } from "./client/format.js";
 import { themeCss, schemeOf, personalChoice } from "./client/theme.js";
+// The chart library (§34.9): from this installation's node_modules (a checkout), else the copy an npm
+// package of the app carries beside it (app/mes/vendor), since its dependencies sit outside its root.
+const ECHARTS = ["node_modules/echarts/dist/echarts.esm.min.mjs", "app/mes/vendor/echarts.esm.min.mjs"].find((f) => existsSync(fileURLToPath(new URL(`../../${f}`, import.meta.url)))) ?? "node_modules/echarts/dist/echarts.esm.min.mjs";
 
 // `routing` (routing.js) routes replica-safe reads and holds the replay fence; without it the primary
 // serves all. `bus` (Juris pg-outbox.js) carries every change to the other instances; without it this
@@ -485,7 +490,7 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
                 "/icons/apple-touch-icon.png": { file: "app/mes/pwa/apple-touch-icon.png", type: "image/png" },
                 // The chart library (§34.9): Apache ECharts, Apache-2.0, its own licence in the file; one module,
                 // loaded by the first chart shown (chart-view.js).
-                "/vendor/echarts.js": { file: "node_modules/echarts/dist/echarts.esm.min.mjs", type: "text/javascript; charset=utf-8" },
+                "/vendor/echarts.js": { file: ECHARTS, type: "text/javascript; charset=utf-8" },
             },
             entry: "/app/mes/client/boot.js",
         },

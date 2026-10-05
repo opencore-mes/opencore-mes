@@ -1,4 +1,4 @@
-<!-- DRAFT 2026-10-06: the licence is the Apache License 2.0; the copyright holder's name and the list of suites are still placeholders, pending counsel. -->
+<!-- DRAFT 2026-10-06: the licence is the Apache License 2.0; the list of suites is still a placeholder, pending counsel. -->
 # Licensing
 
 OpenCore MES comes in two parts: **the community edition**, which is open source, and **the suites**,

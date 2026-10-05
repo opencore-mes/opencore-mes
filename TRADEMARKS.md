@@ -1,7 +1,7 @@
 <!-- DRAFT 2026-10-01, pending counsel and trademark clearance. -->
 # Trademarks
 
-**OpenCore MES** and the OpenCore MES logos are trademarks of [Full legal name]. The code
+**OpenCore MES** and the OpenCore MES logos are trademarks of Resti Guay. The code
 is open source ([LICENSING.md](LICENSING.md)); the name and logos are not. This policy lets the
 community talk about OpenCore MES freely, while making sure that whatever carries the name is the real
 thing.

@@ -7,7 +7,7 @@
 //
 // The token needs design:read for /ai/v1 and service:call for /svc/v1; a scope it lacks is checked as a
 // refusal instead. It imports nothing of the core.
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -103,7 +103,8 @@ export async function runApiKit({ url, token, service = null, input = {}, fetchF
     return finish();
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// (Real paths: an npm package's command is a link to this file.)
+if (process.argv[1] && realpathSync(path.resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))) {
     const arg = (n) => { const i = process.argv.indexOf(`--${n}`); return i > 0 ? process.argv[i + 1] : undefined; };
     const json = process.argv.includes("--json");
     const url = arg("url") ?? "http://127.0.0.1:9090";

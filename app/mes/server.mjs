@@ -63,6 +63,8 @@
 //                 read but the app's code). Unset, scripts have Node's walls only; /healthz says which.
 //   SCRIPT_ISOLATION=required  refuse to start unless the script runner reports no network of its own
 //                 (what a regulated plant's production should set, once the wrapper is in place)
+//   SUITES_DIR    where the installed suites are (default: suites/ beside the app; the npm package's
+//                 `opencore-mes start` sets the plant folder's)
 //   EVENT_LOG_DIR where this instance writes its event log (default .local/events at the repository
 //                 root): event.log, or event.<INSTANCE>.log. One process per instance name and directory
 //

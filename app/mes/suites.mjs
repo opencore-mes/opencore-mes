@@ -22,7 +22,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { packProblems } from "./server/packs.js";
 
 export const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-export const SUITES_DIR = path.join(ROOT, "suites");
+// Where suites are installed: SUITES_DIR (an installation from npm keeps them in its plant folder), else
+// suites/ beside the app (a checkout).
+export const SUITES_DIR = process.env.SUITES_DIR ? path.resolve(process.env.SUITES_DIR) : path.join(ROOT, "suites");
 const NAME = /^[a-z][a-z0-9-]{0,39}$/;
 export const servicePrefix = (name) => `${name.replace(/-/g, "_")}.`;
 

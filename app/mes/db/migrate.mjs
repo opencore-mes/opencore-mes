@@ -11,7 +11,9 @@
 //   import { migrate } from "./db/migrate.mjs"; await migrate(db)   what the server does at start
 //
 // A new database is made by `npm run db:reset` (schema.sql and the seed), which migrates it too.
+import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import { rebuildIntervals } from "../server/analytics.js";
 import { appendAudit } from "../server/audit.js";
@@ -225,7 +227,7 @@ export async function ensureBuiltIns(tx) {
 }
 
 // Run directly: migrate DATABASE_URL.
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
     const { default: pg } = await import("pg");
     const { fromPg } = await import("../../../src/server/db.js");
     const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL ?? "postgres:///openmes_poc" });
