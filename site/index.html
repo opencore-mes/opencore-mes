@@ -305,7 +305,7 @@ section.alt .layer { background: var(--bg); }
 
 /* editions */
 .editions { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-.edition .contact { margin-top: 18px; }
+.edition .contact, .edition .source { margin-top: 18px; }
 .edition { border: 1px solid var(--line); border-radius: var(--radius); padding: 28px; background: var(--panel); }
 section.alt .edition { background: var(--bg); }
 .edition.suite { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
@@ -494,6 +494,7 @@ section.alt { background: linear-gradient(180deg, color-mix(in srgb, var(--panel
       <a href="#regulated">Regulated</a>
       <a href="#open">Open</a>
       <a href="#editions">Editions</a>
+      <a href="https://github.com/opencore-mes/opencore-mes" rel="noopener">Source</a>
     </nav>
     <a class="btn primary" href="https://demo.opencoremes.com/">Try the demo</a>
     <details class="menu">
@@ -509,6 +510,7 @@ section.alt { background: linear-gradient(180deg, color-mix(in srgb, var(--panel
           <a href="#regulated">Regulated</a>
           <a href="#open">Open</a>
           <a href="#editions">Editions</a>
+          <a href="https://github.com/opencore-mes/opencore-mes" rel="noopener">Source on GitHub</a>
       </nav>
     </details>
   </div>
@@ -524,6 +526,7 @@ section.alt { background: linear-gradient(180deg, color-mix(in srgb, var(--panel
         <div class="cta">
           <a class="btn primary" href="https://demo.opencoremes.com/">Try the live demo <svg class="icon"><use href="#i-arrow"/></svg></a>
           <a class="btn ghost" href="#how">See how it works</a>
+          <a class="btn ghost" href="https://github.com/opencore-mes/opencore-mes" rel="noopener"><svg class="icon"><use href="#i-code"/></svg>Source on GitHub</a>
         </div>
         <p class="fine">The demo is a public sandbox: no sign-in, you arrive as a guest of your own, who holds every role, and may be any of its people from the top bar. The links below open its screens and designs. It resets every night. Its designer's copilot runs on Claude.</p>
       </div>
@@ -1036,7 +1039,7 @@ section.alt { background: linear-gradient(180deg, color-mix(in srgb, var(--panel
     <div class="wrap">
       <span class="eyebrow">Open architecture</span>
       <h2 style="margin-top:16px">Built to be open at every seam.</h2>
-      <p class="sub">The suites that extend OpenCore MES, the machines it talks to and the systems around it each plug in through a contract that belongs to the core, which is to be released as open source: anyone can build on it, and the core never depends on what is built on it. Part of it is here today; the rest is planned, and marked so.</p>
+      <p class="sub">The suites that extend OpenCore MES, the machines it talks to and the systems around it each plug in through a contract that belongs to the core, which is open source (<a href="https://github.com/opencore-mes/opencore-mes" rel="noopener">on GitHub</a>, under the Apache License 2.0): anyone can build on it, and the core never depends on what is built on it. Part of it is here today; the rest is planned, and marked so.</p>
       <div class="open-legend"><span><svg class="icon"><use href="#i-check"/></svg>Available now</span><span class="planned"><svg class="icon"><use href="#i-hourglass"/></svg>Planned</span></div>
       <div class="grid3 open-grid">
         <div class="card">
@@ -1106,7 +1109,7 @@ section.alt { background: linear-gradient(180deg, color-mix(in srgb, var(--panel
       <div class="editions">
         <div class="edition">
           <h3>Community edition</h3>
-          <p class="tag">The whole platform, to be released as open source.</p>
+          <p class="tag">The whole platform, open source under the Apache License 2.0.</p>
           <ul>
             <li><svg class="icon"><use href="#i-dot"/></svg><span>The designer: objects, states, roles, rules, screens, transactions, flow templates</span></li>
             <li><svg class="icon"><use href="#i-dot"/></svg><span>Routes and plans, set off by an event or a date, run, with their scenarios</span></li>
@@ -1117,6 +1120,7 @@ section.alt { background: linear-gradient(180deg, color-mix(in srgb, var(--panel
             <li><svg class="icon"><use href="#i-dot"/></svg><span>A whole model to another site as one file, arriving there as a change to approve</span></li>
             <li><svg class="icon"><use href="#i-dot"/></svg><span>The open contracts every suite, adapter and outside system builds on</span></li>
           </ul>
+          <a class="btn ghost source" href="https://github.com/opencore-mes/opencore-mes" rel="noopener"><svg class="icon"><use href="#i-code"/></svg>Get the source on GitHub</a>
         </div>
         <div class="edition suite">
           <h3>Suites</h3>
@@ -1176,7 +1180,7 @@ section.alt { background: linear-gradient(180deg, color-mix(in srgb, var(--panel
 <footer>
   <div class="wrap">
     <span>© 2026 OpenCore MES. "OpenCore MES" is a trademark of its owner.</span>
-    <span>Built on Juris · <a href="https://demo.opencoremes.com/">Live demo</a> · <a href="mailto:contact@opencoremes.com?subject=OpenCore%20MES">Contact</a></span>
+    <span>Built on Juris · <a href="https://github.com/opencore-mes/opencore-mes" rel="noopener">Source on GitHub</a> · <a href="https://demo.opencoremes.com/">Live demo</a> · <a href="mailto:contact@opencoremes.com?subject=OpenCore%20MES">Contact</a></span>
   </div>
 </footer>
 </body>
