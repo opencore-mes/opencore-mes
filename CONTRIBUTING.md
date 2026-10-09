@@ -1,4 +1,4 @@
-<!-- DRAFT 2026-10-06, pending counsel: the contributor licence agreement's link is a placeholder. -->
+<!-- 2026-10-10: the contributor licence agreement is being prepared with counsel; until it is published, outside pull requests wait. -->
 # Contributing to OpenCore MES
 
 Thank you for helping. OpenCore MES is a low-code MES for advanced manufacturing, from small plants to 300 mm fabs; contributions to the
@@ -6,8 +6,10 @@ community edition (this repository) are welcome: fixes, features, documentation,
 
 ## Before your first contribution: the contributor agreement
 
-Every contributor signs the **OpenCore MES Contributor Licence Agreement** ([link to the CLA]) once,
-before their first pull request is merged. In short, it says that:
+Every contributor signs the **OpenCore MES Contributor Licence Agreement** once, before their first
+pull request is merged. It is being prepared and will be linked here when it is published; until then,
+pull requests are welcome and reviewed, but none from outside the project is merged. In short, it will
+say that:
 - you wrote the contribution, or have the right to give it;
 - you license it to the project under the Apache License 2.0, like the rest of the community edition;
 - you also grant the project the right to use it in the proprietary **OpenCore MES suites**

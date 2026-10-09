@@ -38,14 +38,20 @@ with the name.
 
 The **OpenCore MES suites** are products built on the community edition and sold separately, under
 commercial licences. They are not in this repository and not under its licence. They include:
-- [the suites to be listed, for example: industry packs (medical devices, automotive, aerospace),
-  validation packages, enterprise integrations, the hosted service].
+- Import & Export: ERP and legacy files mapped onto your models;
+- Equipment integration: SECS/GEM, GEM300, OPC UA, MQTT;
+- Shift Calendar: shifts, crews, rosters, staffing alerts;
+- Material management, Vendor management, Quality management, Maintenance, OEE and downtime;
+- industry packs: Semiconductor (back-end assembly and test), Wafer fab, Carpentry, Load board management;
+- Sales channels: marketplace orders to shipping.
+
+The current list, with prices, is at [suites.opencoremes.com](https://suites.opencoremes.com).
 
 The community edition is complete on its own: it never needs a suite to run, and a feature does not
 move from the community edition into a suite.
 
 A suite is installed beside the community edition, as a folder under `suites/`, and plugs into it
-through a published extension point (DESIGN.md §29): the community edition knows no suite by name,
+through a published extension point: the community edition knows no suite by name,
 and never contains a suite's code. Anyone may write their own extension through the same point.
 
 For a suite, support, or a licence on other terms, contact contact@opencoremes.com.
