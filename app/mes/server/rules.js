@@ -16,7 +16,7 @@ import path from "node:path";
 import { fork, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { scriptBody } from "../client/pipe.js";
-import { ServiceError } from "../../../src/errors.js";
+import { ServiceError } from "@opencore-mes/juris-kit/errors.js";
 
 const SCRIPT_TIMEOUT_MS = 50;       // synchronous CPU per rule script
 const PIPE_DEADLINE_MS = 2000;      // wall clock per pipe, lookups included
@@ -174,6 +174,10 @@ export function stopScriptRunner() {
     child?.kill();
 }
 
+// What a write is refused with when the rules' runner did not answer (busy, or its deadline passed): no rule
+// decided anything, and the same write a moment later may well go through (flows.js retries it).
+export const RULES_UNAVAILABLE = "The rules could not run; the change was not saved.";
+
 // runRules({ definition, scripts, ctx, lookup }) → runPipe's { ctx, error, trace }.
 // `scripts` maps name → { version, source } (the published versions, or a draft's).
 export async function runRules({ definition, scripts, ctx, lookup }) {
@@ -185,7 +189,7 @@ export async function runRules({ definition, scripts, ctx, lookup }) {
     const fns = new Map(lookup ? [["lookup", lookup]] : []);
     const outcome = await job("pipe", { entries, scripts: sources, ctx: clone, cpuMs: SCRIPT_TIMEOUT_MS }, fns, PIPE_DEADLINE_MS);
     if (outcome.ok) return outcome.value;
-    return { ctx: clone, error: { script: "(pipe)", fault: true, message: "The rules could not run; the change was not saved.", detail: outcome.error.message }, trace: [] };
+    return { ctx: clone, error: { script: "(pipe)", fault: true, message: RULES_UNAVAILABLE, detail: outcome.error.message }, trace: [] };
 }
 
 // The design-time check of one script (§12.1): the name rule, and that it compiles alone. Compiling
@@ -194,6 +198,14 @@ export function checkScript(name, source) {
     const body = scriptBody(name, source);
     new vm.Script(`(${body})`, { filename: `${name}.js` });
     return true;
+}
+
+// A script's test case or dry run gives the records it looks up as data, so it replays the same:
+// { "lot/LOT-1": { …record } } answers ctx.lookup("lot", "LOT-1"); anything not given is null. → { ctx, lookup }
+export function givenLookups(run) {
+    const { lookups, ...ctx } = run !== null && typeof run === "object" && !Array.isArray(run) ? run : {};
+    const map = lookups !== null && typeof lookups === "object" && !Array.isArray(lookups) ? lookups : {};
+    return { ctx, lookup: async (object, key) => (Object.hasOwn(map, `${object}/${key}`) ? map[`${object}/${key}`] : null) };
 }
 
 // A service's script (§15.2), or a suite's (§29.4): the rule-script contract, with what it may reach

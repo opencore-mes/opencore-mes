@@ -11,9 +11,10 @@
 import { titleTab } from "./shell.js";
 import { noDefault } from "./select.js";
 import { icon } from "./icons.js";
-import { confirmDialog, askDialog } from "./dialog.js";
-import { plant } from "./format.js";
+import { confirmDialog, askDialog, confirmRemove } from "./dialog.js";
+import { plant, noun as nounOf } from "./format.js";
 import { uploadPicture, PICTURE_TYPES } from "./picture.js";
+import { routeMaps } from "./flow-picture.js";
 
 const isPlain = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const KINDS = [["transaction", "Run a transaction"], ["action", "Take a record's action"], ["update", "Edit a record"], ["create", "Make a record"], ["service", "Call a service"], ["screen", "Open a screen"], ["act", "Answer a plan"]];
@@ -60,7 +61,9 @@ export function registerSandbox(juris, { args }) {
             try { const r = await fn(); if (label) set("notice", typeof label === "function" ? label(r) : label); return r; } catch (e) { set("error", e.message); return null; } finally { set("busy", false); }
         };
         if (!api.isServer) {
-            api.onMount(() => { api.call("sandbox.state", { id }).then((s) => set("box", s), () => {}); });
+            // Open already (the page reloaded, or came back to): the records it started with are its own again,
+            // so a scenario saved from it names them.
+            api.onMount(() => { api.call("sandbox.state", { id }).then((s) => { api.batch(() => { set("box", s); if (s.open && s.spec && !Object.keys(get("spec", {}) ?? {}).length) set("spec", s.spec); }); if (s.open) follow(); }, () => {}); });
             // A saved scenario to start from (?tx=…&scenario=…): its records, and its steps to run.
             const stop = api.bindState(() => api.getState(`${C}.draft_rev`), () => {
                 const flowName = api.peek("$route.query.flow");
@@ -76,6 +79,48 @@ export function registerSandbox(juris, { args }) {
             });
             api.onCleanup(stop);
         }
+        // ---- what a route needs to be walked to its end, before it is opened (§5.11) ----
+        let needsTimer = null;
+        let needsTurn = 0;
+        const loadNeeds = () => {
+            if (api.isServer) return;
+            clearTimeout(needsTimer);
+            needsTimer = setTimeout(async () => {
+                const turn = ++needsTurn;
+                const r = await api.call("sandbox.needs", { id, flow: api.peek(`${S}.needsFlow`) || null, records: api.peek(`${S}.spec`) ?? {} }).catch((e) => ({ error: e.message }));
+                if (turn === needsTurn) set("needs", r);
+            }, 200);
+        };
+        // Read again as the records chosen change (bound once it is defined: a binding runs at once).
+        if (!api.isServer) api.onCleanup(api.bindState(() => canon(api.getState(`${S}.spec`, {}) ?? {}), () => loadNeeds()));
+        // A record that gives a need, added: keyed by its title (bg_01), kept findable by the need's own
+        // settings should that one be gone or moved on when the sandbox opens.
+        const keyFor = (title, object, spec) => {
+            let key = String(title ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/^(\d)/, "r_$1") || object;
+            if (!/^[a-z]/.test(key)) key = object;
+            const base = key;
+            for (let n = 2; spec[key]; n++) key = `${base}_${n}`;
+            return key;
+        };
+        const addNeed = (need, c) => {
+            const spec = { ...(get("spec", {}) ?? {}) };
+            if (Object.values(spec).some((r) => r.id === c.id)) return;
+            spec[keyFor(c.title, need.object, spec)] = { object: need.object, id: c.id, note: [c.title, ...(c.about ?? []).map(words)].join(" · "), ...(Object.keys(need.where ?? {}).length ? { where: need.where } : {}) };
+            set("spec", spec);
+        };
+        const addAllRequired = () => {
+            const spec = { ...(get("spec", {}) ?? {}) };
+            let n = 0;
+            for (const need of get("needs", {})?.needs ?? []) {
+                if (need.have.length) continue;
+                const c = need.candidates.find((x) => !Object.values(spec).some((r) => r.id === x.id));
+                if (!c) continue;
+                spec[keyFor(c.title, need.object, spec)] = { object: need.object, id: c.id, note: [c.title, ...(c.about ?? []).map(words)].join(" · "), ...(Object.keys(need.where ?? {}).length ? { where: need.where } : {}) };
+                n++;
+            }
+            api.batch(() => { set("spec", spec); set("notice", `${n} required record(s) added.`); });
+        };
+        const whereWords = (object, where) => Object.entries(where ?? {}).map(([f, v]) => `${String(objects()[object]?.fields?.[f]?.label ?? f.replace(/_/g, " ")).toLowerCase()} ${[].concat(v).join(" or ")}`).join(", ");
         // ---- saved selections: the records it starts with, kept by name ----
         api.live(`${S}.sels`, "sandbox.selections", args.design(as));
         const sels = () => api.getState(`${S}.sels`, []) ?? [];
@@ -131,7 +176,9 @@ export function registerSandbox(juris, { args }) {
             if (taken) return set("error", `${hit.title} is among the records already.`);
             let key = hit.object;
             for (let n = 2; spec[key]; n++) key = `${hit.object}${n}`;
-            api.batch(() => { set(`spec.${key}`, { object: hit.object, id: hit.id, note: hit.title }); set("error", null); set("notice", `@${key}: ${hit.title} (${hit.label}).`); });
+            // Added: the search is cleared (what it found is in the list above now), ready for the next one.
+            api.batch(() => { set(`spec.${key}`, { object: hit.object, id: hit.id, note: [hit.title, ...(hit.details ?? []).filter((d) => d.type !== "ref" && d.type !== "date").slice(0, 2).map((d) => words(d.value))].join(" · ") }); set("findText", ""); set("found", []); set("error", null); set("notice", `@${key}: ${hit.title} (${hit.label}) added.`); });
+            if (!api.isServer) requestAnimationFrame(() => document.querySelector(".sandbox .sbx-find input[type=search]")?.focus());
         };
 
         const home = () => api.getState("design.home", {}) ?? {};
@@ -200,10 +247,11 @@ export function registerSandbox(juris, { args }) {
         const openBox = () => run((r) => `Open: ${Object.keys(r.records ?? {}).length} record(s) to start from, ${r.copied} copied from live${r.notes?.length ? `. ${r.notes.join(" ")}` : ""}.`, async () => {
             const r = await api.call("sandbox.open", { id, records: get("spec", {}) });
             api.batch(() => { set("box", r); set("steps", []); refresh(); });
+            follow();
             return r;
         });
-        const resetBox = () => run("Started again: fresh copies of the live records, the given ones made anew.", async () => { const r = await api.call("sandbox.reset", { id }); api.batch(() => { set("box", r); set("steps", []); refresh(); }); return r; });
-        const closeBox = () => run("Closed: its database is gone.", async () => { await api.call("sandbox.close", { id }); api.batch(() => { set("box", { open: false }); set("steps", []); refresh(); }); });
+        const resetBox = () => run("Started again: fresh copies of the live records, the given ones made anew.", async () => { const r = await api.call("sandbox.reset", { id }); api.batch(() => { set("box", r); set("steps", []); set("follow", {}); refresh(); }); follow(); return r; });
+        const closeBox = () => run("Closed: its database is gone.", async () => { await api.call("sandbox.close", { id }); api.batch(() => { set("box", { open: false }); set("steps", []); set("follow", {}); refresh(); }); });
 
         // ---- a step ----
         const stepNow = () => {
@@ -251,13 +299,84 @@ export function registerSandbox(juris, { args }) {
             const steps = get("steps", []);
             const before = steps.length ? steps.at(-1).out.states : Object.fromEntries(Object.entries(box().records ?? {}).map(([k, r]) => [k, r.state]));
             const out = await api.call("sandbox.run", { id, step: s });
+            // A record a step named ("Name it, for later steps") is one of the sandbox's from now on: read
+            // them again, so the steps after offer it by its key and a scenario keeps it as "@key".
+            const fresh = await api.call("sandbox.state", { id }).catch(() => null);
+            if (fresh?.open) set("box", fresh);
             const expected = given?.expect;
             const verdictLines = expected ? checkAgainst(expected, out) : [];
             api.batch(() => { set("steps", [...steps, { st: { as: s.as, do: named(s.do) }, out, expect: expectOf(out, before), verdict: expected ? verdictLines : null }]); refresh(); });
+            follow();
             return out;
         });
         const runPlanned = () => run(null, async () => { for (const p of get("planned", [])) { const out = await runStep(p); if (!out) break; } });
         const removeStep = (i) => set("steps", get("steps", []).filter((_, k) => k !== i));
+
+        // ---- following a route by hand (§32.8) ----
+        // The records on a route here (those a step made too), the one followed, where it is and the plans
+        // waiting on it, read anew after every step. Its step's offers and its plans' questions fill the
+        // step in; a reference input is offered what the step allows, each tried (sandbox.suggest).
+        const followed = () => get("follow.id", null);
+        const loadWhere = () => {
+            const rid = api.peek(`${S}.follow.id`);
+            if (!rid || !box().open) return;
+            api.call("sandbox.where", { id, record: rid, as: api.peek(`${S}.step.as`) || as }).then((w) => set("follow.where", w), (e) => set("follow.where", { error: e.message }));
+        };
+        const follow = () => {
+            if (api.isServer) return;
+            api.call("sandbox.travelers", { id }).then((list) => {
+                set("follow.list", list);
+                const rid = api.peek(`${S}.follow.id`);
+                if (!rid || !list.some((x) => x.id === rid)) { set("follow.id", list[0]?.id ?? null); set("follow.where", null); }
+                loadWhere();
+            }, () => set("follow.list", []));
+            suggestAll();
+        };
+        const pickTraveler = (rid) => { api.batch(() => { set("follow.id", rid || null); set("follow.where", null); }); loadWhere(); };
+        // A transaction's input of the followed traveler's object, filled with it (picked from its offers or
+        // under Which alike).
+        const travelerInputOf = (name) => {
+            const w = get("follow.where");
+            const k = followed() && w?.record ? Object.entries(txs()[name]?.inputs ?? {}).find(([, x]) => x.type === "ref" && x.to === w.record.object && !x.from)?.[0] : null;
+            return k ? { [k]: followed() } : {};
+        };
+        // The step it offers, filled in: the transaction, the traveler as its input of that object.
+        const offer = (name) => {
+            api.batch(() => { set("step", { kind: "transaction", as: get("step", {}).as ?? as, name, input: travelerInputOf(name) }); set("sugg", {}); });
+            suggestAll();
+            toStep();
+        };
+        // A plan's question, filled in as an answer: a decision's choice, or its screen's fields to fill.
+        const answer = (task, choice = null) => {
+            const blank = (f) => (f.type === "boolean" ? false : ["integer", "decimal"].includes(f.type) ? null : "");
+            const how = task.kind === "manual_decision" ? "choose" : task.kind === "input_screen" ? "fill" : "acknowledge";
+            set("step", { kind: "act", as: task.for?.users?.[0] ?? get("step", {}).as ?? as, record: followed(), name: task.flow, how, ...(choice ? { choice } : {}),
+                ...(how === "fill" ? { data: JSON.stringify(Object.fromEntries((task.fields ?? []).map((f) => [f.name, blank(f)])), null, 2) } : {}) });
+            toStep();
+        };
+        const toStep = () => { if (!api.isServer) requestAnimationFrame(() => document.querySelector(".sandbox .sbx-run")?.scrollIntoView({ behavior: "smooth", block: "start" })); };
+        // Suggestions for the step's reference inputs, once its inputs settle; the last asked wins.
+        let suggestTimer = null;
+        let suggestTurn = 0;
+        const suggestAll = () => {
+            if (api.isServer) return;
+            clearTimeout(suggestTimer);
+            suggestTimer = setTimeout(async () => {
+                const st = api.peek(`${S}.step`) ?? {};
+                const t = txs()[st.name];
+                if (st.kind !== "transaction" || !t || !box().open) return set("sugg", {});
+                let input = {};
+                try { input = stepNow().do.input ?? {}; } catch { input = {}; }
+                const turn = ++suggestTurn;
+                for (const [k, x] of Object.entries(t.inputs ?? {})) {
+                    if (x.type !== "ref" || x.from || (input[k] && input[k] === followed())) continue;
+                    const { [k]: _mine, ...others } = input;
+                    const r = await api.call("sandbox.suggest", { id, as: st.as || as, transaction: st.name, input: others, field: k }).catch(() => null);
+                    if (turn !== suggestTurn) return;
+                    set(`sugg.${k}`, r);
+                }
+            }, 250);
+        };
 
         // ---- saving the run as a scenario ----
         const saveScenario = () => run((r) => { const t = get("save", {}).tx ?? ""; return `Saved: "${r}" is a scenario of ${t.startsWith("flow:") ? flowLabel(t.slice(5)) : draftTx()[t]?.label ?? t}, run by the fitness test.`; }, async () => {
@@ -266,6 +385,8 @@ export function registerSandbox(juris, { args }) {
             const flowBody = String(tx ?? "").startsWith("flow:") ? draftFlows()[tx.slice(5)] : null;
             if (!body && !flowBody) throw new Error("A scenario is kept by a transaction or a flow template of this change: add it to the change (Change it, on its page) first.");
             if (!String(name ?? "").trim()) throw new Error("Name the scenario: what it shows.");
+            // Refused here, in words, rather than saved with a problem the notice would cover.
+            if (name.trim().length > 120) throw new Error(`Shorten the scenario's name to 120 characters at most (it has ${name.trim().length}): say what it shows, briefly.`);
             const steps = get("steps", []);
             if (!steps.length) throw new Error("Run its steps first: what they did is what it expects.");
             // A template's scenario expects the nodes its records reached in it; a transaction's, none.
@@ -275,7 +396,8 @@ export function registerSandbox(juris, { args }) {
                 const node = flowName ? Object.fromEntries(Object.entries($nodes ?? {}).filter(([, runs]) => runs?.[flowName]).map(([k, runs]) => [k, runs[flowName].node])) : {};
                 return { ...rest, ...(Object.keys(node).length ? { node } : {}) };
             };
-            const scenario = { name: name.trim(), records: get("spec", {}), steps: steps.map((s) => ({ ...(s.st.as ? { as: s.st.as } : {}), do: s.st.do, expect: expectFor(s.expect) })) };
+            // The records it started with, as the open sandbox has them (not what the list may hold since).
+            const scenario = { name: name.trim(), records: box()?.open && box().spec ? box().spec : get("spec", {}), steps: steps.map((s) => ({ ...(s.st.as ? { as: s.st.as } : {}), do: s.st.do, expect: expectFor(s.expect) })) };
             if (flowName && !scenario.steps.some((x) => x.expect.node)) throw new Error(`None of its steps reached ${flowLabel(flowName)}: walk a record into it first.`);
             const result = flowName
                 ? await api.call("design.save", { id, seen: api.peek(`${C}.draft_rev`), flows: { [flowName]: { ...flowBody, scenarios: [...(flowBody.scenarios ?? []).filter((x) => x?.name !== scenario.name), scenario] } } })
@@ -287,13 +409,41 @@ export function registerSandbox(juris, { args }) {
         // ---- drawing ----
         const select = (value, options, onchange, extra = {}) => ({ select: { ...extra, onchange: (e) => onchange(e.target.value), children: noDefault(options.map(([v, l]) => ({ option: { value: v, selected: v === value, textContent: l } }))) } });
         const recordOptions = (object) => [["", "—"], ...recs(object).map((r) => [r.id, `${r.key ? `@${r.key} · ` : ""}${r.title} (${words(r.state)})`])];
-        const allRecordOptions = () => [["", "—"], ...Object.entries(box().records ?? {}).map(([k, r]) => [r.id, `@${k} · ${r.title ?? ""} (${words(r.state)})`])];
+        const allRecordOptions = () => {
+            const keyed = Object.entries(box().records ?? {}).map(([k, r]) => [r.id, `@${k} · ${r.title ?? ""} (${words(r.state)})`]);
+            // The traveler followed, made by a step (no key): named by its title.
+            const f = (get("follow.list", []) ?? []).find((x) => x.id === followed());
+            return [["", "—"], ...keyed, ...(f && !keyed.some(([rid]) => rid === f.id) ? [[f.id, `${f.title} (${words(f.state)})`]] : [])];
+        };
+        // What the step allows a reference input to name, best first: taken, not yet known, refused (and why).
+        const suggestionsOf = (k, spec) => () => {
+            const r = get(`sugg.${k}`, null);
+            if (!r) return { span: {} };
+            const noun = nounOf(words(objects()[spec.to]?.label ?? spec.to));
+            // Its traveler not given yet: what to give first, not every record to guess among.
+            if (r.waitFor) return { p: { className: "muted small sbx-suggest", textContent: `Pick the ${String(r.waitFor.label).toLowerCase()} first: the ${noun} records its step allows are suggested then.` } };
+            const at = r.step ? `At ${r.step.label}` : "Here";
+            // None could be tried, for one reason: that reason, and the records unmarked.
+            if (r.untried) return { div: { className: "sbx-suggest small", children: [{ div: { className: "error", textContent: `Not tried as ${(people().find(([u]) => u === (api.peek(`${S}.step.as`) || as)) ?? [null, "them"])[1]}: ${r.untried}` } }, { span: { className: "muted", textContent: `${at}: ${r.candidates.length} ${noun} record(s) it allows${r.step?.allows ? ` (${Object.entries(r.step.allows).map(([f, v]) => `${words(f)} ${[].concat(v).join(" or ")}`).join(", ")})` : ""}.` } }] } };
+            if (!r.candidates?.length) return { p: { className: "muted small sbx-suggest", textContent: r.step?.allows ? `${at}: no ${noun} in this sandbox is one it allows (${Object.entries(r.step.allows).map(([f, v]) => `${words(f)} ${[].concat(v).join(" or ")}`).join(", ")}).` : "" } };
+            return { div: { className: "sbx-suggest small", children: [
+                { span: { className: "muted", textContent: `${at}, suggested: ` } },
+                ...r.candidates.slice(0, 10).map((c) => ({ button: {
+                    key: c.id, type: "button", className: `sbx-sugg ${c.ok === true ? "ok" : c.ok === false ? "no" : "maybe"}`,
+                    title: c.ok === true ? "It takes this one." : c.why ?? "", "aria-pressed": () => String(api.getState(`${S}.step.input.${k}`, "") === c.id),
+                    onclick: () => { set(`step.input.${k}`, c.id); suggestAll(); },
+                    children: [icon(c.ok === true ? "check" : c.ok === false ? "x" : "dot"), { strong: { textContent: ` ${c.title}` } }, ...(c.about?.length ? [{ span: { textContent: ` · ${c.about.map(words).join(" · ")}` } }] : []), { span: { className: "muted sbx-sugg-state", textContent: ` ${words(c.state)}` } }],
+                } })),
+                r.candidates.some((c) => c.ok === false) ? { div: { className: "muted", textContent: r.candidates.filter((c) => c.ok === false).slice(0, 3).map((c) => `${c.title}: ${c.why}`).join(" · ") } } : { span: {} },
+                r.others || r.more ? { div: { className: "muted", textContent: [r.others ? `${r.others} other ${noun}(s) are not where ${r.step?.label ?? "it"} is done` : "", r.more ? `${r.more} more not tried` : ""].filter(Boolean).join("; ") } } : { span: {} },
+            ] } };
+        };
         const people = () => (home().users ?? []).map((u) => [u.id, u.name]);
         const inputControl = (k, spec) => {
             // Read where it is drawn (not by the form around it), so typing never redraws the form.
             const value = () => api.getState(`${S}.step.input.${k}`, "") ?? "";
-            const put = (v) => set(`step.input.${k}`, v);
-            if (spec.type === "ref") return select(api.peek(`${S}.step.input.${k}`) ?? "", recordOptions(spec.to), put);
+            const put = (v) => { set(`step.input.${k}`, v); suggestAll(); };
+            if (spec.type === "ref") return () => select(api.getState(`${S}.step.input.${k}`, "") ?? "", recordOptions(spec.to), put);
             if (spec.type === "enum") return select(api.peek(`${S}.step.input.${k}`) ?? "", [["", "—"], ...(spec.values ?? []).map((v) => [v, v])], put);
             if (spec.type === "boolean") return { input: { type: "checkbox", checked: () => value() === true, onchange: (e) => put(e.target.checked) } };
             if (spec.type === "rows") return jsonEditor(`step.input.${k}`, { label: spec.label ?? k, rows: 5, fields: spec.fields ?? {}, list: true });
@@ -304,6 +454,24 @@ export function registerSandbox(juris, { args }) {
         // typed against what it is for: an object's fields (`fields`), or a table's rows (`rows`).
         const jsonEditor = (path, { label, rows = 5, fields = null, extra = [], list = false } = {}) => ({ CodeEditor: { key: `sbx-json-${path}`, mode: "json", rows, label, value: () => api.getState(`${S}.${path}`, "") ?? "", onInput: (t) => set(path, t), lint: (t) => jsonLint(t, { fields: typeof fields === "function" ? fields() : fields, extra, list }) } });
         const labelled = (label, control, hint, { wide = false } = {}) => ({ label: { className: `sbx-field${wide ? " wide" : ""}`, "data-guide": `sbx:${String(label).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`, children: [{ span: { className: "muted small", textContent: label } }, control, hint ? { span: { className: "muted small", textContent: hint } } : { span: {} }] } });
+        // An input or field by its label, for a refusal: the transaction's input, else the field's name.
+        const fieldLabel = (d, f) => (f === "_signature" ? "Signature" : txs()[d?.transaction]?.inputs?.[f]?.label ?? words(f));
+        // Where the records walking a flow are after a step: each traveler or subject once, at the innermost
+        // run of its own (a route waiting at its sub flow is the way there, shown as the chain), never a
+        // record that only takes part in another's run (a lot's device on the lot's route).
+        const whereNow = (nodes) => Object.entries(nodes ?? {}).flatMap(([k, runs]) => {
+            const own = Object.entries(runs).filter(([, r]) => !r.takesPart);
+            const under = own.filter(([, r]) => r.state !== "ended");
+            // Under way: the innermost (the one no other under way runs inside); all ended: the one at the top.
+            const shown = under.length ? under.filter(([fl]) => !under.some(([, r]) => r.inside === fl)) : own.filter(([, r]) => !r.inside);
+            return shown.map(([fl, r]) => {
+                const chain = [];
+                for (let at = r.inside; at && chain.length < 6; at = runs[at]?.inside) chain.unshift(flowLabel(at));
+                const at = r.label ?? words(r.node);
+                const said = r.state === "ended" ? `ended at ${at}` : r.state === "stopped" ? `stopped at ${at}: ${r.reason ?? ""}` : `at ${at}`;
+                return `@${k} ${said} (${[...chain, flowLabel(fl)].join(" › ")})`;
+            });
+        }).join(" · ");
         const outcome = (s, i) => ({
             li: {
                 key: `s${i}`, className: `sbx-step ${s.out.ok ? "ran" : "refused"}`,
@@ -312,12 +480,14 @@ export function registerSandbox(juris, { args }) {
                         { strong: `${i + 1}. ${describe(s.st, labelsOf())}` },
                         { span: { className: "muted small", textContent: ` as ${s.st.as}` } },
                         { span: { className: "spacer" } },
-                        { button: { type: "button", className: "linkish small", textContent: "remove", onclick: () => removeStep(i) } },
+                        { button: { type: "button", className: "linkish small", textContent: "remove", onclick: confirmRemove(api, "this step", () => removeStep(i) )} },
                     ] } },
                     { div: { className: s.out.ok ? "ok-text small icon-text" : "error small icon-text", children: [icon(s.out.ok ? "check" : "warning"), { span: s.out.ok ? "Ran." : `Refused: ${s.out.error}` }] } },
                     s.expect.states ? { div: { className: "small", textContent: Object.entries(s.expect.states).map(([k, v]) => `@${k} → ${words(v)}`).join(" · ") } } : { span: {} },
                     s.expect.created ? { div: { className: "small muted", textContent: `Made: ${Object.entries(s.expect.created).map(([o, n]) => `${n} ${words(o)}`).join(", ")}` } } : { span: {} },
-                    s.out.nodes && Object.keys(s.out.nodes).length ? { div: { className: "small sbx-nodes icon-text", children: [icon("branch"), { span: Object.entries(s.out.nodes).flatMap(([k, runs]) => Object.entries(runs).map(([fl, r]) => `@${k} ${r.state === "ended" ? `ended at ${words(r.node)}` : r.state === "stopped" ? `stopped at ${words(r.node)}` : `at ${words(r.node)}`} (${flowLabel(fl)})`)).join(" · ") }] } } : { span: {} },
+                    // A refusal's inputs, each with what is wrong with it (Good units: Required.).
+                    !s.out.ok && s.out.fields && Object.keys(s.out.fields).length ? { ul: { className: "error small sbx-fields", children: Object.entries(s.out.fields).map(([f, msg]) => ({ li: { key: f, textContent: String(msg).startsWith(fieldLabel(s.st.do, f)) ? msg : `${fieldLabel(s.st.do, f)}: ${msg}` } })) } } : { span: {} },
+                    whereNow(s.out.nodes) ? { div: { className: "small sbx-nodes icon-text", children: [icon("branch"), { span: whereNow(s.out.nodes) }] } } : { span: {} },
                     s.verdict ? { div: { className: s.verdict.length ? "error small" : "ok-text small", textContent: s.verdict.length ? `Not as the scenario expects: ${s.verdict.join("; ")}` : "As the scenario expects." } } : { span: {} },
                 ],
             },
@@ -340,67 +510,159 @@ export function registerSandbox(juris, { args }) {
                     {
                         section: { className: "panel sbx-records", children: [
                             { h3: "Records it starts with" },
-                            // Saved selections: one stable select (its options live), and what to do with it.
-                            () => {
-                                get("selRev", 0);
-                                const c = current();
-                                const dirty = edited();
-                                return { div: { className: "sbx-selection", children: [
-                                    labelled("Saved selection", select(c?.id ?? "", [["", c || !Object.keys(get("spec", {})).length ? "New selection" : "Not saved"], ...sels().map((x) => [x.id, `${x.name} · ${x.count} record(s) · saved ${when(x.updated_at)}`])], (v) => switchTo(v), { "aria-label": "Saved selection" })),
-                                    { div: { className: "sbx-selection-actions", children: [
-                                        { button: { type: "button", className: "btn", disabled: () => busy() || (Boolean(current()) && !edited()) || !Object.keys(get("spec", {})).length, textContent: "Save", title: "Save these records over the selection (or as a new one)", onclick: save } },
-                                        { button: { type: "button", className: "btn", disabled: () => busy() || !Object.keys(get("spec", {})).length, textContent: "Save as…", onclick: saveAs } },
-                                        { button: { type: "button", className: "btn ghost", disabled: () => busy() || !current(), textContent: "Rename…", onclick: rename } },
-                                        { button: { type: "button", className: "btn ghost", disabled: () => busy() || !current(), textContent: "Delete", onclick: remove } },
-                                    ] } },
-                                    { span: { className: `small ${dirty ? "tab-open" : "muted"}`, textContent: c ? (dirty ? `Edited since saved ${when(c.updated_at)}` : `Saved ${when(c.updated_at)}`) : Object.keys(get("spec", {})).length ? "Not saved: Save as… keeps them" : "" } },
-                                ] } };
-                            },
-                            () => {
-                                const spec = get("spec", {});
-                                const live = box().records ?? {};
-                                const rows = Object.entries(spec);
-                                if (!rows.length) return { p: { className: "muted small", textContent: "None yet: pick a real record (a lot by its number), or give one, below. Records they refer to come with them." } };
-                                return { table: { className: "grid", children: [{ tbody: { children: rows.map(([k, r]) => ({ tr: { key: k, children: [
-                                    { td: { children: [{ code: `@${k}` }] } },
-                                    { td: words(objects()[r.object]?.label ?? r.object) },
-                                    { td: { className: "small", textContent: r.data !== undefined ? `given: ${json(r.data)}${r.state ? `, ${r.state}` : ""}` : `picked: ${r.note ?? r.id?.slice(0, 8) ?? ""}${r.where ? ` (or one where ${json(r.where)})` : ""}` } },
-                                    { td: { className: "small", textContent: live[k] ? `${live[k].title} · ${words(live[k].state)}` : "" } },
-                                    { td: { children: [{ button: { type: "button", className: "linkish small", textContent: "remove", onclick: () => { const next = { ...get("spec", {}) }; delete next[k]; set("spec", next); } } }] } },
-                                ] } })) } }] } };
-                            },
-                            // Any record, found by its number, label or a value, whatever its object.
-                            { div: { className: "sbx-find", children: [
-                                labelled("Find a record", { input: { type: "search", placeholder: "Search any object: a lot number, a tool, a name…", value: () => api.getState(`${S}.findText`, "") ?? "", oninput: (e) => search(e.target.value) } }, "Records you may see, from every object; click one to add it."),
+                            // Grouped: where they come from (a saved selection), adding to them, then what is chosen.
+                            { div: { className: "sbx-group", children: [
+                                { h4: "Start from a saved selection" },
+                                // Saved selections: one stable select (its options live), and what to do with it.
                                 () => {
-                                    const found = get("found", []) ?? [];
-                                    const q = get("findText", "") ?? "";
-                                    if (q.length < 2) return { span: {} };
-                                    if (!found.length) return { p: { className: "muted small", textContent: `Nothing found for "${q}".` } };
-                                    return { ul: { className: "sbx-found", children: found.map((h) => ({ li: { key: `${h.object}-${h.id}`, children: [{ button: { type: "button", className: "sbx-found-item", onclick: () => addFound(h), children: [icon("plus"), { strong: h.title }, { span: { className: "muted small", textContent: ` ${h.label}` } }, { span: { className: "badge", textContent: words(h.state) } }, { span: { className: "muted small", textContent: (h.details ?? []).map((d) => `${d.label}: ${d.value}`).join(" · ") } }] } }] } })) } };
+                                    get("selRev", 0);
+                                    const c = current();
+                                    const dirty = edited();
+                                    return { div: { className: "sbx-selection", children: [
+                                        labelled("Saved selection", select(c?.id ?? "", [["", c || !Object.keys(get("spec", {})).length ? "New selection" : "Not saved"], ...sels().map((x) => [x.id, `${x.name} · ${x.count} record(s) · saved ${when(x.updated_at)}`])], (v) => switchTo(v), { "aria-label": "Saved selection" })),
+                                        { div: { className: "sbx-selection-actions", children: [
+                                            { button: { type: "button", className: "btn", disabled: () => busy() || (Boolean(current()) && !edited()) || !Object.keys(get("spec", {})).length, textContent: "Save", title: "Save these records over the selection (or as a new one)", onclick: save } },
+                                            { button: { type: "button", className: "btn", disabled: () => busy() || !Object.keys(get("spec", {})).length, textContent: "Save as…", onclick: saveAs } },
+                                            { button: { type: "button", className: "btn ghost", disabled: () => busy() || !current(), textContent: "Rename…", onclick: rename } },
+                                            { button: { type: "button", className: "btn ghost", disabled: () => busy() || !current(), textContent: "Delete", onclick: remove } },
+                                        ] } },
+                                        { span: { className: `small ${dirty ? "tab-open" : "muted"}`, textContent: c ? (dirty ? `Edited since saved ${when(c.updated_at)}` : `Saved ${when(c.updated_at)}`) : Object.keys(get("spec", {})).length ? "Not saved: Save as… keeps them" : "" } },
+                                    ] } };
                                 },
                             ] } },
-                            () => {
-                                const d = get("draft", {});
-                                const obj = objects()[d.object];
-                                return { div: { className: "sbx-add", children: [
-                                    labelled("Key", { input: { value: () => api.getState(`${S}.draft.key`, "") ?? "", placeholder: "lot", oninput: (e) => set("draft.key", e.target.value.trim()) } }),
-                                    labelled("Object", select(d.object ?? "", [["", "—"], ...Object.entries(objects()).map(([o, x]) => [o, x.label ?? o])], (v) => set("draft", { ...(api.peek(`${S}.draft`) ?? {}), object: v, id: null, title: null, state: null }))),
-                                    labelled("How", select(d.mode ?? "pick", [["pick", "picked from live"], ["give", "given here"]], (v) => set("draft.mode", v))),
-                                    d.mode === "give"
-                                        ? labelled("Its data", jsonEditor("draft.data", { label: "Its data", rows: 6, fields: obj?.fields ?? null }), 'JSON, {"lot_no": "LOT9001AA-A", "product": "@product"}: "@key" names another record.', { wide: true })
-                                        : labelled("Record", { input: { value: () => api.getState(`${S}.draft.text`, "") ?? "", placeholder: "Scan or type its label, then Enter", onkeydown: (e) => { if (e.key === "Enter") { e.preventDefault(); lookup(); } }, oninput: (e) => set("draft.text", e.target.value) } }, d.title ? `${d.title} · ${words(d.state)}` : "Or leave it, and say where to find one:"),
-                                    d.mode === "give"
-                                        ? labelled("State", select(d.state ?? "", [["", "its first"], ...(obj?.states ?? []).map((s) => [s, words(s)])], (v) => set("draft.state", v)))
-                                        : labelled("Where", jsonEditor("draft.where", { label: "Where", rows: 3, fields: obj?.fields ?? null, extra: ["state"] }), `If that one is gone or moved on, the newest that matches is used: ${d.state ? `{"state": ["${d.state}"]}` : '{"state": ["waiting"]}'}.`, { wide: true }),
-                                    { div: { className: "sbx-field sbx-button", children: [{ span: { className: "muted small", textContent: "\u00a0" } }, { button: { type: "button", className: "btn", textContent: "Add", onclick: addRecord } }] } },
-                                ] } };
-                            },
+                            { div: { className: "sbx-group sbx-needs-group", children: [
+                                { h4: "What a route needs" },
+                                () => {
+                                    const n = get("needs", null);
+                                    if (!n) return { p: { className: "muted small", textContent: "Reading what the routes need…" } };
+                                    if (n.error) return { p: { className: "error small", textContent: n.error } };
+                                    if (!n.routes?.length) return { p: { className: "muted small", textContent: "No route, live or in this change: nothing to walk." } };
+                                    const toChoose = n.needs.filter((x) => !x.have.length);
+                                    const addable = toChoose.filter((x) => x.candidates.length).length;
+                                    return { div: { children: [
+                                        { div: { className: "sbx-add", children: [
+                                            labelled("Route", select(n.flow ?? "", n.routes.map((r) => [r.name, `${r.label}${r.draft ? " (in this change)" : ""}`]), (v) => { set("needsFlow", v); loadNeeds(); }), "It, and the routes it runs: what each step needs."),
+                                        ] } },
+                                        { ul: { className: "sbx-needs", children: n.needs.map((x, i) => ({ li: { key: `${x.object}-${i}`, className: x.have.length ? "have" : "to-choose", children: [
+                                            icon(x.have.length ? "check" : "dot"),
+                                            { div: { children: [
+                                                { strong: `${x.label}${Object.keys(x.where ?? {}).length ? `: ${whereWords(x.object, x.where)}` : ""}` },
+                                                { span: { className: "muted small", textContent: ` · for ${x.why.slice(0, 3).join("; ")}${x.why.length > 3 ? ` and ${x.why.length - 3} more` : ""}` } },
+                                                { div: { className: "small sbx-need-pick", children: x.have.length
+                                                    ? [{ span: { className: "ok-text", textContent: `Chosen: ${x.have.map((k) => `@${k}`).join(", ")}` } }]
+                                                    : x.candidates.length
+                                                        ? [{ span: { className: "muted", textContent: "Add: " } }, ...x.candidates.map((c) => ({ button: { key: c.id, type: "button", className: "sbx-sugg", onclick: () => addNeed(x, c), children: [icon("plus"), { strong: ` ${c.title}` }, ...(c.about?.length ? [{ span: ` · ${c.about.map(words).join(" · ")}` }] : []), { span: { className: "muted sbx-sugg-state", textContent: ` ${words(c.state)}` } }] } }))]
+                                                        : [{ span: { className: "error", textContent: x.traveler?.makers?.length ? "None on its way you may see:" : `None you may see: give one by hand.` } }] } },
+                                                // The traveler may be made instead, by a step, once the sandbox is open (a receiving transaction).
+                                                !x.have.length && x.traveler?.makers?.length ? { div: { className: "small muted", textContent: `Or make one: run ${x.traveler.makers.map((m) => m.label).join(" or ")} as a step, once the sandbox is open.` } } : { span: {} },
+                                            ] } },
+                                        ] } })) } },
+                                        { div: { className: "sbx-needs-foot small", children: [
+                                            { span: { className: toChoose.length ? "muted" : "ok-text", textContent: toChoose.length ? `${n.needs.length - toChoose.length} of ${n.needs.length} required records chosen.` : `All ${n.needs.length} required records chosen: the route can be walked to its end.` } },
+                                            addable ? { button: { type: "button", className: "btn", disabled: busy, textContent: `Add all required records (${addable})`, onclick: addAllRequired } } : { span: {} },
+                                        ] } },
+                                    ] } };
+                                },
+                            ] } },
+                            { div: { className: "sbx-group", children: [
+                                { h4: "Add records" },
+                                // Any record, found by its number, label or a value, whatever its object.
+                                { div: { className: "sbx-find", children: [
+                                    labelled("Find a record", { input: { type: "search", placeholder: "Search any object: a lot number, a tool, a name…", value: () => api.getState(`${S}.findText`, "") ?? "", oninput: (e) => search(e.target.value) } }, "Records you may see, from every object; click one to add it."),
+                                    () => {
+                                        const found = get("found", []) ?? [];
+                                        const q = get("findText", "") ?? "";
+                                        if (q.length < 2) return { span: {} };
+                                        if (!found.length) return { p: { className: "muted small", textContent: `Nothing found for "${q}".` } };
+                                        return { ul: { className: "sbx-found", children: found.map((h) => ({ li: { key: `${h.object}-${h.id}`, children: [{ button: { type: "button", className: "sbx-found-item", onclick: () => addFound(h), children: [icon("plus"), { strong: h.title }, { span: { className: "muted small", textContent: ` ${h.label}` } }, { span: { className: "badge", textContent: words(h.state) } }, { span: { className: "muted small", textContent: (h.details ?? []).map((d) => `${d.label}: ${d.value}`).join(" · ") } }] } }] } })) } };
+                                    },
+                                ] } },
+                                { details: { className: "sbx-by-hand", children: [
+                                    { summary: { className: "small", textContent: "Or add one by hand: give its data, or say where to find one" } },
+                                    () => {
+                                        const d = get("draft", {});
+                                        const obj = objects()[d.object];
+                                        return { div: { className: "sbx-add", children: [
+                                            labelled("Key", { input: { value: () => api.getState(`${S}.draft.key`, "") ?? "", placeholder: "lot", oninput: (e) => set("draft.key", e.target.value.trim()) } }),
+                                            labelled("Object", select(d.object ?? "", [["", "—"], ...Object.entries(objects()).map(([o, x]) => [o, x.label ?? o])], (v) => set("draft", { ...(api.peek(`${S}.draft`) ?? {}), object: v, id: null, title: null, state: null }))),
+                                            labelled("How", select(d.mode ?? "pick", [["pick", "picked from live"], ["give", "given here"]], (v) => set("draft.mode", v))),
+                                            d.mode === "give"
+                                                ? labelled("Its data", jsonEditor("draft.data", { label: "Its data", rows: 6, fields: obj?.fields ?? null }), 'JSON, {"lot_no": "LOT9001AA-A", "product": "@product"}: "@key" names another record.', { wide: true })
+                                                : labelled("Record", { input: { value: () => api.getState(`${S}.draft.text`, "") ?? "", placeholder: "Scan or type its label, then Enter", onkeydown: (e) => { if (e.key === "Enter") { e.preventDefault(); lookup(); } }, oninput: (e) => set("draft.text", e.target.value) } }, d.title ? `${d.title} · ${words(d.state)}` : "Or leave it, and say where to find one:"),
+                                            d.mode === "give"
+                                                ? labelled("State", select(d.state ?? "", [["", "its first"], ...(obj?.states ?? []).map((s) => [s, words(s)])], (v) => set("draft.state", v)))
+                                                : labelled("Where", jsonEditor("draft.where", { label: "Where", rows: 3, fields: obj?.fields ?? null, extra: ["state"] }), `If that one is gone or moved on, the newest that matches is used: ${d.state ? `{"state": ["${d.state}"]}` : '{"state": ["waiting"]}'}.`, { wide: true }),
+                                            { div: { className: "sbx-field sbx-button", children: [{ span: { className: "muted small", textContent: "\u00a0" } }, { button: { type: "button", className: "btn", textContent: "Add", onclick: addRecord } }] } },
+                                        ] } };
+                                    },
+                                ] } },
+                            ] } },
+                            { div: { className: "sbx-group", children: [
+                                () => { const n = Object.keys(get("spec", {}) ?? {}).length; return { h4: `Records chosen${n ? ` (${n})` : ""}` }; },
+                                () => {
+                                    const spec = get("spec", {});
+                                    const live = box().records ?? {};
+                                    const rows = Object.entries(spec);
+                                    if (!rows.length) return { p: { className: "muted small", textContent: "None yet: find one above, or add one by hand. Records they refer to come with them." } };
+                                    return { table: { className: "grid", children: [{ tbody: { children: rows.map(([k, r]) => ({ tr: { key: k, children: [
+                                        { td: { children: [{ code: `@${k}` }] } },
+                                        { td: words(objects()[r.object]?.label ?? r.object) },
+                                        { td: { className: "small", textContent: r.data !== undefined ? `given: ${json(r.data)}${r.state ? `, ${r.state}` : ""}` : `picked: ${r.note ?? r.id?.slice(0, 8) ?? ""}${r.where ? ` (or one where ${json(r.where)})` : ""}` } },
+                                        // A picked one may start in a state of its own here (a tool down live, idle in the sandbox).
+                                        { td: { className: "small sbx-starts", children: r.data !== undefined ? [] : [select(r.state ?? "", [["", "starts as it is live"], ...(objects()[r.object]?.states ?? []).map((st) => [st, `starts ${words(st)}`])], (v) => { const next = { ...(get("spec", {}) ?? {}) }; const { state: _was, ...rest } = next[k] ?? {}; next[k] = v ? { ...rest, state: v } : rest; set("spec", next); }, { "aria-label": `@${k} starts as`, className: r.state ? "chosen" : "" })] } },
+                                        { td: { className: "small", textContent: live[k] ? `${live[k].title} · ${words(live[k].state)}` : "" } },
+                                        { td: { children: [{ button: { type: "button", className: "linkish small", textContent: "remove", onclick: confirmRemove(api, `${k}`, () => { const next = { ...get("spec", {}) }; delete next[k]; set("spec", next); } )} }] } },
+                                    ] } })) } }] } };
+                                },
+                            ] } },
                             { div: { className: "view-actions", children: [
                                 { button: { type: "button", className: "btn primary", disabled: busy, textContent: () => (box().open ? "Open it again with these records" : "Open the sandbox"), onclick: openBox } },
                                 { button: { type: "button", className: "btn", hidden: () => !box().open, disabled: busy, textContent: "Start again", title: "Fresh copies of the live records; the given ones made anew", onclick: resetBox } },
                                 { button: { type: "button", className: "btn ghost", hidden: () => !box().open, disabled: busy, textContent: "Close", onclick: closeBox } },
                             ] } },
+                        ] },
+                    },
+                    // Following a route by hand: a traveler, its map, what its step offers, what its plans ask.
+                    {
+                        section: { className: "panel sbx-follow", hidden: () => !box().open, children: [
+                            { h3: "Follow a route" },
+                            () => {
+                                const list = get("follow.list", []) ?? [];
+                                if (!list.length) return { p: { className: "muted small", textContent: "Nothing here is on a route yet: run the transaction that makes a traveler, or start with a record already on its way." } };
+                                return { div: { className: "sbx-add", children: [
+                                    labelled("Traveler", select(followed() ?? "", list.map((x) => [x.id, `${x.key ? `@${x.key} · ` : ""}${x.title} · ${x.label} · ${x.route}${x.runState === "ended" ? ` (ended: ${words(x.outcome)})` : x.runState === "stopped" ? " (stopped)" : ""}`]), pickTraveler), "The records on a route here, those its steps made too."),
+                                ] } };
+                            },
+                            () => {
+                                const w = get("follow.where", null);
+                                if (!followed()) return { span: {} };
+                                if (!w) return { p: { className: "muted small", textContent: "Reading where it is…" } };
+                                if (w.error) return { p: { className: "error small", textContent: w.error } };
+                                const r = w.route;
+                                if (!r) return { p: { className: "muted small", textContent: "It is on no route that this person can see." } };
+                                const offers = r.state === "running" ? r.offers ?? [] : [];
+                                return { div: { className: "sbx-where", children: [
+                                    { p: { className: "small", children: [
+                                        { span: { className: "muted", textContent: `${[...(r.inside ?? [])].reverse().map((x) => `${x.label} › `).join("")}${r.label} · ` } },
+                                        { strong: r.state === "ended" ? `ended: ${words(r.outcome)}` : r.state === "stopped" ? `stopped at ${r.nodeLabel}` : `at ${r.nodeLabel}` },
+                                        r.state === "stopped" ? { span: { className: "error", textContent: ` · ${r.reason ?? ""}` } } : { span: {} },
+                                    ] } },
+                                    r.map ? routeMaps(api, r, { view: `${S}.follow.view.${followed()}`, key: `sbx-${followed()}` }) : { span: {} },
+                                    offers.length ? { div: { className: "sbx-offers", children: [
+                                        { span: { className: "muted small", textContent: `${r.nodeLabel} offers: ` } },
+                                        ...offers.map((n) => (txs()[n]
+                                            ? { button: { key: n, type: "button", className: "btn", disabled: busy, textContent: txs()[n].label ?? n, onclick: () => offer(n) } }
+                                            : { span: { key: n, className: "muted small", textContent: ` ${words(n)} (not one you may see)` } })),
+                                    ] } } : r.state === "running" ? { p: { className: "muted small", textContent: `${r.nodeLabel} offers nothing to run: it waits for a plan, or for its step to be set.` } } : { span: {} },
+                                    ...(w.tasks ?? []).map((task) => ({ div: { key: task.run, className: "sbx-task", children: [
+                                        { span: { className: "small", children: [icon("personChoice"), { strong: ` ${task.label}: ${task.nodeLabel}` }, { span: { className: "muted", textContent: `${task.subject ? ` · ${task.subject.title}` : ""}${task.for ? ` · for ${[...(task.for.groups ?? []), ...(task.for.users ?? [])].join(", ") || "nobody"}` : ""}` } }] } },
+                                        task.message ? { div: { className: "muted small", textContent: task.message } } : { span: {} },
+                                        { div: { className: "sbx-offers", children: task.kind === "manual_decision"
+                                            ? (task.choices ?? []).map((c) => ({ button: { key: c, type: "button", className: "btn", disabled: busy, textContent: c, onclick: () => answer(task, c) } }))
+                                            : [{ button: { type: "button", className: "btn", disabled: busy, textContent: task.kind === "input_screen" ? "Fill it in…" : "Answer…", onclick: () => answer(task) } }] } },
+                                    ] } })),
+                                ] } };
+                            },
                         ] },
                     },
                     // A step, run in it.
@@ -418,15 +680,15 @@ export function registerSandbox(juris, { args }) {
                                 return { div: { className: "sbx-step-form", children: [
                                     { div: { className: "sbx-add", children: [
                                         labelled("What", select(st.kind ?? "transaction", KINDS, (v) => set("step", { kind: v, as: st.as }))),
-                                        kindNames.length ? labelled(st.kind === "create" ? "Object" : "Which", select(st.name ?? "", [["", "—"], ...kindNames], (v) => set("step", { kind: st.kind, as: st.as, name: v }))) : { span: {} },
+                                        kindNames.length ? labelled(st.kind === "create" ? "Object" : "Which", select(st.name ?? "", [["", "—"], ...kindNames], (v) => { set("step", { kind: st.kind, as: st.as, name: v, ...(st.kind === "transaction" ? { input: travelerInputOf(v) } : {}) }); set("sugg", {}); suggestAll(); })) : { span: {} },
                                         ["action", "update", "screen", "act"].includes(st.kind) ? labelled("Record", select(st.record ?? "", allRecordOptions(), (v) => set("step.record", v))) : { span: {} },
                                         st.kind === "act" ? labelled("Plan", select(st.name ?? "", [["", "the one waiting on it"], ...Object.entries(plans())], (v) => set("step.name", v))) : { span: {} },
                                         st.kind === "act" ? labelled("How", select(st.how ?? "fill", ACTS, (v) => set("step.how", v))) : { span: {} },
                                         st.kind === "act" && st.how === "choose" ? labelled("Choice", { input: { value: () => api.getState(`${S}.step.choice`, "") ?? "", placeholder: "Material", oninput: (e) => set("step.choice", e.target.value) } }, "As the wire is labelled.") : { span: {} },
                                         st.kind === "action" && recObject ? labelled("Action", select(st.name ?? "", [["", "—"], ...(objects()[recObject]?.transitions ?? []).map((x) => [x.action, x.label ?? x.action])], (v) => set("step.name", v))) : { span: {} },
-                                        labelled("As", select(st.as ?? as, people(), (v) => set("step.as", v)), "Their roles decide, as they will live."),
+                                        labelled("As", select(st.as ?? as, people(), (v) => { set("step.as", v); suggestAll(); }), "Their roles decide, as they will live."),
                                     ] } },
-                                    st.kind === "transaction" && t ? { div: { className: "sbx-inputs", children: Object.entries(t.inputs ?? {}).filter(([, s]) => !s.from).map(([k, s]) => ({ div: { key: k, children: [labelled(`${s.label ?? k}${s.required ? " *" : ""}`, inputControl(k, s))] } })) } } : { span: {} },
+                                    st.kind === "transaction" && t ? { div: { className: "sbx-inputs", children: Object.entries(t.inputs ?? {}).filter(([, s]) => !s.from).map(([k, s]) => ({ div: { key: k, children: [labelled(`${s.label ?? k}${s.required ? " *" : ""}`, inputControl(k, s)), s.type === "ref" ? suggestionsOf(k, s) : { span: {} }] } })) } } : { span: {} },
                                     st.kind === "transaction" && t?.signature ? { label: { className: "small", children: [{ input: { type: "checkbox", checked: Boolean(st.sign), onchange: (e) => set("step.sign", e.target.checked) } }, { span: ` Signed: “${t.signature.meaning}”` }] } } : { span: {} },
                                     // A second person verifies it (§7.4): in a sandbox, the one named here, with no password.
                                     st.kind === "transaction" && t?.signature?.verifier && st.sign ? labelled("Verified by", select(st.verifier ?? "", [["", "—"], ...people()], (v) => set("step.verifier", v)), `“${t.signature.verifier.meaning}”: someone who may verify it; no password in a sandbox.`) : { span: {} },
@@ -476,7 +738,7 @@ export function registerSandbox(juris, { args }) {
                                 const sv = get("save", {});
                                 return { div: { className: "sbx-add", children: [
                                     labelled("Keep it as a scenario of", select(sv.tx ?? "", [["", "—"], ...tx.map((n) => [n, n.startsWith("flow:") ? `${flowLabel(n.slice(5))} (flow template)` : draftTx()[n]?.label ?? n])], (v) => set("save.tx", v))),
-                                    labelled("Named", { input: { value: () => api.getState(`${S}.save.name`, "") ?? "", placeholder: "what it shows", oninput: (e) => set("save.name", e.target.value) } }),
+                                    labelled("Named", { input: { value: () => api.getState(`${S}.save.name`, "") ?? "", placeholder: "what it shows", maxLength: 120, oninput: (e) => set("save.name", e.target.value) } }),
                                     { button: { type: "button", className: "btn primary", disabled: busy, textContent: "Save the scenario", onclick: saveScenario } },
                                 ] } };
                             },

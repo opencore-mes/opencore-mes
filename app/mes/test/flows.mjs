@@ -31,7 +31,7 @@
 import pg from "pg";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 import { loadSuites } from "../suites.mjs";
 import { flowWalk } from "../client/definition.js";
@@ -84,6 +84,8 @@ try {
             { id: "lot-station", roles: ["operator", "supervisor"], fields: { station: "write" } },
         ],
         flow: { as: ["traveler"], step: "station" },
+        // Its history says the machine and what was scrapped; the rest of a change is counted, not listed.
+        history: { fields: ["machine", "scrap_qty"] },
     };
     // A machine may have another paired on it (an oven beside a press): read off it, never placed by the route.
     const machine = { ...machineDef.body, fields: { ...machineDef.body.fields, paired: { label: "Paired with", type: "ref", to: "machine" } }, flow: { as: ["resource"] } };
@@ -118,13 +120,20 @@ try {
     };
     // Held's onEnter: holds the lot, and notes why in the context.
     const holdScript = `// On entering Held: the lot is held, as the route, by its own lifecycle (§32.5).
-export default function ${HOLD}(ctx) {
+export default async function ${HOLD}(ctx) {
   ctx.context.held_for = "scrap over " + ctx.context.max_scrap;
+  ctx.context.held_at = ctx.now;
+  // As the template, with its roles: its own lot and a work order (it holds roles there), its machine
+  // (none there: null).
+  const lot = await ctx.lookup("lot", ctx.context.lot.id);
+  ctx.context.held_qty = lot ? lot.qty : null;
+  ctx.context.saw_order = (await ctx.lookup("work_order", "WO-1002")) !== null;
+  ctx.context.saw_machine = (await ctx.lookup("machine", "SP-${tag}")) !== null;
   ctx.writes.push({ record: "lot", action: "hold" });
   return ctx;
 }
 `;
-    const holdTests = [{ name: "holds the lot", run: { event: { kind: "enter", node: "held" }, context: { max_scrap: 5 }, writes: [] }, expect: { output: { writes: [{ record: "lot", action: "hold" }], context: { held_for: "scrap over 5" } } } }];
+    const holdTests = [{ name: "holds the lot", run: { event: { kind: "enter", node: "held" }, context: { max_scrap: 5, lot: { id: "L1" } }, writes: [], now: "2026-10-01T08:00:00.000Z", lookups: { "lot/L1": { qty: 90 }, "work_order/WO-1002": { wo_no: "WO-1002" } } }, expect: { output: { writes: [{ record: "lot", action: "hold" }], context: { held_for: "scrap over 5", held_at: "2026-10-01T08:00:00.000Z", held_qty: 90, saw_order: true, saw_machine: false } } } }];
     const flow = {
         name: FLOW, label: "Press route", description: "Inspect, press, then the oven; too much scrap is held.", kind: "route",
         participants: { lot: { object: "lot", as: "traveler" }, machine: { object: "machine", as: "resource" } },
@@ -175,6 +184,58 @@ export default function ${HOLD}(ctx) {
     step("the route, the lot and machine opting in, Inspect and Held's script, drafted together: no problems", saved.problems?.length === 0, saved.problems);
     const tried = await call("dana", "sandbox.tryScenario", { id, flow: FLOW, scenario: { records: flow.scenarios[0].records, steps: [{ ...flow.scenarios[0].steps[0], expect: { ok: true, node: { lot: "oven" } } }] } });
     step("a scenario tried on the draft that expects the wrong node fails, saying where the lot is (§32.8)", tried.passed === false && /lot is at press, expected at oven/.test(tried.detail), tried);
+
+    // ---- 1b. the route followed by hand in the change's sandbox (§32.8) ----
+    const box = await call("dana", "sandbox.open", { id, records: { ...flow.scenarios[0].records, press: { object: "machine", where: { kind: ["press"], state: ["idle"] } }, broken: { object: "machine", data: { machine_id: `MX-${tag}`, name: "Press out of order", kind: "press", capacity: 1 }, state: "down" }, oven: { object: "machine", where: { kind: ["oven"] }, state: "down" } } });
+    const boxLot = box.records?.lot?.id;
+    const [liveOven] = await db.query("SELECT state FROM mes.records WHERE id = $1", [box.records?.oven?.id]);
+    step("a record picked may start in a state of its own: the oven, idle live, starts down in the sandbox, said so; the live one is untouched",
+        box.records?.oven?.state === "down" && liveOven?.state !== "down" && (box.notes ?? []).some((n) => /oven: starts down here/.test(n)), { oven: box.records?.oven, live: liveOven, notes: box.notes, error: box.error });
+    const travelers = await call("dana", "sandbox.travelers", { id });
+    const atInspect = await call("dana", "sandbox.where", { id, record: boxLot, as: "olga" });
+    step("in the change's sandbox, the lot it starts with is a traveler on the drafted route: at Inspect, which offers Inspect, with the route's map and no plan waiting",
+        travelers.length === 1 && travelers[0].id === boxLot && travelers[0].key === "lot" && travelers[0].route === "Press route" && travelers[0].runState === "running"
+        && atInspect.route?.node === "inspect" && atInspect.route.offers.includes(INSPECT) && Boolean(atInspect.route.map?.nodes?.press) && atInspect.tasks.length === 0,
+        { travelers, atInspect: { node: atInspect.route?.node, offers: atInspect.route?.offers, tasks: atInspect.tasks, error: atInspect.error } });
+    const boxInspected = await call("dana", "sandbox.run", { id, step: { as: "olga", do: { transaction: INSPECT, input: { lot: "@lot" } } } });
+    const atPress = await call("dana", "sandbox.where", { id, record: boxLot, as: "olga" });
+    const suggested = await call("dana", "sandbox.suggest", { id, as: "olga", transaction: "move_in", input: { lot: boxLot }, field: "machine" });
+    const byKey = Object.fromEntries((suggested.candidates ?? []).map((c) => [c.key, c]));
+    step("Inspect run there, the lot is at Press; for Move in's machine it suggests the presses only (the oven is not where Press is done), the idle one taken, the one down refused in the transaction's words",
+        boxInspected.ok && atPress.route?.node === "press" && suggested.step?.node === "press" && suggested.step.allows?.kind?.includes("press")
+        && byKey.press?.ok === true && byKey.broken?.ok === false && /The machine is down/.test(byKey.broken.why) && !byKey.oven && suggested.others >= 1
+        && suggested.candidates[0].ok === true,
+        { inspected: boxInspected.error ?? "ok", node: atPress.route?.node, suggested });
+    const noLot = await call("dana", "sandbox.suggest", { id, as: "olga", transaction: "move_in", input: {}, field: "machine" });
+    const notTheirs = await call("dana", "sandbox.suggest", { id, as: "vera", transaction: "move_in", input: { lot: boxLot }, field: "machine" });
+    step("…with no lot given, it suggests no machine to guess among, but asks for the lot first; as someone who may not run it, it says why once, trying none",
+        noLot.waitFor?.field === "lot" && noLot.candidates.length === 0
+        && Boolean(notTheirs.untried) && notTheirs.candidates.length > 0 && notTheirs.candidates.every((c) => c.ok === null),
+        { noLot, notTheirs: { untried: notTheirs.untried, n: notTheirs.candidates?.length, error: notTheirs.error } });
+    step("…each suggestion says what it is, by its object's list columns (a machine's name and kind), not only its number",
+        Array.isArray(byKey.press?.about) && byKey.press.about.includes("press") && byKey.press.about.length <= 2, byKey.press);
+    const notRef = await call("dana", "sandbox.suggest", { id, as: "olga", transaction: INSPECT, input: {}, field: "nothing_here" });
+    step("…and nothing for an input that is not a reference", Array.isArray(notRef.candidates) && notRef.candidates.length === 0, notRef);
+    await call("dana", "sandbox.close", { id });
+    const badState = await call("dana", "sandbox.open", { id, records: { oven: { object: "machine", where: { kind: ["oven"] }, state: "asleep" } } });
+    step("…one its object does not have is refused, naming those it has", /has no state "asleep": one of/.test(badState.error ?? ""), badState);
+    await call("dana", "sandbox.close", { id });
+    // What the route needs to be walked to its end, before a sandbox is opened (§5.11).
+    const [pressId] = (await db.query("SELECT id FROM mes.records WHERE object = 'machine' AND data->>'kind' = 'press' AND archived_at IS NULL LIMIT 1")).map((r) => r.id);
+    const needs = await call("dana", "sandbox.needs", { id, flow: FLOW, records: { lot: flow.scenarios[0].records.lot, press: { object: "machine", id: pressId } } });
+    const machineNeeds = (needs.needs ?? []).filter((n) => n.object === "machine");
+    const kindsNeeded = machineNeeds.map((n) => [].concat(n.where.kind).join());
+    step("what the drafted route needs is said before the sandbox opens: a press for Press and an oven for Oven, in the order a lot meets them; the press chosen gives the first, live ovens are offered for the second",
+        needs.flow === FLOW && needs.routes?.some((r) => r.name === FLOW && r.draft) && kindsNeeded.join("|") === "press|oven"
+        && machineNeeds[0].why.includes("Press") && machineNeeds[0].have.includes("press") && machineNeeds[1].have.length === 0 && machineNeeds[1].candidates.length > 0
+        && needs.traveler?.object === "lot",
+        { needs: needs.error ?? needs.needs, routes: needs.routes });
+    // The traveler is the first need: the route's own (its participant as traveler), the ones its start takes.
+    const bare = await call("dana", "sandbox.needs", { id, flow: FLOW, records: {} });
+    step("…and the traveler first, as required as the rest: a lot whose item the route's start takes, the given one counting; asked for when none is chosen",
+        needs.needs?.[0]?.object === "lot" && Boolean(needs.needs[0].traveler) && [].concat(needs.needs[0].where?.item).join() === ITEM && needs.needs[0].have.includes("lot")
+        && bare.needs?.[0]?.object === "lot" && bare.needs[0].have.length === 0 && /the traveler/.test(bare.needs[0].why.join()),
+        { first: needs.needs?.[0], bare: bare.needs?.[0] ?? bare });
 
     // ---- 2. approved ----
     const submitted = await call("dana", "design.submit", { id });
@@ -252,6 +313,21 @@ export default function ${HOLD}(ctx) {
     const heldLot = await rec("lot", lotA);
     step("Move out takes it on: 10 kg scrapped, over the context's 5, the auto decision sends it to Held, whose script holds it and says why in the context; its run ends",
         away.ok && where.state === "ended" && where.outcome === "held" && heldLot.state === "on_hold" && where.steps.map((s) => s.node).join() === "start,inspect,press,scrap,held" && where.context?.held_for === "scrap over 5", { away: away.error, where, state: heldLot.state });
+    step("…its script read the time as every script does, from ctx.now (§12): when it held the lot",
+        typeof where.context?.held_at === "string" && Math.abs(Date.parse(where.context.held_at) - Date.now()) < 120000, where.context);
+    step("…and looked records up as the template (§32.6): its own lot read, with its quantity, and a work order (roles it holds); its machine, where it holds none, not seen",
+        where.context?.held_qty === heldLot.data.qty && where.context?.saw_order === true && where.context?.saw_machine === false, { context: where.context, qty: heldLot.data.qty });
+    // Its history in words (§10.10): a transaction's writes named by it, a step by its label and route, the
+    // fields the design says by their labels, the rest counted; every change on asking.
+    const hist = await call("olga", "records.history", { object: "lot", id: lotA });
+    const histAll = await call("olga", "records.history", { object: "lot", id: lotA, every: true });
+    const keysOf = (rows) => new Set(rows.flatMap((r) => Object.keys({ ...(r.before ?? {}), ...(r.after ?? {}) })));
+    const outRows = hist.filter((r) => r.via?.name === "track_out");
+    step("its history names the transaction behind each change and the step it entered, by label and route; only the fields its design says, the rest counted; every change on asking",
+        outRows.length >= 1 && outRows.every((r) => r.via.label === "Track out" && r.via.kind === "transaction") && hist.some((r) => r.step?.label === "Press" && r.step.route === "Press route" && r.via?.kind === "flow")
+        && hist.some((r) => r.labels?.scrap_qty && r.after?.scrap_qty === 10) && [...keysOf(hist)].every((k) => ["machine", "scrap_qty", "state", "archived_at", "archived_by"].includes(k))
+        && hist.some((r) => r.omitted > 0) && keysOf(histAll).has("scrap_reason") && hist.every((r) => r.actorName),
+        { hist: hist.map((r) => [r.action, r.via?.label, r.step?.label, Object.keys(r.after ?? {}).join(","), r.omitted]), every: [...keysOf(histAll)] });
     const audit = await db.query("SELECT actor, on_behalf_of FROM mes.audit_log WHERE record_id = $1 AND action = 'transition:hold'", [lotA]);
     step("…the hold is audited as the flow, for its run", audit.length === 1 && audit[0].actor === `flow:${FLOW}` && audit[0].on_behalf_of?.startsWith(`flow:${FLOW}:`), audit);
     const lotB = await newLot(`FB-${tag}`, 50);
@@ -465,15 +541,24 @@ export default function ${HOLD}(ctx) {
             { as: "quinn", do: { act: { record: "@chk", plan: AGAIN, values: { note: "fine" } } }, expect: { ok: true, node: { chk: "end" } } },
         ] }],
     };
+    // Once done, its script makes the follow-up check, as the plan (its roles let it create checks).
+    const FOLLOW = `follow_t${tag}`;
+    const followScript = `// Done: a follow-up check in a week, made as the plan.
+export default function ${FOLLOW}(ctx) {
+  ctx.writes.push({ create: "${CHK}", data: { name: "Follow-up of " + ctx.context.chk.name } });
+  return ctx;
+}
+`;
+    const followTests = [{ name: "makes the follow-up", run: { event: { kind: "enter", node: "end" }, context: { chk: { name: "X" } }, writes: [] }, expect: { output: { writes: [{ create: CHK, data: { name: "Follow-up of X" } }] } } }];
     const dueFlow = {
         name: DUE, label: "Due check", kind: "plan", participants: { chk: { object: CHK, as: "subject" } },
-        nodes: { start: { kind: "start", label: "Due", due: "due_on", again: true }, q: note("Do the check"), end: { kind: "end", label: "Done" } },
-        edges: [{ from: "start", to: "q" }, { from: "q", to: "end" }], stewards: ["quality"],
+        nodes: { start: { kind: "start", label: "Due", due: "due_on", again: true }, q: note("Do the check"), end: { kind: "end", label: "Done", onEnter: FOLLOW } },
+        edges: [{ from: "start", to: "q" }, { from: "q", to: "end" }], stewards: ["quality"], roles: { [CHK]: ["user"] },
         scenarios: [{ name: "due", records: {}, steps: [{ as: "quinn", do: { create: CHK, data: { name: "Late", due_on: "2020-01-01" }, key: "chk" }, expect: { ok: true, node: { chk: "q" } } }] }],
     };
     const wrongDue = await call("dana", "design.check", { definitions: { [CHK]: chkDef }, flows: { [DUE]: { ...dueFlow, nodes: { ...dueFlow.nodes, start: { ...dueFlow.nodes.start, due: "name" } } } } });
     step("a due date that is not a date field of the subject is named, with the date fields it has", wrongDue.problems?.some((p) => p.path === `flows.${DUE}.nodes.start` && /due names a date field of the subject \(chk_t\d+: due_on\)/.test(p.message)), wrongDue.problems);
-    const chkSaved = await call("dana", "design.save", { id: chkChange, reason: "Checks, looked at again and on their date.", definitions: { [CHK]: chkDef }, flows: { [AGAIN]: againFlow, [DUE]: dueFlow } });
+    const chkSaved = await call("dana", "design.save", { id: chkChange, reason: "Checks, looked at again and on their date.", definitions: { [CHK]: chkDef }, flows: { [AGAIN]: againFlow, [DUE]: dueFlow }, scripts: { [FOLLOW]: followScript }, tests: { [FOLLOW]: followTests } });
     // Quality's role on the new object first: its scenarios run as Quality.
     await db.query("INSERT INTO mes.assignments (subject_kind, subject_id, object, role) VALUES ('group', 'quality', $1, 'user')", [CHK]);
     await call("dana", "design.submit", { id: chkChange });
@@ -493,6 +578,9 @@ export default function ${HOLD}(ctx) {
     const chk2 = await call("quinn", "records.create", { object: CHK, data: { name: `Yesterday ${tag}`, due_on: day(-1) }, key: key() });
     const onWrite = await runsOf(chk2.id, DUE);
     step("a plan due on a date: not before it (due tomorrow), at once on a write once it has arrived (due yesterday)", notYet.length === 0 && onWrite.length === 1 && onWrite[0].node === "q", { notYet: notYet.length, onWrite: onWrite.map((r) => [r.state, r.node]) });
+    const doneCheck = await call("quinn", "flows.act", { run: onWrite[0]?.id, values: { note: "done" } });
+    const follow = await db.query("SELECT data, created_by FROM mes.records WHERE object = $1 AND data->>'name' = $2", [CHK, `Follow-up of Yesterday ${tag}`]);
+    step("…done, its script makes a record of its own (the follow-up check), as the plan, through the record services, once", doneCheck.ok !== false && follow.length === 1 && follow[0].created_by === `flow:${DUE}`, { doneCheck, follow });
     // The date arrives with no write: an instance's scheduler sets it off (time passed, as the test
     // moves the date; a first tick checks due dates at once).
     await db.query("UPDATE mes.records SET data = data || jsonb_build_object('due_on', $2::text) WHERE id = $1", [chk1.id, day(0)]);
@@ -519,11 +607,11 @@ export default function ${HOLD}(ctx) {
     // Tried on a draft being designed: a change of the live template, as the Copilot would.
     const { id: againId } = await call("dana", "design.start", { flow: FLOW });
     const aiTried = await ai("POST", "/scenarios/try", { id: againId, flow: FLOW, scenario: flow.scenarios[0] });
-    step("the AI reads the template contract and a live template, checks one (a node no way leads to, by its node; the work order to opt in, as missing), lays one out, explains one in words, and tries a scenario in a sandbox (the node it reaches)",
+    step("the AI reads the template contract and a live template, checks one (a node no way leads to, by its node; the work order to opt in, as missing), lays one out, explains one in words, and tries a scenario in a sandbox (the node it reaches, by its label)",
         /step field/.test(contractRead.body.flows?.optIn ?? "") && /manual_decision/.test(contractRead.body.flows?.nodes ?? "") && live.body.flow?.name === FLOW
         && checked.body.problems?.some((p) => p.path === `flows.${FLOW}.nodes.lost`) && checked.body.missing?.some((m) => /work_order takes no part as a reference/.test(m))
         && laid.body.layout?.start?.x === 40 && laid.body.layout.press.x > laid.body.layout.inspect.x
-        && aiTried.body?.passed === true && aiTried.body.steps?.[0]?.nodes?.lot?.[FLOW]?.node === "press"
+        && aiTried.body?.passed === true && aiTried.body.steps?.[0]?.nodes?.lot?.[FLOW]?.node === "press" && aiTried.body.steps[0].nodes.lot[FLOW].label === "Press"
         && /Start: the start, for runs where lot.item is/.test(told.body.words) && /Held if lot.scrap_qty > max_scrap/.test(told.body.words) && /on entering, hold_lot_t/.test(told.body.words),
         { contract: Boolean(contractRead.body.flows), live: live.status, checked: checked.body, layout: laid.body, words: told.body, tried: aiTried.body });
 
@@ -537,7 +625,7 @@ export default function ${HOLD}(ctx) {
     const subRoute = {
         name: SUB, label: "Rework", kind: "route", asSub: true, description: "Strip, then redo.",
         participants: { lot: { object: "lot", as: "traveler" } }, context: { verdict: "reworked" },
-        nodes: { start: { kind: "start", label: "Start" }, strip: { kind: "sequence", label: "Strip", offers: [CHECK], leaves: [CHECK] }, redo: { kind: "sequence", label: "Redo", offers: [CHECK], leaves: [CHECK] }, back: { kind: "end", label: "Reworked", outcome: "reworked" } },
+        nodes: { start: { kind: "start", label: "Start" }, strip: { kind: "sequence", label: "Strip", offers: [CHECK, "move_out"], leaves: [CHECK] }, redo: { kind: "sequence", label: "Redo", offers: [CHECK], leaves: [CHECK] }, back: { kind: "end", label: "Reworked", outcome: "reworked" } },
         edges: [{ from: "start", to: "strip" }, { from: "strip", to: "redo" }, { from: "redo", to: "back" }],
         layout: { start: { x: 40, y: 60 }, strip: { x: 220, y: 60 }, redo: { x: 400, y: 60 }, back: { x: 580, y: 60 } },
         roles: { lot: ["router"], work_order: ["viewer"] }, stewards: ["production"],
@@ -592,6 +680,19 @@ export default function ${HOLD}(ctx) {
     const lotS = await newLot2(`SRA-${tag}`);
     const atPrep = await routeRuns(lotS);
     step("a lot starts the route, not the sub route by itself: one run, at Prep", atPrep.length === 1 && atPrep[0].flow === MAIN && atPrep[0].node === "prep" && (await rec("lot", lotS)).data.station === "prep", atPrep);
+    const seenBefore = await runOf(lotS);
+    step("its page has the route's sub flow open to a click before the lot gets there: the node names the sub route, whose map comes as published, nothing walked on it, and the way holds the one run",
+        seenBefore.map?.nodes?.rework?.flow === SUB && seenBefore.routes?.length === 1 && seenBefore.routes[0].id === seenBefore.id && seenBefore.routes[0].parent === null
+        && Object.keys(seenBefore.subMaps?.[SUB]?.nodes ?? {}).includes("strip") && !JSON.stringify(seenBefore.subMaps).includes("verdict"),
+        { map: seenBefore.map?.nodes?.rework, routes: seenBefore.routes, subMaps: seenBefore.subMaps });
+    // Move out is offered only inside the sub route (at Strip): on the route's own steps it is refused,
+    // the sub route not entered yet (the whole way counts, §32.14).
+    // (Its machine set as a fixture, the field being a transaction's to write: what is tried is the gate.)
+    const lotG = await newLot2(`SRG-${tag}`);
+    await db.query("UPDATE mes.records SET data = data || jsonb_build_object('machine', $2::text) WHERE id = $1", [lotG, pressM.id]);
+    const outEarly = await run("move_out", { lot: lotG });
+    step("a transaction only the sub route offers is refused on the route's own step, before the lot enters the sub route",
+        outEarly.status >= 400 && /at Prep \(Main route\), where Move out is not done/.test(outEarly.error ?? ""), outEarly);
     const intoSub = await run(INSPECT, { lot: lotS });
     const inSub = await routeRuns(lotS);
     const seenIn = await runOf(lotS);
@@ -611,6 +712,12 @@ export default function ${HOLD}(ctx) {
     const finish = await run(CHECK, { lot: lotS, machine: pressM.id });
     const subDone = await routeRuns(lotS);
     step("and on to the route's end", !finish.error && subDone[0].state === "ended" && subDone[0].outcome === "done", { finish, subDone });
+    const seenDone = await runOf(lotS);
+    const subRun = seenDone.routes?.find((r) => r.flow === SUB);
+    step("ended, its page still opens the sub route from its node: the route at the top, the sub route's run under it with the node that ran it (Rework it), its own way, map and outcome",
+        seenDone.flow === MAIN && seenDone.routes?.length === 2 && seenDone.routes[0].id === seenDone.id && subRun?.parent === seenDone.id && subRun.at === "rework"
+        && subRun.state === "ended" && subRun.outcome === "reworked" && subRun.steps.map((x) => x.node).join(",").startsWith("start,strip") && Boolean(subRun.map?.nodes?.strip),
+        { routes: seenDone.routes?.map(({ map, ...r }) => r) });
     // Taken out of the sub route by hand: its step set to a step of the route it runs inside.
     const lotT = await newLot2(`SRB-${tag}`);
     await run(INSPECT, { lot: lotT });

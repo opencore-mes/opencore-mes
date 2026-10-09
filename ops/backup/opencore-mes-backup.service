@@ -1,0 +1,12 @@
+# Nightly backups (backup.sh) of each database named in /etc/opencore-mes/backup.env (BACKUP_DATABASES, space
+# separated URLs), as root: the key is root's alone. A failure fails the unit (`systemctl --failed`, the alerting).
+[Unit]
+Description=OpenCore MES: encrypted backups of its databases
+After=postgresql.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/opencore-mes/backup.env
+ExecStart=/bin/sh -c 'for db in $BACKUP_DATABASES; do su -s /bin/sh postgres -c "DATABASE_URL=$db BACKUP_DIR=$BACKUP_DIR BACKUP_KEY=/run/backup.key KEEP_DAYS=$${KEEP_DAYS:-14} KEEP_MONTHS=$${KEEP_MONTHS:-12} BACKUP_COPY=\\"$${BACKUP_COPY:-}\\" /srv/opencore-mes/current/ops/backup/backup.sh" || exit 1; done'
+ExecStartPre=/bin/sh -c 'install -m 0400 -o postgres /etc/opencore-mes/backup.key /run/backup.key && install -d -m 0700 -o postgres $BACKUP_DIR'
+ExecStopPost=/bin/rm -f /run/backup.key

@@ -26,5 +26,7 @@ export const start = async () => {
             return text ? `${text} · OpenCore MES` : undefined;
         },
         expose: "mes",
+        // As the server's (app.mjs): a PDF shown in the page by the media view (media.js).
+        juris: { allowTags: ["iframe"] },
     });
 };

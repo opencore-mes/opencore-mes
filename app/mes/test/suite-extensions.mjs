@@ -24,12 +24,18 @@
 //      suite's words. A kind whose times cannot be read gives none, and nothing else stops. With the
 //      suite removed the service stays published, the scheduler plans nothing for it, and the monitor
 //      and a change to it say which suite it needs.
+//   8. What the AI is told of suites (design.suites, GET /ai/v1/suites, the copilot's get_suites, §29.10): the
+//      hello suite with its version, a newer one, what it gives, its guide, and every live design's needs of it,
+//      given; with the suite removed, each need not given, saying the suite is not installed.
+//   9. Its versions (§29.5): each version run is kept with what it gave. A newer one that no longer gives its step
+//      kind leaves the transaction's need broken, saying so, with the version that last gave it and the command
+//      back (`suite use` where it is kept on disk); removed, it is listed with its last version and the way back.
 //
 //   DATABASE_URL=postgres:///openmes_test node app/mes/test/suite-extensions.mjs   (after a reset)
 import pg from "pg";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 import { loadSuites } from "../suites.mjs";
 import { migrate } from "../db/migrate.mjs";
@@ -72,7 +78,7 @@ async function serve(suites, extra = {}) {
         return res.ok ? body : { error: body.error, status: res.status, code: body.code, fields: body.fields, problems: body.problems };
     };
     const page = async (user, path) => { const res = await fetch(`${mes}${path}`, { headers: { cookie: `mes_session=${sessions[user]}` } }); return { status: res.status, html: await res.text() }; };
-    return { app: made, call, page };
+    return { app: made, call, page, url: mes };
 }
 
 try {
@@ -91,7 +97,8 @@ export default async function ${WAVE}(ctx) {
 }`;
     const body = {
         name: WAVE, label: "Wave", description: "Waves to someone.",
-        input: { to: { label: "To", type: "string", required: true } },
+        // Not required: a blank one (spaces, trimmed, §11.1a) reaches the suite, whose own refusal is under test.
+        input: { to: { label: "To", type: "string" } },
         http: { enabled: false }, callers: { users: ["olga"], groups: [] }, on: [], runAs: "caller",
         uses: { connections: [], objects: {}, suites: { hello: ["wave", "count"] } }, stewards: ["production"],
     };
@@ -342,6 +349,33 @@ export default async function ${name}(ctx) {
     await timed.app.close?.();
     timed = null;
 
+    // ---- 8. what the AI is told, while the suite is installed ----
+    const told = await call("dana", "design.suites", { as: "dana" });
+    const hello = told.suites?.find((x) => x.name === "hello");
+    const mine = (told.needs ?? []).filter((n) => [WAVE, TAG, BOARD, CARD, TICK].some((d) => n.design.endsWith(`:${d}`)));
+    step("what the AI is told of suites: hello, its version, what it gives (capabilities, steps, blocks, schedules, elements), its guide; the live designs' needs of it (a service's capability and schedule, a transaction's step, a screen's block, an element's kind), each given",
+        hello?.version === "1.0.0" && hello.gives.capabilities.includes("wave") && hello.gives.steps.length && hello.gives.blocks.length && hello.gives.schedules.length && hello.gives.elements.length && hello.guide?.title
+        && ["capability", "kind of schedule", "step kind", "block kind", "kind of design element"].every((w) => mine.some((n) => n.what === w)) && mine.every((n) => n.given),
+        { hello, mine, broken: told.broken });
+
+    // ---- 9. a newer version that no longer gives its step kind ----
+    await app.close?.();
+    app = null;
+    const [hello1] = suites;
+    const hello11 = { ...hello1, version: "1.1.0", register: async (ctx) => ({ ...(await hello1.register(ctx)), steps: {} }) };
+    const newer = await serve([hello11], { suiteKept: () => ({ hello: ["1.0.0"] }) });
+    const after = await newer.call("dana", "design.suites", { as: "dana" });
+    await newer.app.close?.();
+    const h = after.suites?.find((x) => x.name === "hello");
+    const stepNeed = (after.broken ?? []).find((n) => n.design === `transaction:${TAG}` && n.what === "step kind");
+    const [kept10] = await db.query("SELECT gives FROM mes.suite_versions WHERE name = 'hello' AND version = '1.0.0'");
+    step("its versions: 1.0.0 kept with what it gave; 1.1.0, which no longer gives its step kind, leaves the transaction's need broken, saying so, with 1.0.0 as the version that last gave it and the command back (kept on disk: suite use)",
+        kept10?.gives?.steps?.length > 0 && h?.version === "1.1.0" && h.history?.map((x) => x.version).join() === "1.1.0,1.0.0" && h.history[1].kept === true
+        && /Hello suite 1\.1\.0 gives no step kind/.test(stepNeed?.why ?? "") && stepNeed?.lastGiven?.version === "1.0.0" && stepNeed.lastGiven.back === "opencore-mes suite use hello@1.0.0",
+        { history: h?.history?.map((x) => [x.version, x.kept, x.gives?.steps]), stepNeed, kept10 });
+    const second = await serve(suites);
+    app = second.app;
+
     // ---- 3. the suite removed ----
     await app.close?.();
     app = null;
@@ -349,6 +383,19 @@ export default async function ${name}(ctx) {
     bare = gone.app;
     const still = await gone.call("dana", "design.home", { as: "dana" });
     const without = await gone.call("olga", "integration.call", { name: WAVE, input: { to: "Quinn" } });
+    // ---- 8, removed: what the AI is told now, through its own API ----
+    const { createTokens } = await import("../server/ai-api.js");
+    const issued = await createTokens(db).issue("dana", { name: "suites test", agent: "test agent" });
+    const aiSuites = await (await fetch(`${gone.url}/ai/v1/suites`, { headers: { authorization: `Bearer ${issued.token}`, "x-ai-agent": "test agent" } })).json();
+    const brokenNow = (aiSuites.broken ?? []).filter((n) => [WAVE, TAG, BOARD, CARD, TICK].some((d) => n.design.endsWith(`:${d}`)));
+    step("…with the suite removed, the AI's own API (GET /ai/v1/suites) says no suite is installed and lists every one of those designs' needs as not given, because the hello suite is not installed",
+        Array.isArray(aiSuites.suites) && !aiSuites.suites.some((x) => x.name === "hello") && brokenNow.length >= 5 && brokenNow.every((n) => /hello suite is not installed/.test(n.why ?? "")),
+        { suites: aiSuites.suites?.map((x) => x.name), brokenNow, error: aiSuites.error });
+    const gone9 = (aiSuites.removed ?? []).find((x) => x.name === "hello");
+    const stepGone = brokenNow.find((n) => n.what === "step kind");
+    step("…and lists the hello suite as removed, its last version run (1.0.0, started again after 1.1.0) and the command that has it back; the step's need names the version that last gave it",
+        gone9?.last === "1.0.0" && /opencore-mes suite (use|install) hello@1\.0\.0/.test(gone9.back ?? "") && gone9.history?.length === 2 && stepGone?.lastGiven?.version === "1.0.0",
+        { gone9, stepGone });
     const [lost] = await db.query("SELECT action, after FROM mes.audit_log WHERE object = '$service' AND action LIKE $1 ORDER BY seq DESC LIMIT 1", [`%:${WAVE}`]);
     const other = await gone.call("olga", "records.list", { object: "lot", as: "olga" });
     step("with the suite removed the service is still published and still called: it is refused in words where its script asks the suite, audited, and nothing else stops",

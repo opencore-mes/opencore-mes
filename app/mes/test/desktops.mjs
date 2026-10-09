@@ -13,7 +13,7 @@
 //   DATABASE_URL=postgres:///openmes_test node app/mes/test/desktops.mjs   (after a reset)
 import pg from "pg";
 import { randomBytes } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 import { writeXlsx } from "../server/xlsx.js";
 import { hashPassword } from "../server/sign-in.js";

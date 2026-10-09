@@ -11,11 +11,14 @@
 //   5b. A review that would leave a department with nobody to approve is refused; a review can be
 //      taken back before anyone signs.
 //   6. An AI drafts a screen over the REST API and is told what is wrong.
+//   7. A desk worked all day (§26.10): one tab (needs a parameter); with nothing scanned, the runs of its
+//      transactions from the audit trail, newest first, as the viewer may read them; mine, only theirs; a form
+//      the viewer may not send left out.
 //
 //   DATABASE_URL=postgres:///openmes_test node app/mes/test/screens.mjs   (after a reset)
 import pg from "pg";
 import { randomBytes } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 import { createTokens } from "../server/ai-api.js";
 
@@ -198,6 +201,43 @@ try {
     step("…and is told a block it invented does not exist", draft.body.problems?.some((p) => /the block is one of record, table, kpi, breakdown, chart, transaction, text/.test(p.message)), draft.body);
     await call("dana", "design.withdraw", { id: started.body.id });
     await db.query("UPDATE mes.api_tokens SET revoked_at = now() WHERE id = $1", [issued.id]);
+
+    // ---- 7. a desk worked all day (§26.10): one tab, and what was done there ----
+    const DESK = `desk_t${tag}`;
+    const dk = await call("dana", "design.start", { screen: DESK, label: "Press desk" });
+    const desk = {
+        name: DESK, label: "Press desk", description: "A press scanned, and what was done at the presses lately.",
+        params: { machine: { label: "Machine", type: "ref", to: "machine", required: false, widget: "scan" } }, oneTab: true,
+        blocks: [
+            { block: "record", title: "Machine", object: "machine", of: { param: "machine" }, show: ["machine_id", "state"], showWhen: { not: { is_null: { param: "machine" } } }, width: 12 },
+            { block: "runs", title: "Done here", transactions: ["move_in", "track_in", "track_out", "move_out"], limit: 10, showWhen: { is_null: { param: "machine" } }, width: 12 },
+            { block: "runs", title: "Mine", transactions: ["move_in"], mine: true, width: 12 },
+            { block: "transaction", title: "Move in", name: "move_in", fills: { machine: { param: "machine" } }, width: 12 },
+        ],
+        callers: { users: [], groups: ["production", "quality"] }, stewards: ["production"],
+    };
+    const wrongDesk = await call("dana", "design.save", { id: dk.id, reason: "A press desk.", screens: { [DESK]: { ...desk, params: {}, blocks: [{ block: "runs", transactions: [], limit: 1 }, { block: "runs", transactions: ["no_such_tx"] }, { block: "plan" }] } } });
+    const deskWords = wrongDesk.problems.map((p) => p.message).join("\n");
+    const okDesk = await call("dana", "design.save", { id: dk.id, screens: { [DESK]: desk } });
+    await call("dana", "design.submit", { id: dk.id });
+    await call("eli", "design.review", { id: dk.id, decision: "pass" });
+    const deskLive = await call("sam", "design.approve", { id: dk.id, department: "production", decision: "approve", meaning: "Approved" });
+    step("a desk's settings checked as designed: one tab needs a parameter; a runs block names transactions that exist, and lists 5 to 200; a plan block says whose plan",
+        /One tab is for a screen opened on a record/.test(deskWords) && /name the transactions whose runs it lists/.test(deskWords) && /lists 5 to 200 runs/.test(deskWords) && /"no_such_tx" is not a transaction/.test(deskWords) && /"of" says which record's plan/.test(deskWords)
+        && okDesk.problems.length === 0 && deskLive.state === "executed", { deskWords, problems: okDesk.problems, deskLive: deskLive.state });
+    const deskDef = await call("olga", "screens.get", { name: DESK, as: "olga" });
+    const idleDesk = await call("olga", "screens.data", { name: DESK, arg: null, as: "olga" });
+    const deskDone = idleDesk.blocks?.[1]?.rows ?? [];
+    const mineRows = idleDesk.blocks?.[2]?.rows ?? [];
+    const olgaName = (await db.query("SELECT name FROM mes.users WHERE id = 'olga'"))[0].name;
+    step("nothing scanned: the record is not shown, and what was done lately is, newest first, each run with who, which, its records, their state's way; mine: only the viewer's",
+        deskDef.oneTab === true && idleDesk.blocks[0].$off === "hidden" && deskDone.length >= 4 && deskDone.length <= 10 && deskDone.every((r, k) => k === 0 || r.seq < deskDone[k - 1].seq)
+        && deskDone.every((r) => r.who && r.transaction && r.records.length) && deskDone.some((r) => r.records.some((x) => x.object === "lot" && x.to)) && mineRows.length >= 1 && mineRows.every((r) => r.who === olgaName),
+        { oneTab: deskDef.oneTab, first: idleDesk.blocks?.[0], done: deskDone.slice(0, 2), mine: mineRows.length });
+    // Two kinds of people at one desk: each sees only the forms they may send (Quality is not among Move in's callers).
+    const [olgaForms, quinnForms] = [await call("olga", "screens.data", { name: DESK, arg: press, as: "olga" }), await call("quinn", "screens.data", { name: DESK, arg: press, as: "quinn" })];
+    step("a form the viewer may not send is left out of the screen: Olga (production) has Move in, Quinn (quality) has not, nothing of it sent",
+        !olgaForms.blocks?.[3]?.$off && JSON.stringify(quinnForms.blocks?.[3]) === '{"$off":"hidden"}', { olga: olgaForms.blocks?.[3], quinn: quinnForms.blocks?.[3] });
 } catch (error) {
     step("the test ran to the end", false, { error: error.message, body: error.body });
 } finally {

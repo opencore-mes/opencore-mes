@@ -8,33 +8,249 @@
 //   validateTransaction / transactionFootprint: the same for transactions (§25)
 //
 // It imports only pure modules (expressions, schedules, layouts, formats), so a browser can load it.
-import { referencesOf, countNodesOf, explain as explainExpression } from "./expr.js";
+import { referencesOf, countNodesOf, explain as explainExpression, shapeProblems } from "./expr.js";
+import { parseSteps, secondsOf } from "./media-steps.js";
 import { isSchedule, scheduleProblems, SUITE_KIND } from "./schedule.js";
 import { layoutProblems, expressionProblems } from "./form-layout.js";
 import { formatsProblems } from "./format.js";
+import { retentionProblems } from "./retention.js";
 import { TONES, themeProblems } from "./theme.js";
-import { BUILT_INS, lockProblems, keptBy } from "./builtins.js";
+import { webProblems, deprecationProblems, breaking, WEB_TAKES, WEB_CALLERS } from "./web-publish.js";
+import { BUILT_INS, lockProblems, keptBy, managedOf } from "./builtins.js";
 import { floorProblems } from "./floor.js";
 import { chartProblems, chartOf, CHART_KEYS } from "./charts.js";
 import { INPUT_FLOW_NODES, inputFlowExprProblems, inputFlowNodeProblems, inputFlowUseProblems } from "./input-flow.js";
+import { paramsIn } from "./query-def.js";
 
 export const IDENTIFIER = /^[a-z][a-z0-9_]{0,47}$/;
+// A person's id is their sign-in id, as the plant's directory or identity provider knows them: employee numbers
+// (104523) and hyphens (j-doe) included, lower case. Never a dot (a page keeps state under paths of ids, where
+// a dot separates the parts) nor a colon (roles name people as user:<id>).
+export const PERSON_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 // "image" (§35): a picture, kept as its name in the picture store (the SHA-256 of its bytes).
-export const FIELD_TYPES = ["string", "text", "integer", "decimal", "boolean", "date", "enum", "ref", "image"];
+export const FIELD_TYPES = ["string", "text", "integer", "decimal", "boolean", "date", "enum", "ref", "image", "file"];
+// How long a text may be: what a field allows at most (maxLength), and what it holds unless it says (§10.4).
+export const MAX_LENGTH = { string: 2000, text: 20000 };
+export const DEFAULT_LENGTH = 500;
+export const lengthOf = (field) => field?.maxLength ?? field?.max ?? DEFAULT_LENGTH;
+// What a file field (§35.4) may take (`accept`): kinds of file, by what their bytes are (server/blobs.js).
+export const FILE_KINDS = ["picture", "pdf", "video", "spreadsheet"];
 export const BLOB_NAME = /^[0-9a-f]{64}$/;
 // Names a field may not have: the record's own columns, and every Object.prototype name (the live
 // diff and the state paths mishandle them, §6.2).
 export const RESERVED = new Set(["id", "object", "state", "type", "version", "row_version", "def_version", "archived_at", "archived_by", "created_at", "created_by", "updated_at", "updated_by", ...Object.getOwnPropertyNames(Object.prototype), "__proto__", "prototype"]);
 
 const isPlain = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+
+// What a person typed, without the spaces around it (§11.1a): " 4711 " is 4711, a value of only spaces is
+// empty (so a required field is not passed by it), a choice of several drops its empty ones, a table's rows
+// are trimmed cell by cell. A multi-line text (type text) keeps its content exactly (a recipe's body is
+// checked by its hash, a note may be laid out on purpose): only a text of nothing but spaces is made empty.
+// Numbers, yes/no, a sensitive field's marker, a file stay as given. Never a password or a script: those are
+// not record values and never pass here.
+export const trimText = (value) => (typeof value === "string" ? value.trim() : value);
+export function trimValues(fields, data) {
+    if (!isPlain(data)) return data;
+    let out = null;
+    for (const [name, value] of Object.entries(data)) {
+        let next = value;
+        if (typeof value === "string") next = fields?.[name]?.type === "text" ? (value.trim() ? value : "") : value.trim();
+        else if (Array.isArray(value)) next = value.map((v) => (typeof v === "string" ? v.trim() : isPlain(v) && fields?.[name]?.type === "rows" ? trimValues({}, v) : v)).filter((v) => v !== "");
+        if (next !== value && JSON.stringify(next) !== JSON.stringify(value)) { out ??= { ...data }; out[name] = next; }
+    }
+    return out ?? data;
+}
 const list = (value) => (Array.isArray(value) ? value : []);
+
+// ---- sensitive fields (§6.10) ----
+// A field marked `sensitive: true` (a patient's name on a device's record; any health or personal
+// data a plant must protect) is masked wherever records are shown or leave the system: its value
+// travels as HIDDEN, which the page draws as "Hidden: sensitive" with a Show button, and someone who
+// may read it sees it only by asking, with a reason (records.reveal), each time audited. It never
+// reaches the query views, analytics or the AI. A value that is not there is not hidden: emptiness
+// is not what is protected. Kinds whose value names something else (a reference names a record whose
+// title is shown, a picture is served by its name) cannot be sensitive.
+export const SENSITIVE_TYPES = ["string", "text", "integer", "decimal", "boolean", "date", "enum"];
+// The marker, in place of the value; never a value a field can hold (validation refuses an object).
+export const hiddenValue = () => ({ $sensitive: true });
+export const isHidden = (value) => isPlain(value) && value.$sensitive === true;
+// The marker as a cell of an exported workbook: imported back unchanged, it is ignored (transfer.js).
+export const HIDDEN_TEXT = "(hidden: sensitive)";
+export const isSensitive = (body, name) => Boolean(isPlain(body?.fields) && body.fields[name]?.sensitive === true);
+export const sensitiveFields = (body) => Object.keys(isPlain(body?.fields) ? body.fields : {}).filter((n) => isSensitive(body, n));
+// A transaction step setting a sensitive field from an input: that input must be sensitive too, so the
+// run's audit entry (transactions.js) does not keep what the record itself hides.
+function sensitiveSetProblems(field, where, expr, inputs) {
+    if (field?.sensitive !== true) return [];
+    let refs = [];
+    try { refs = referencesOf(expr); } catch { return []; }
+    return [...new Set(refs.filter((r) => r.scope === "input").map((r) => String(r.path).split(".")[0]))]
+        .filter((n) => Object.hasOwn(inputs, n) && inputs[n]?.sensitive !== true)
+        .map((n) => `${where} is sensitive, so the input it is set from, "${n}", must be sensitive too (the run's audit entry then keeps that it was given, not what).`);
+}
+// ---- a guide's steps marked done (§35.4) ----
+// done: { transaction, step: <its input taking the step's number>, fills?: { input: expression }, evidence?: <its
+// picture or file input, for #photo and #file steps>, log: { object, where: { field: expression }, step: <the
+// field holding the step's number> }, gate?: true (Next only once the step is done) }. A step tagged
+// #value:<input>, #photo:<input> or #file:<input> fills that input of the transaction besides; #device and #wait
+// are done by whatever writes the log (the equipment, a flow, another transaction); #screen:<name> on that screen.
+const VALUE_TYPES = ["string", "text", "integer", "decimal", "boolean", "date", "enum"];
+function doneProblems(b, objects, transactions, params, fieldsOf, screens) {
+    const d = b.done;
+    if (!isPlain(d)) return ["it is { transaction, step, fills?, evidence?, log, gate? }."];
+    const out = [];
+    for (const k of Object.keys(d)) if (!["transaction", "step", "fills", "evidence", "log", "gate"].includes(k)) out.push(`it has no "${k}" (transaction, step, fills, evidence, log, gate).`);
+    if (b.route !== undefined) out.push("a guide that follows a route is done as the route goes on (its transactions): it has no done of its own.");
+    const tx = transactions[d.transaction];
+    const inputs = tx?.inputs ?? {};
+    if (!tx) out.push(`"${d.transaction ?? ""}" is not a transaction: name the one that records a step done.`);
+    else {
+        if (!Object.hasOwn(inputs, d.step ?? "")) out.push(`step names the input of ${d.transaction} that takes the step's number (${Object.keys(inputs).join(", ") || "it has none"}).`);
+        else if (!["integer", "decimal"].includes(inputs[d.step]?.type)) out.push(`${d.transaction}'s ${d.step} takes the step's number: make it a whole number.`);
+        if (d.fills !== undefined && !isPlain(d.fills)) out.push("fills is { input: expression }.");
+        for (const [k, v] of Object.entries(isPlain(d.fills) ? d.fills : {})) {
+            if (!Object.hasOwn(inputs, k)) out.push(`${d.transaction} has no input "${k}".`);
+            for (const m of screenExprProblems(v, params)) out.push(`fills ${k}: ${m}`);
+        }
+        if (d.evidence !== undefined && !["image", "file"].includes(inputs[d.evidence]?.type)) out.push(`evidence names a picture or file input of ${d.transaction} (the photo or the file a step is done with).`);
+    }
+    const log = d.log;
+    if (!isPlain(log) || !Object.hasOwn(objects, log.object)) out.push("log names the object whose records say a step is done: { object, where, step }.");
+    else {
+        if (!["integer", "decimal"].includes(fieldsOf(log.object)[log.step ?? ""]?.type)) out.push(`log.step names the number field of ${log.object} holding the step's number.`);
+        if (log.where !== undefined && !isPlain(log.where)) out.push("log.where is { field: expression }.");
+        for (const [k, v] of Object.entries(isPlain(log.where) ? log.where : {})) {
+            if (!Object.hasOwn(fieldsOf(log.object), k)) out.push(`${log.object} has no field "${k}".`);
+            for (const m of screenExprProblems(v, params)) out.push(`log.where ${k}: ${m}`);
+        }
+        if (log.where === undefined) out.push('log.where says whose steps they are (the lot\'s: { "lot": { "param": "lot" } }): without it, every record\'s would count.');
+    }
+    if (d.gate !== undefined && typeof d.gate !== "boolean") out.push("gate is true or false.");
+    // The block's own steps, each by how it is done (a record's steps are checked as the screen shows them).
+    for (const m of stepTargetProblems(parseSteps(b.steps).steps, d, tx ? inputs : null, screens)) out.push(m);
+    return out;
+}
+// What a step done at the screen fills must be there: its value's input, its photo's or file's.
+export function stepTargetProblems(steps, d, inputs, screens) {
+    const out = [];
+    for (const [i, s] of steps.entries()) {
+        const at = `step ${i + 1}, "${s.label}"`;
+        const into = s.needs === "value" ? s.into : ["photo", "file"].includes(s.needs) ? s.into ?? d?.evidence : null;
+        if (["photo", "file"].includes(s.needs) && !into) out.push(`${at} is done with a ${s.needs === "photo" ? "photo" : "file"}: name the input it goes in (evidence, or #${s.needs}:<input>).`);
+        else if (into && inputs) {
+            const t = inputs[into]?.type;
+            if (!t) out.push(`${at}: ${d.transaction} has no input "${into}".`);
+            else if (into === d.step) out.push(`${at}: ${into} takes the step's number.`);
+            else if (s.needs === "value" && !VALUE_TYPES.includes(t)) out.push(`${at}: ${into} takes ${t === "image" ? "a picture" : t === "file" ? "a file" : `a ${t}`}: a value typed or scanned goes in a text, number, choice, yes-or-no or date input.`);
+            else if (s.needs !== "value" && !["image", "file"].includes(t)) out.push(`${at}: ${into} is not a picture or file input.`);
+        }
+        if (s.needs === "screen" && screens && !list(screens).includes(s.into)) out.push(`${at}: "${s.into}" is not a screen.`);
+    }
+    return out;
+}
+
+// ---- what an object's access requires (§9.9) ----
+// access: { requires: [{ certification, when? }] }: a record is anyone's only when they hold each
+// certification whose condition (over the record, its derived fields included) holds for it. Each names a
+// certification People & departments lists (known.certifications, when the caller knows them).
+function accessProblems(body, fields, known) {
+    const out = [];
+    const add = (path, message) => out.push({ path, message });
+    if (body.access === undefined) return out;
+    if (!isPlain(body.access)) return [{ path: "access", message: "access is { requires: [{ certification, when? }] }." }];
+    for (const k of Object.keys(body.access)) if (k !== "requires") add(`access.${k}`, `access has no "${k}": it says what its records require (requires).`);
+    if (!Array.isArray(body.access.requires)) { add("access.requires", "requires is a list of { certification, when? }."); return out; }
+    const seen = new Set();
+    for (const [i, r] of body.access.requires.entries()) {
+        const at = `access.requires.${i}`;
+        if (!isPlain(r) || typeof r.certification !== "string" || !r.certification) { add(at, `Requirement ${i + 1}: name the certification it requires.`); continue; }
+        for (const k of Object.keys(r)) if (!["certification", "when"].includes(k)) add(at, `Requirement ${i + 1}: it has no "${k}" (certification, when).`);
+        if (known.certifications && !Object.hasOwn(known.certifications, r.certification)) add(at, `Requirement ${i + 1}: "${r.certification}" is not a certification People & departments lists${Object.keys(known.certifications).length ? ` (${Object.keys(known.certifications).join(", ")})` : " (it lists none yet: add it there first)"}.`);
+        const key = `${r.certification}:${JSON.stringify(r.when ?? null)}`;
+        if (seen.has(key)) add(at, `Requirement ${i + 1} is there twice.`);
+        seen.add(key);
+        if (r.when !== undefined) {
+            for (const m of shapeProblems(r.when)) add(at, `Requirement ${i + 1}: ${m}`);
+            try {
+                for (const ref of referencesOf(r.when)) {
+                    if (ref.scope !== "record") add(at, `Requirement ${i + 1}: its condition reads ${ref.scope}; it reads the record (a field it derives from a reference included).`);
+                    else if (!["state", "type", "id"].includes(String(ref.path)) && !Object.hasOwn(fields, String(ref.path).split(".")[0])) add(at, `Requirement ${i + 1}: its condition reads ${ref.path}, which is not a field.`);
+                    else if (String(ref.path).includes(".")) add(at, `Requirement ${i + 1}: its condition reads ${ref.path} through a reference: derive that field first (from: "${ref.path}"), and read it here.`);
+                    else if (isSensitive(body, String(ref.path))) add(at, `Requirement ${i + 1}: its condition reads ${ref.path}, which is sensitive.`);
+                }
+            } catch (error) { add(at, `Requirement ${i + 1}: ${error.message}`); }
+        }
+    }
+    return out;
+}
+
+// ---- derived fields (§6.11) ----
+// A field the platform keeps (server/derived.js): `from` a path through references ("product.control",
+// "lot.product.control", ending at a field or `state`), or an expression over the record whose
+// { record: "product.control" } reads such a path. Nobody writes it, so it is never required, never
+// sensitive (it copies what the record it reads shows), never a picture. Whether a path goes (each step
+// a reference to an object with the next field) needs the other objects: derivedProblems, server side.
+export const DERIVED_PATH = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
+export const isDerived = (body, name) => isPlain(body?.fields?.[name]) && body.fields[name].from !== undefined;
+function derivedShapeProblems(name, field, fields) {
+    const out = [];
+    const from = field.from;
+    if (typeof from === "string") {
+        if (!DERIVED_PATH.test(from)) out.push(`"${name}": from is a path through a reference: product.control, lot.product.control.`);
+        else if (fields[from.split(".")[0]]?.type !== "ref") out.push(`"${name}": ${from} starts with "${from.split(".")[0]}", which is not a reference of this object.`);
+    } else if (isPlain(from)) {
+        for (const m of shapeProblems(from)) out.push(`"${name}": ${m}`);
+        try {
+            const refs = referencesOf(from);
+            for (const r of refs) {
+                const path = String(r.path);
+                const head = path.split(".")[0];
+                if (r.scope !== "record") out.push(`"${name}": its expression reads ${r.scope}; a derived field reads the record (and through its references).`);
+                else if (!["id", "state", "type"].includes(path) && !Object.hasOwn(fields, head)) out.push(`"${name}": its expression reads ${path}, which is not a field.`);
+                else if (head === name) out.push(`"${name}": its expression reads itself.`);
+                else if (path.includes(".") && fields[head]?.type === "ref" && refs.some((o) => o.scope === "record" && String(o.path) === head)) out.push(`"${name}": its expression reads ${head} both as a reference and through it; read it one way.`);
+            }
+            if (!refs.length) out.push(`"${name}": its expression reads nothing: give the field a fixed default instead.`);
+        } catch (error) {
+            out.push(`"${name}": ${error.message}`);
+        }
+    } else out.push(`"${name}": from is a path (product.control) or an expression.`);
+    if (field.required) out.push(`"${name}" is derived, so it is never entered: it cannot be required.`);
+    if (field.sensitive) out.push(`"${name}" is derived: it copies what another record shows, so it cannot be sensitive.`);
+    if (field.computed) out.push(`"${name}" is derived: the platform keeps it, not a rule.`);
+    if (field.type === "image") out.push(`"${name}": a picture cannot be derived.`);
+    if (field.erasable) out.push(`"${name}" is derived: erase it where it comes from.`);
+    return out;
+}
+
+// Where a sensitive field may not be named in an object's design, in words: each place would show,
+// match, sort or group by its value without anyone asking for it. → [{ path, message }]
+function sensitiveProblems(body, fields) {
+    const out = [];
+    const add = (path, message) => out.push({ path, message });
+    const why = "a sensitive field is shown only to someone who asks for it, with a reason";
+    for (const [name, field] of Object.entries(fields)) {
+        if (!isPlain(field) || field.sensitive === undefined) continue;
+        if (typeof field.sensitive !== "boolean") { add(`fields.${name}.sensitive`, `"${name}": sensitive is true or false.`); continue; }
+        if (!field.sensitive) continue;
+        if (!SENSITIVE_TYPES.includes(field.type)) add(`fields.${name}.sensitive`, `"${name}": a ${field.type === "ref" ? "reference (its record's title is shown)" : field.type === "image" ? "picture (it is served by its name)" : field.type === "file" ? "file (it is served by its name)" : `${field.type} field`} cannot be sensitive; only ${SENSITIVE_TYPES.join(", ")} fields can.`);
+        if (body.titleField === name) add("titleField", `"${name}" is sensitive, so it cannot be the title: the title names the record everywhere (lists, references, search, the tab), and ${why}.`);
+        if (list(body.analytics?.dimensions).includes(name)) add("analytics.dimensions", `"${name}" is sensitive, so it cannot be an analytics dimension: reports group by it, and ${why}.`);
+        if (body.list?.sort?.field === name) add("list.sort", `"${name}" is sensitive, so the list cannot be sorted by it: the order would tell its values, and ${why}.`);
+        if (body.transfer?.import?.key === name) add("transfer.import.key", `"${name}" is sensitive, so an import cannot match rows by it: the match would tell its values, and ${why}.`);
+        if (body.flow?.step === name) add("flow.step", `"${name}" is sensitive, so it cannot hold a traveler's step: the route shows it.`);
+    }
+    return out;
+}
 
 // ---- approval of record changes (§28) ----
 // An object's design may say that changes to its records, made outside a transaction (a form, a list,
 // an import), wait for approval:
 //   approval: { edit?: true | { fields?: [names], states?: [states] },   values; only these fields,
 //               create?: true,                                            only in these states
-//               actions?: true | [actions] }
+//               actions?: true | [actions],
+//               archive?: true,                                          archiving and restoring (nothing is deleted)
+//               by?: { field, values: { value: [departments] }, stewards?: "replace" | "also" } }  (§28.3a)
 // A transaction (§25) is the approved way to change them: its steps never wait. Nor do designed
 // services (§15), approved like it.
 function approvalProblems(body, fields, states, actions) {
@@ -42,7 +258,26 @@ function approvalProblems(body, fields, states, actions) {
     if (a === undefined) return [];
     if (!isPlain(a)) return ["Approval is { edit, create, actions }."];
     const out = [];
-    for (const key of Object.keys(a)) if (!["edit", "create", "actions"].includes(key)) out.push(`Approval: "${key}" is not edit, create or actions.`);
+    for (const key of Object.keys(a)) if (!["edit", "create", "actions", "archive", "by"].includes(key)) out.push(`Approval: "${key}" is not edit, create, actions, archive or by.`);
+    if (a.archive !== undefined && typeof a.archive !== "boolean") out.push("Approval of archiving (and restoring) is true or false.");
+    // Approved by a value of the record (§28.3a): { field, values: { "<value>": [departments] }, stewards: replace | also }.
+    if (a.by !== undefined) {
+        const by = a.by;
+        if (!isPlain(by)) out.push("Approval by a value is { field, values, stewards }.");
+        else {
+            const f = fields[by.field];
+            if (!f) out.push(`Approval by a value: "${by.field ?? ""}" is not a field.`);
+            else if (!["enum", "string", "boolean"].includes(f.type) || f.multiple || f.sensitive) out.push(`Approval by a value: ${f.label ?? by.field} is a ${f.multiple ? "list of values" : f.type}${f.sensitive ? " (sensitive)" : ""}; it is a choice, a text or a yes / no (a reference's code can be copied into a text field derived from it).`);
+            if (!isPlain(by.values) || !Object.keys(by.values).length) out.push("Approval by a value: say which departments or groups approve for at least one value.");
+            else for (const [v, depts] of Object.entries(by.values)) {
+                if (f?.type === "enum" && !list(f.values).includes(v)) out.push(`Approval by a value: "${v}" is not one of ${f.label ?? by.field}'s values.`);
+                if (f?.type === "boolean" && !["true", "false"].includes(v)) out.push(`Approval by a value: a yes / no field's values are true and false, not "${v}".`);
+                if (!Array.isArray(depts) || !depts.length || depts.some((d) => typeof d !== "string" || !d)) out.push(`Approval by a value: "${v}" names at least one department or group.`);
+            }
+            if (by.stewards !== undefined && !["replace", "also"].includes(by.stewards)) out.push("Approval by a value: its departments approve in place of the stewards (replace) or as well (also).");
+            for (const k of Object.keys(by)) if (!["field", "values", "stewards"].includes(k)) out.push(`Approval by a value: "${k}" is not field, values or stewards.`);
+        }
+    }
     if (a.edit !== undefined && a.edit !== true) {
         if (!isPlain(a.edit)) out.push("Approval of edits is true (every edit) or { fields, states }.");
         else {
@@ -65,6 +300,8 @@ export function needsApproval(body, { op, state = null, changed = [], action = n
     if (!isPlain(a)) return false;
     if (op === "create") return a.create === true;
     if (op === "action") return a.actions === true || (Array.isArray(a.actions) && a.actions.includes(action));
+    // Taking a record out of use (the MES deletes nothing: it archives), and putting it back.
+    if (op === "archive" || op === "restore") return a.archive === true;
     if (op !== "edit" || !a.edit || !changed.length) return false;
     if (a.edit === true) return true;
     const only = list(a.edit.fields);
@@ -76,14 +313,34 @@ export function needsApproval(body, { op, state = null, changed = [], action = n
 // (§5.6): a field's own stewards, else those of the state the record is in, else the object's; an
 // action's transition's, else its target state's, else the object's; a new record's fields in its
 // initial state. → [{ department, because: ["field:qty", …] }], sorted.
-export function recordRoute(body, { op, state = null, changed = [], action = null } = {}) {
+// `now` is the record as it is (an edit, an action), `asked` the values asked for (an edit, a new record):
+// with an `approval.by` (§28.3a), the departments its design gives the record's value approve, the value it
+// has and the value it is given both (a product moved from one engineering group to another is signed by
+// both), in place of the stewards or as well as them, as the design says; a value it does not list is the
+// stewards' as ever.
+export function recordRoute(body, { op, state = null, changed = [], action = null, now = null, asked = null } = {}) {
     const stewards = body?.stewards ?? {};
     const pick = (...levels) => levels.map((l) => list(l)).find((l) => l.length) ?? [];
     const out = new Map();
     const push = (depts, because) => { for (const d of depts) (out.get(d) ?? out.set(d, new Set()).get(d)).add(because); };
+    const by = isPlain(body?.approval?.by) && typeof body.approval.by.field === "string" ? body.approval.by : null;
+    const grouped = new Map();
+    if (by) {
+        const values = new Set();
+        const read = (v) => { if (v !== undefined && v !== null && v !== "") values.add(String(v)); };
+        if (op !== "create") read(now?.[by.field]);
+        if (op !== "action" && asked && Object.hasOwn(asked, by.field)) read(asked[by.field]);
+        for (const v of values) for (const d of list(by.values?.[v])) (grouped.get(d) ?? grouped.set(d, new Set()).get(d)).add(`value:${by.field}=${v}`);
+    }
+    if (grouped.size && by.stewards !== "also") {
+        return [...grouped].map(([department, because]) => ({ department, because: [...because].sort() })).sort((a, b) => a.department.localeCompare(b.department));
+    }
+    for (const [d, because] of grouped) for (const x of because) push([d], x);
     if (op === "action") {
         const to = list(body?.states?.transitions).find((t) => t.action === action && list(t.from).includes(state))?.to;
         push(pick(stewards.transitions?.[action], stewards.states?.[to], stewards.object), `action:${action}`);
+    } else if (op === "archive" || op === "restore") {
+        push(pick(stewards.states?.[state], stewards.object), op);
     } else {
         const at = op === "create" ? body?.states?.initial : state;
         for (const f of changed) push(pick(stewards.fields?.[f], stewards.states?.[at], stewards.object), `field:${f}`);
@@ -139,6 +396,7 @@ export function renameField(body, from, to) {
         if (Array.isArray(body.list.columns)) body.list.columns = body.list.columns.map(rename);
         if (isPlain(body.list.sort)) body.list.sort = { ...body.list.sort, field: rename(body.list.sort.field) };
     }
+    if (isPlain(body.history) && Array.isArray(body.history.fields)) body.history = { ...body.history, fields: body.history.fields.map(rename) };
     const entry = (e) => (typeof e === "string" ? rename(e) : isPlain(e) ? refs({ ...e, field: rename(e.field) }) : e);
     const section = (sec) => (isPlain(sec) ? { ...sec, fields: list(sec.fields).map(entry) } : sec);
     if (isPlain(body.form)) {
@@ -153,6 +411,13 @@ export function renameField(body, from, to) {
     } : p));
     if (isPlain(body.hints)) body.hints = renameKeys(body.hints, (k) => k.replace(/^([a-z_]+):(.+)$/, (m, verb, name) => `${verb}:${rename(name)}`));
     if (Array.isArray(body.analytics?.dimensions)) body.analytics = { ...body.analytics, dimensions: body.analytics.dimensions.map(rename) };
+    // Approval (§28): the fields whose edits wait, and the field whose value says who approves.
+    if (isPlain(body.approval)) {
+        const ap = { ...body.approval };
+        if (isPlain(ap.edit) && Array.isArray(ap.edit.fields)) ap.edit = { ...ap.edit, fields: ap.edit.fields.map(rename) };
+        if (isPlain(ap.by) && typeof ap.by.field === "string") ap.by = { ...ap.by, field: rename(ap.by.field) };
+        body.approval = ap;
+    }
     if (body.transfer?.import?.key !== undefined) body.transfer = { ...body.transfer, import: { ...body.transfer.import, key: rename(body.transfer.import.key) } };
     if (body.flow?.step !== undefined) body.flow = { ...body.flow, step: rename(body.flow.step) };
     body.rules = list(body.rules).map((r) => (isPlain(r) ? { ...r, ...(r.writes ? { writes: list(r.writes).map(rename) } : {}), ...(r.when !== undefined ? { when: refs(r.when) } : {}) } : r));
@@ -187,12 +452,38 @@ export function validateDefinition(body, known = {}) {
         if (field.type === "enum" && Array.isArray(field.values) && new Set(field.values).size !== field.values.length) add(`${at}.values`, `"${name}": a value is listed twice.`);
         for (const k of ["label", "help"]) if (field[k] !== undefined && field[k] !== null && typeof field[k] !== "string") add(`${at}.${k}`, `"${name}": its ${k} is text.`);
         if (field.type === "ref" && !(known.objects ?? []).includes(field.to)) add(`${at}.to`, `"${name}": refers to "${field.to ?? ""}", which is not an object.`);
+        // Its choices from a named query (§23.1), in place of every record of its object.
+        if (field.options !== undefined) {
+            if (field.type !== "ref") add(`${at}.options`, `"${name}": only a reference takes its choices from a query.`);
+            else for (const m of querySourceProblems(field.options, known, QUERY_SCOPES.form)) add(`${at}.options`, `"${name}": ${m}`);
+        }
         // Several values (§10.4): a choice field only, holding a list of its values.
         if (field.multiple !== undefined && typeof field.multiple !== "boolean") add(`${at}.multiple`, `"${name}": multiple is true or false.`);
         if (field.multiple && field.type !== "enum") add(`${at}.multiple`, `"${name}": only a choice field (enum) may hold several values.`);
         if (field.requiredWhen !== undefined) for (const m of expressionProblems(field.requiredWhen, fields)) add(`${at}.requiredWhen`, `"${name}" required when: ${m}`);
+        // Personal data a privacy officer may erase from a record (§27.8, records.erase): not what the
+        // platform keeps in step with People & departments (a person's name is changed there).
+        if (field.erasable !== undefined && typeof field.erasable !== "boolean") add(`${at}.erasable`, `"${name}": erasable is true or false.`);
+        // The longest a text may be (§10.4): a text field's up to 2 000 characters, a long text's up to 20 000.
+        if (field.maxLength !== undefined) {
+            const most = MAX_LENGTH[field.type];
+            if (!most) add(`${at}.maxLength`, `"${name}": only a text or a long text field has a longest length.`);
+            else if (!(Number.isInteger(field.maxLength) && field.maxLength >= 1 && field.maxLength <= most)) add(`${at}.maxLength`, `"${name}": its longest length is 1 to ${most} characters.`);
+        }
+        if (field.erasable === true && ["image", "file"].includes(field.type)) add(`${at}.erasable`, `"${name}": a ${field.type === "file" ? "file" : "picture"} cannot be erased yet: the file store keeps every file it is given (§35).`);
+        // A file field (§35.4): the kinds it takes, none named meaning pictures, PDFs and videos.
+        if (field.accept !== undefined && (field.type !== "file" || !Array.isArray(field.accept) || !field.accept.length || !field.accept.every((k) => FILE_KINDS.includes(k)))) add(`${at}.accept`, field.type !== "file" ? `"${name}": only a file field says what it accepts.` : `"${name}": accept lists kinds of file: ${FILE_KINDS.join(", ")}.`);
+        if (field.erasable === true && body.builtIn && managedOf(body.object).fields.includes(name)) add(`${at}.erasable`, `"${name}": People & departments keeps it, so it is not erased from the record: rename or deactivate the person there, through its change request.`);
+        if (field.from !== undefined) for (const m of derivedShapeProblems(name, field, fields)) add(`${at}.from`, m);
     }
     if (body.titleField !== undefined && !Object.hasOwn(fields, body.titleField)) add("titleField", `The title field "${body.titleField}" is not a field.`);
+    // Other fields a scan finds a record by, after its title (§10.4): a person's sign-in id on a badge.
+    if (body.scanBy !== undefined) {
+        if (!Array.isArray(body.scanBy) || body.scanBy.length > 3) add("scanBy", "scanBy lists at most 3 fields a scan also finds a record by.");
+        else for (const f of body.scanBy) if (!Object.hasOwn(fields, f) || !["string", "integer"].includes(fields[f]?.type) || fields[f]?.sensitive) add("scanBy", `"${f}": a scan finds records by a text or whole-number field that is not sensitive.`);
+    }
+    for (const p of sensitiveProblems(body, fields)) add(p.path, p.message);
+    for (const p of accessProblems(body, fields, known)) add(p.path, p.message);
     // What the platform or an installed suite relies on (builtins.js): `known.locks`, worked out from them.
     for (const p of lockProblems(body, known.locks?.[body.object])) add(p.path, p.message);
 
@@ -243,16 +534,25 @@ export function validateDefinition(body, known = {}) {
         for (const [field, level] of Object.entries(isPlain(rule?.fields) ? rule.fields : {})) {
             if (field !== "*" && !Object.hasOwn(fields, field)) add(`${at}.fields`, `Policy "${name}": "${field}" is not a field.`);
             if (level !== "read" && level !== "write") add(`${at}.fields`, `Policy "${name}": "${field}" is "read" or "write".`);
+            // Grants add up and only deny takes away: beside "*": "write", a field named "read" is written all the same.
+            if (field !== "*" && level === "read" && rule.fields["*"] === "write") add(`${at}.fields`, `Policy "${name}": "*" lets every field be written, so "${field}": "read" changes nothing: list the fields it writes instead, or deny ${field} (deny.fields).`);
         }
         for (const action of Object.keys(isPlain(rule?.actions) ? rule.actions : {})) if (!actions.has(action)) add(`${at}.actions`, `Policy "${name}": "${action}" is not an action.`);
         for (const field of [...list(rule?.deny?.fields), ...list(rule?.deny?.read)]) if (!Object.hasOwn(fields, field)) add(`${at}.deny`, `Policy "${name}": "${field}" is not a field.`);
         for (const action of list(rule?.deny?.actions)) if (!actions.has(action)) add(`${at}.deny`, `Policy "${name}": "${action}" is not an action.`);
         // Only through these transactions (§25): a grant that no form uses on its own.
         if (rule?.via !== undefined) {
-            if (!Array.isArray(rule.via) || !rule.via.length || !rule.via.every((t) => typeof t === "string" && IDENTIFIER.test(t))) add(`${at}.via`, `Policy "${name}": via lists the transactions it applies through.`);
-            else if (known.transactions) for (const t of rule.via) if (!known.transactions.includes(t)) add(`${at}.via`, `Policy "${name}": "${t}" is not a transaction.`);
+            // A transaction, or a suite's step kind ("<suite>.<kind>", §30.11): a write that step makes inside any
+            // transaction. One whose suite is not installed stays, inert, as the suite left it.
+            const STEP_KIND = /^[a-z][a-z0-9_-]*\.[a-z][a-z0-9_]*$/;
+            if (!Array.isArray(rule.via) || !rule.via.length || !rule.via.every((t) => typeof t === "string" && (IDENTIFIER.test(t) || STEP_KIND.test(t)))) add(`${at}.via`, `Policy "${name}": via lists the transactions (or the suites' step kinds) it applies through.`);
+            else if (known.transactions) for (const t of rule.via) {
+                if (STEP_KIND.test(t)) { if (known.steps && known.steps.some((k) => k.split(".")[0] === t.split(".")[0]) && !known.steps.includes(t)) add(`${at}.via`, `Policy "${name}": the ${t.split(".")[0]} suite has no step "${t}"${known.steps.length ? ` (${known.steps.filter((k) => k.startsWith(`${t.split(".")[0]}.`)).join(", ")})` : ""}.`); }
+                else if (!known.transactions.includes(t)) add(`${at}.via`, `Policy "${name}": "${t}" is not a transaction.`);
+            }
         }
         if (rule?.when !== undefined) {
+            for (const m of shapeProblems(rule.when)) add(`${at}.when`, `Policy "${name}": ${m}`);
             try {
                 for (const ref of referencesOf(rule.when)) {
                     if (ref.scope === "record" && !["state", "type", "id"].includes(ref.path) && !Object.hasOwn(fields, String(ref.path).split(".")[0])) add(`${at}.when`, `Policy "${name}": its condition reads record.${ref.path}, which is not a field.`);
@@ -346,11 +646,27 @@ export function validateDefinition(body, known = {}) {
     if (body.list?.searchFirst !== undefined && typeof body.list.searchFirst !== "boolean") add("list.searchFirst", "Search first is true or false.");
     if (body.list?.sort !== undefined && (!isPlain(body.list.sort) || !Object.hasOwn(fields, body.list.sort.field) || !["asc", "desc"].includes(body.list.sort.dir ?? "asc"))) add("list.sort", "The list's sort is { field, dir: asc | desc } on a field.");
 
+    // Its history (§10.10): which fields' changes are said, and whether a step of its route and the
+    // transaction or plan behind each change are named. A view only: the audit trail keeps everything.
+    if (body.history !== undefined) {
+        const h = body.history;
+        if (!isPlain(h)) add("history", "history is { fields, steps, via }.");
+        else {
+            for (const k of Object.keys(h)) if (!["fields", "steps", "via"].includes(k)) add("history", `history has no "${k}": it is { fields, steps, via }.`);
+            if (h.fields !== undefined && !Array.isArray(h.fields)) add("history.fields", "history.fields lists the fields whose changes are said.");
+            for (const f of list(h.fields)) if (f !== "state" && !Object.hasOwn(fields, f)) add("history.fields", `History: "${f}" is not a field.`);
+            for (const k of ["steps", "via"]) if (h[k] !== undefined && typeof h[k] !== "boolean") add(`history.${k}`, `history.${k} is true or false.`);
+        }
+    }
+
     // Stewards (§5.6): someone answers for every object.
     const departments = known.departments ?? [];
     const stewards = body.stewards ?? {};
     if (!list(stewards.object).length) add("stewards.object", "Name at least one department that stewards this object.");
     for (const dept of stewardDepartments(stewards)) if (departments.length && !departments.includes(dept)) add("stewards", `"${dept}" is not a department.`);
+    // Approval by a value names departments, or groups (any one member signs, §28.3a).
+    const approvers = [...departments, ...list(known.groups)];
+    for (const [v, depts] of Object.entries(isPlain(body.approval?.by?.values) ? body.approval.by.values : {})) for (const d of list(depts)) if (departments.length && typeof d === "string" && !approvers.includes(d)) add("approval", `Approval by a value: "${d}" (for ${v}) is not a department or a group.`);
     return problems;
 }
 
@@ -426,6 +742,8 @@ export function footprint(published, draft) {
         push(`transition:${action}`, tBefore[action], tAfter[action], "transition", action, to.flatMap((s) => stewardsOf(now, "state", s)));
     }
     push("roles", before.roles, after.roles, "object");
+    // What its access requires (§9.9): its stewards and governance, who keeps the certifications.
+    push("access", before.access, after.access, "object", undefined, ["$governance"]);
     const pBefore = byKey(before.policies, "id");
     const pAfter = byKey(after.policies, "id");
     for (const id of new Set([...Object.keys(pBefore), ...Object.keys(pAfter)])) {
@@ -442,6 +760,7 @@ export function footprint(published, draft) {
     push("rules", before.rules, after.rules, "object", undefined, list(after.rules).flatMap((r) => list(r.writes).flatMap((f) => stewardsOf(now, "field", f))));
     push("form", before.form, after.form, "screen", "form");
     push("list", before.list, after.list, "screen", "list");
+    push("history", before.history, after.history, "screen", "history");
     if (!same(before.stewards, after.stewards)) out.push({ element: "stewards", change: "changed", stewards: [...new Set([...stewardDepartments(old), ...stewardDepartments(now)])].sort() });
     // Whatever else a definition carries (whether it takes part in flows, whether the platform keeps
     // it, a key this list does not know yet): changed, it answers to the object's stewards. Nothing in
@@ -451,7 +770,7 @@ export function footprint(published, draft) {
     return out;
 }
 // A definition's keys the footprint reads by name, above.
-const FOOTPRINT_KEYS = new Set(["object", "label", "area", "description", "titleField", "hints", "analytics", "transfer", "approval", "suites", "fields", "states", "roles", "policies", "rules", "form", "list", "stewards"]);
+const FOOTPRINT_KEYS = new Set(["object", "label", "area", "description", "titleField", "hints", "analytics", "transfer", "approval", "suites", "fields", "states", "roles", "policies", "rules", "form", "list", "history", "stewards", "access"]);
 
 // A script's footprint: the stewards of every object whose pipe uses it, and of the fields it writes;
 // a service's script, the service's own (and what the service reaches).
@@ -469,6 +788,23 @@ export function scriptFootprint(name, before, after, definitions, services = {},
         for (const entry of list(def.rules).filter((r) => r.script === name)) for (const f of list(entry.writes)) for (const d of stewardsOf(def.stewards, "field", f)) stewards.add(d);
     }
     return [{ element: `script:${name}`, change: before === undefined ? "added" : "changed", stewards: [...stewards].sort(), usedBy: [...users.map((d) => d.object), ...(services[name] ? [`service:${name}`] : []), ...flows.map(([f]) => `flow:${f}`)] }];
+}
+
+// The departments and groups an object's approval by value names (§28.3a), when that approval covers a
+// write a design makes: a transaction's step, a service's use of the object, a route's state. Every
+// value's, since a design writes records of any value: they approve the design once, as it is designed and
+// each time it changes, and its runs never wait (§28.3b). `def`: the object's design (or a summary with its
+// approval). → [departments and groups]
+export function valueApprovers(def, { create = false, fields = null, action = null, actions = null, archive = false } = {}) {
+    const a = def?.approval;
+    const by = a?.by;
+    if (!isPlain(a) || !isPlain(by) || !isPlain(by.values)) return [];
+    const edits = fields !== null && (a.edit === true || (isPlain(a.edit) && (!Array.isArray(a.edit.fields) || !fields.length || fields.some((f) => a.edit.fields.includes(f)))));
+    // `actions: ["*"]`: any action (a service allowed to act on the object).
+    const asked = [...(action !== null ? [action] : []), ...list(actions)];
+    const acts = (action !== null || actions !== null) && (a.actions === true || (Array.isArray(a.actions) && (asked.includes("*") ? a.actions.length > 0 : asked.some((x) => a.actions.includes(x)))));
+    if (!((create && a.create === true) || edits || acts || (archive && a.archive === true))) return [];
+    return [...new Set(Object.values(by.values).flatMap((d) => list(d)))].filter((d) => typeof d === "string" && d).sort();
 }
 
 // The departments that must approve, each with the elements that require it.
@@ -544,23 +880,7 @@ export const serviceIdentity = (body) => body?.runAs ?? "service";
 // What a change to a web service would break for its callers (docs/contracts/http-apis), in words: it no
 // longer answers over HTTP; an input is gone, changes type, becomes required or loses a value; a new
 // required input; a caller taken off. `live` and `draft` are the service as published and as drafted.
-export function breakingForCallers(live, draft) {
-    if (!live?.http?.enabled) return [];
-    if (!draft?.http?.enabled) return ["it would no longer answer over HTTP"];
-    const out = [];
-    const a = isPlain(live.input) ? live.input : {};
-    const b = isPlain(draft.input) ? draft.input : {};
-    for (const [field, was] of Object.entries(a)) {
-        const now = b[field];
-        if (!now) { out.push(`input ${field} would be gone`); continue; }
-        if (now.type !== was.type) out.push(`input ${field} would be ${now.type}, not ${was.type}`);
-        if (now.required && !was.required) out.push(`input ${field} would be required`);
-        if (was.type === "enum" && now.type === "enum") for (const v of list(was.values)) if (!list(now.values).includes(v)) out.push(`input ${field} would no longer take "${v}"`);
-    }
-    for (const [field, now] of Object.entries(b)) if (!a[field] && now?.required) out.push(`a new input ${field} would be required`);
-    for (const kind of ["users", "groups"]) for (const who of list(live.callers?.[kind])) if (!list(draft.callers?.[kind]).includes(who)) out.push(`${kind === "users" ? "user" : "group"} ${who} would no longer be among its callers`);
-    return out;
-}
+export const breakingForCallers = (live, draft) => breaking(live, draft, { takes: WEB_TAKES.service, callers: WEB_CALLERS.service });
 
 export function validateService(body, known = {}) {
     const problems = [];
@@ -577,23 +897,10 @@ export function validateService(body, known = {}) {
         if (spec?.type === "enum" && !(list(spec.values).length && list(spec.values).every((v) => typeof v === "string" && v))) add(`input.${field}`, `"${field}": list the values it may take.`);
         if (spec?.type === "ref" && !Object.hasOwn(objects, spec.to)) add(`input.${field}`, `"${field}": refers to "${spec.to ?? ""}", which is not an object.`);
     }
-    // A web service deprecated: its callers' notice (docs/contracts/http-apis): since when, the date after
-    // which it may change or go, the service to use instead. Every call is answered with Deprecation,
-    // Sunset and Link headers until then.
-    if (body.deprecated !== undefined && body.deprecated !== null) {
-        const d = body.deprecated;
-        const date = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && Number.isFinite(Date.parse(v));
-        if (!isPlain(d)) add("deprecated", "Deprecated is { since, sunset, successor?, note? }.");
-        else {
-            if (!body.http?.enabled) add("deprecated", "Only a web service is deprecated: its callers are the ones told.");
-            if (!date(d.since)) add("deprecated.since", "Since: the date it is deprecated from (YYYY-MM-DD).");
-            if (!date(d.sunset)) add("deprecated.sunset", "Sunset: the date after which it may change or go (YYYY-MM-DD).");
-            else if (date(d.since) && Date.parse(d.sunset) <= Date.parse(d.since)) add("deprecated.sunset", "Sunset comes after since: that time is its callers' notice.");
-            if (d.successor !== undefined && d.successor !== "" && (!IDENTIFIER.test(String(d.successor)) || d.successor === name)) add("deprecated.successor", "Successor: the web service its callers move to (another service's name).");
-            if (d.note !== undefined && !(typeof d.note === "string" && d.note.length <= 500)) add("deprecated.note", "A note is words for the callers, 500 characters at most.");
-            for (const k of Object.keys(d)) if (!["since", "sunset", "successor", "note"].includes(k)) add("deprecated", `Deprecated: "${k}" is not since, sunset, successor or note.`);
-        }
-    }
+    // Published over HTTP (one name among services, transactions and queries), and its callers' notice when
+    // deprecated (web-publish.js).
+    webProblems("service", body, known, add);
+    deprecationProblems("service", body, add);
     const callers = isPlain(body.callers) ? body.callers : {};
     for (const u of list(callers.users)) if (!(known.users ?? []).includes(u)) add("callers.users", `"${u}" is not a user.`);
     for (const g of list(callers.groups)) if (!(known.groups ?? []).includes(g)) add("callers.groups", `"${g}" is not a group.`);
@@ -614,6 +921,15 @@ export function validateService(body, known = {}) {
     if (!RUN_AS.includes(identity) && !(known.users ?? []).includes(identity)) add("runAs", `It runs as its own service role, as its caller, or as a user; "${identity}" is none of them.`);
     if (identity === "caller" && list(body.on).length) add("runAs", "A record event or a schedule has no caller: a service with triggers runs as its own service role or as a user.");
     if (body.runOn !== undefined && body.runOn !== null && (typeof body.runOn !== "string" || !NODE_TAG.test(body.runOn))) add("runOn", "runOn names a node tag: lower case letters, digits, _ and -.");
+    // The certifications its own identity holds (§9.9): none unless named, so a record reserved to one is
+    // not its to read (what it reads may leave the plant). Its caller's or its user's are their own.
+    if (body.certifications !== undefined) {
+        if (!Array.isArray(body.certifications) || !body.certifications.every((c) => typeof c === "string" && c)) add("certifications", "certifications is a list of the certifications People & departments lists.");
+        else {
+            if (identity !== "service") add("certifications", "Only a service that runs as its own service role holds certifications of its own: as its caller or a user, it holds theirs.");
+            if (known.certifications) for (const c of body.certifications) if (!Object.hasOwn(known.certifications, c)) add("certifications", `"${c}" is not a certification People & departments lists.`);
+        }
+    }
     // Its service role: roles each object declares.
     const roles = isPlain(body.roles) ? body.roles : {};
     for (const [object, granted] of Object.entries(roles)) {
@@ -673,7 +989,9 @@ export function integrationFootprint(kind, name, before, after, context = {}) {
         const writes = Object.entries(body.uses?.objects ?? {}).filter(([, ops]) => list(ops).some((op) => op !== "read")).map(([o]) => o);
         const triggers = list(body.on).filter((t) => !isSchedule(t)).map((t) => t?.object);
         const granted = Object.keys(isPlain(body.roles) ? body.roles : {});
-        return [...writes, ...triggers, ...granted].flatMap(objectStewards).concat(list(body.uses?.connections).flatMap(connectionStewards), list(body.uses?.transactions).flatMap(transactionStewards));
+        // What it writes that an object's approval by value controls (§28.3b): approved here, its runs never wait.
+        const byValue = Object.entries(body.uses?.objects ?? {}).flatMap(([o, ops]) => valueApprovers(context.objects?.[o], { create: list(ops).includes("create"), fields: list(ops).includes("update") ? [] : null, actions: list(ops).includes("action") ? ["*"] : null, archive: list(ops).includes("archive") }));
+        return [...writes, ...triggers, ...granted].flatMap(objectStewards).concat(list(body.uses?.connections).flatMap(connectionStewards), list(body.uses?.transactions).flatMap(transactionStewards), byValue);
     };
     const answer = (change, extra = []) => [...new Set([
         ...(change !== "added" ? list(before?.stewards) : []),
@@ -685,7 +1003,7 @@ export function integrationFootprint(kind, name, before, after, context = {}) {
     if (!after) return [{ element, change: "removed", stewards: answer("removed", reach(before)) }];
     const out = [];
     const keys = kind === "service"
-        ? ["label", "description", "input", "http", "deprecated", "callers", "on", "runAs", "runOn", "roles", "uses", "stewards"]
+        ? ["label", "description", "input", "http", "deprecated", "callers", "on", "runAs", "runOn", "roles", "certifications", "uses", "stewards"]
         : ["label", "baseUrl", "auth", "allow", "timeoutMs", "stewards"];
     for (const key of keys) {
         if (same(before[key], after[key])) continue;
@@ -730,16 +1048,18 @@ export default async function ${name}(ctx) {
 //       signed in beside the one running it, of one of those departments or roles, verifies it; both
 //       re-enter their passwords at every submit),
 //     maximize?: "toggle" | "start" (its screen may fill the window, see MAXIMIZE),
-//     callers: { users, groups, services?: the services whose scripts may run it }, stewards: [departments] }
+//     callers: { users, groups, services?: the services whose scripts may run it, flows?: the routes that run it on
+//       their traveler (§32.15) }, stewards: [departments] }
 //
 // Expressions read { input }, { lookup: "machine.state" } (the record an input names), { user } and
 // { count: { object, where } }; they are worked out on the records as they were before any step.
 
 // What a transaction's expression may read: its inputs, the records they name, the user, and counts.
-function transactionExprProblems(expr, body, known) {
+function transactionExprProblems(expr, body, known, finds = {}) {
     const inputs = isPlain(body.inputs) ? body.inputs : {};
     const objects = known.objects ?? {};
-    const out = [];
+    // An operator the language does not have would fail every run (as "request failed"): named here.
+    const out = shapeProblems(expr);
     try {
         for (const ref of referencesOf(expr)) {
             const [head, field, ...more] = String(ref.path).split(".");
@@ -751,6 +1071,14 @@ function transactionExprProblems(expr, body, known) {
             if (ref.scope === "input") { if (!Object.hasOwn(inputs, head)) out.push(`it reads input.${ref.path}, which is not an input.`); continue; }
             // A setting of the route node its traveler is at (§32): whatever that node says; empty off a route.
             if (ref.scope === "node") continue;
+            // What an earlier step found (§25.1): how many, or a field of the first.
+            if (ref.scope === "found") {
+                if (!Object.hasOwn(finds, head)) { out.push(`it reads found.${ref.path}, but no step before it finds records as "${head}".`); continue; }
+                if (field === "count" && !more.length) continue;
+                const fields = objects[finds[head]]?.fields ?? {};
+                if (field !== "first" || more.length !== 1 || !(["state", "type", "id"].includes(more[0]) || Object.hasOwn(fields, more[0]))) out.push(`found.${ref.path}: what a step found is read as found.${head}.count, or found.${head}.first.<a field of ${finds[head]}>.`);
+                continue;
+            }
             if (ref.scope === "lookup") {
                 const spec = inputs[head];
                 if (!spec || spec.type !== "ref") { out.push(`it looks up "${head}", which is not a reference input.`); continue; }
@@ -759,7 +1087,7 @@ function transactionExprProblems(expr, body, known) {
                 if (more.length) out.push(`lookup reads one field of a record: "${ref.path}" goes deeper.`);
                 continue;
             }
-            out.push(`it reads ${ref.scope}, but a transaction's condition reads input, lookup, row, node, user or person.`);
+            out.push(`it reads ${ref.scope}, but a transaction's condition reads input, lookup, row, node, user, person, or what a step before it found.`);
         }
         for (const c of countNodesOf(expr)) {
             if (!Object.hasOwn(objects, c?.object)) { out.push(`it counts "${c?.object ?? ""}", which is not an object.`); continue; }
@@ -810,8 +1138,15 @@ export function validateTransaction(body, known = {}) {
         if (!FIELD_TYPES.includes(spec.type)) add(at, `"${name}": the type is one of ${FIELD_TYPES.join(", ")}, or rows.`);
         if (spec.type === "enum" && !(list(spec.values).length && list(spec.values).every((v) => typeof v === "string" && v))) add(at, `"${name}": list the values it may take.`);
         if (spec.type === "ref" && !Object.hasOwn(objects, spec.to)) add(at, `"${name}": refers to "${spec.to ?? ""}", which is not an object.`);
+        if (spec.options !== undefined) {
+            if (spec.type !== "ref" || spec.from !== undefined) add(at, `"${name}": only a reference that is entered takes its choices from a query.`);
+            else for (const m of querySourceProblems(spec.options, known, QUERY_SCOPES.transaction)) add(at, `"${name}": ${m}`);
+        }
         if (spec.multiple && spec.type !== "enum") add(at, `"${name}": only a choice (enum) may hold several values.`);
         if (spec.requiredWhen !== undefined) for (const m of expressionProblems(spec.requiredWhen, inputs)) add(at, `"${name}" required when: ${m}`);
+        // Sensitive (§6.10): the run's audit entry keeps that it was given, never what.
+        if (spec.sensitive !== undefined && typeof spec.sensitive !== "boolean") add(at, `"${name}": sensitive is true or false.`);
+        else if (spec.sensitive && !SENSITIVE_TYPES.includes(spec.type)) add(at, `"${name}": only ${SENSITIVE_TYPES.join(", ")} inputs can be sensitive.`);
         // Filled in from a record another input names: "lot.machine", the lot's machine, or "lot.qty", its
         // units (a value, copied as the person reads it). That input may
         // itself be filled in (the product's route, then the route's first step), but not in a circle.
@@ -822,6 +1157,8 @@ export function validateTransaction(body, known = {}) {
             if (!src || src.type !== "ref" || rest.length) add(at, `"${name}": from is "<a reference input>.<its field>", e.g. "lot.machine".`);
             else if (derivedOrder(inputs).circular.includes(name)) add(at, `"${name}": it is filled in from "${source}", which is filled in, in the end, from "${name}": one of them is entered.`);
             else if (!target) add(at, `"${name}": ${src.to} has no field "${field}".`);
+            // Copied, it would be shown on the transaction's form without anyone asking for it (§6.10).
+            else if (target.sensitive === true) add(at, `"${name}": ${src.to}.${field} is sensitive, so it is not filled in from there: it is shown only to someone who asks for it, with a reason.`);
             // A reference follows that record (the lot's machine); any other type copies its value (the
             // lot's units), shown read only, as the person reads it.
             else if (spec.type === "ref" ? target.type !== "ref" || target.to !== spec.to : target.type !== spec.type) add(at, spec.type === "ref" || target.type === "ref" ? `"${name}": ${src.to}.${field} ${target.type === "ref" ? `refers to ${target.to}; this input must be a reference to the same` : `is a ${target.type}; this input must be one too`}.` : `"${name}": ${src.to}.${field} is a ${target.type}; this input must be one too.`);
@@ -854,9 +1191,38 @@ export function validateTransaction(body, known = {}) {
 
     const steps = list(body.steps);
     if (!steps.length) add("steps", "A transaction has at least one step.");
+    const finds = {}; // as → object: what the steps so far find, for those after them to read
     for (const [i, st] of steps.entries()) {
         const at = `steps.${i}`;
         if (!isPlain(st)) { add(at, `Step ${i + 1} is an object.`); continue; }
+        // A step on the records it finds (§25.1): { find: { object, where: { field: value }, limit? }, as, set?, action? }.
+        if (st.find !== undefined) {
+            const f = st.find;
+            const def = isPlain(f) ? objects[f.object] : null;
+            if (!def) { add(at, `Step ${i + 1}: it finds records of an object: find { object, where }, and "${isPlain(f) ? f.object ?? "" : ""}" is not one.`); continue; }
+            if (st.on !== undefined || st.create !== undefined || st.forEach !== undefined || st.step !== undefined) add(at, `Step ${i + 1}: a step that finds records names no "on", "create", "forEach" or suite step.`);
+            if (!IDENTIFIER.test(String(st.as ?? ""))) add(at, `Step ${i + 1}: name what it finds (as: lower case letters, digits and _), for the steps after it to read.`);
+            else if (Object.hasOwn(finds, st.as)) add(at, `Step ${i + 1}: an earlier step finds records as "${st.as}" already.`);
+            if (!isPlain(f.where) || !Object.keys(f.where).length) add(at, `Step ${i + 1}: say which records it finds: where { field: value }.`);
+            for (const [k, e] of Object.entries(isPlain(f.where) ? f.where : {})) {
+                if (!["state", "type", "id"].includes(k) && !Object.hasOwn(def.fields ?? {}, k)) add(at, `Step ${i + 1}: ${f.object} has no field "${k}" to find by.`);
+                else if (isSensitive({ fields: def.fields ?? {} }, k)) add(at, `Step ${i + 1}: ${f.object}.${k} is sensitive: records are never found by its value.`);
+                for (const m of transactionExprProblems(e, body, known, finds)) add(at, `Step ${i + 1}, where ${k}: ${m}`);
+            }
+            if (f.limit !== undefined && !(Number.isInteger(f.limit) && f.limit >= 1 && f.limit <= 100)) add(at, `Step ${i + 1}: it changes at most 1 to 100 of what it finds (limit).`);
+            for (const k of Object.keys(f)) if (!["object", "where", "limit"].includes(k)) add(at, `Step ${i + 1}: find has no "${k}" (object, where, limit).`);
+            if (st.when !== undefined) for (const m of transactionExprProblems(st.when, body, known, finds)) add(at, `Step ${i + 1} when: ${m}`);
+            // What it does to each (nothing: it only finds, for the steps after it to read).
+            for (const [fld, e] of Object.entries(isPlain(st.set) ? st.set : {})) {
+                if (!Object.hasOwn(def.fields ?? {}, fld)) add(at, `Step ${i + 1}: ${f.object} has no field "${fld}".`);
+                else if (def.fields[fld]?.from !== undefined) add(at, `Step ${i + 1}: ${f.object}.${fld} is derived: the platform keeps it, so a step does not set it.`);
+                for (const m of transactionExprProblems(e, body, known, { ...finds, ...(IDENTIFIER.test(String(st.as ?? "")) ? { [st.as]: f.object } : {}) })) add(at, `Step ${i + 1}, ${fld}: ${m}`);
+            }
+            if (st.set !== undefined && (!isPlain(st.set) || !Object.keys(st.set).length)) add(at, `Step ${i + 1}: set is { field: value }.`);
+            if (st.action !== undefined && !list(def.actions).includes(st.action)) add(at, `Step ${i + 1}: ${f.object} has no action "${st.action}" (${list(def.actions).join(", ")}).`);
+            if (IDENTIFIER.test(String(st.as ?? ""))) finds[st.as] = f.object;
+            continue;
+        }
         // A step of a kind an installed suite adds (§30.11): { step: "<suite>.<kind>", <setting>: value, when? }.
         if (st.step !== undefined) {
             const spec = isPlain(known.suiteSteps) ? known.suiteSteps[st.step] : undefined;
@@ -871,8 +1237,8 @@ export function validateTransaction(body, known = {}) {
                 // What cannot be taken back comes last: every step after it could still refuse.
                 if (spec.irreversible && steps.slice(i + 1).some((later) => !(isPlain(later) && known.suiteSteps[later.step]?.irreversible))) add(at, `Step ${i + 1} (${spec.label ?? st.step}) cannot be taken back, so it comes after every step that can still refuse: move it to the end.`);
             }
-            for (const [k, e] of settings) for (const m of transactionExprProblems(e, body, known)) add(at, `Step ${i + 1}, ${k}: ${m}`);
-            if (st.when !== undefined) for (const m of transactionExprProblems(st.when, body, known)) add(at, `Step ${i + 1} when: ${m}`);
+            for (const [k, e] of settings) for (const m of transactionExprProblems(e, body, known, finds)) add(at, `Step ${i + 1}, ${k}: ${m}`);
+            if (st.when !== undefined) for (const m of transactionExprProblems(st.when, body, known, finds)) add(at, `Step ${i + 1} when: ${m}`);
             continue;
         }
         // A step that creates a record (§25.1): of an object, its fields set; once, or once per row.
@@ -884,10 +1250,12 @@ export function validateTransaction(body, known = {}) {
             if (!isPlain(st.set) || !Object.keys(st.set).length) add(at, `Step ${i + 1}: set the new ${st.create}'s fields: { field: value }.`);
             for (const [f, e] of Object.entries(isPlain(st.set) ? st.set : {})) {
                 if (!Object.hasOwn(def.fields ?? {}, f)) add(at, `Step ${i + 1}: ${st.create} has no field "${f}".`);
-                for (const m of transactionExprProblems(e, body, known)) add(at, `Step ${i + 1}, ${f}: ${m}`);
+                else if (def.fields[f]?.from !== undefined) add(at, `Step ${i + 1}: ${st.create}.${f} is derived (from ${typeof def.fields[f].from === "string" ? def.fields[f].from : "an expression"}): the platform keeps it, so a step does not set it.`);
+                for (const m of transactionExprProblems(e, body, known, finds)) add(at, `Step ${i + 1}, ${f}: ${m}`);
+                for (const m of sensitiveSetProblems(def.fields?.[f], `${st.create}.${f}`, e, inputs)) add(at, `Step ${i + 1}, ${f}: ${m}`);
                 if (st.forEach === undefined && referencesOf(e).some((r) => r.scope === "row")) add(at, `Step ${i + 1}, ${f}: it reads a row, but the step does not run once per row (forEach).`);
             }
-            if (st.when !== undefined) for (const m of transactionExprProblems(st.when, body, known)) add(at, `Step ${i + 1} when: ${m}`);
+            if (st.when !== undefined) for (const m of transactionExprProblems(st.when, body, known, finds)) add(at, `Step ${i + 1} when: ${m}`);
             continue;
         }
         if (!refInputs.includes(st.on)) { add(at, `Step ${i + 1}: "on" names a reference input (${refInputs.join(", ") || "none yet"}).`); continue; }
@@ -899,11 +1267,13 @@ export function validateTransaction(body, known = {}) {
             if (!isPlain(st.set) || !Object.keys(st.set).length) add(at, `Step ${i + 1}: set is { field: value }.`);
             for (const [f, e] of Object.entries(isPlain(st.set) ? st.set : {})) {
                 if (!Object.hasOwn(def.fields ?? {}, f)) add(at, `Step ${i + 1}: ${object} has no field "${f}".`);
-                for (const m of transactionExprProblems(e, body, known)) add(at, `Step ${i + 1}, ${f}: ${m}`);
+                else if (def.fields[f]?.from !== undefined) add(at, `Step ${i + 1}: ${object}.${f} is derived (from ${typeof def.fields[f].from === "string" ? def.fields[f].from : "an expression"}): the platform keeps it, so a step does not set it.`);
+                for (const m of transactionExprProblems(e, body, known, finds)) add(at, `Step ${i + 1}, ${f}: ${m}`);
+                for (const m of sensitiveSetProblems(def.fields?.[f], `${object}.${f}`, e, inputs)) add(at, `Step ${i + 1}, ${f}: ${m}`);
             }
         }
         if (st.action !== undefined && !list(def.actions).includes(st.action)) add(at, `Step ${i + 1}: ${object} has no action "${st.action}" (${list(def.actions).join(", ")}).`);
-        if (st.when !== undefined) for (const m of transactionExprProblems(st.when, body, known)) add(at, `Step ${i + 1} when: ${m}`);
+        if (st.when !== undefined) for (const m of transactionExprProblems(st.when, body, known, finds)) add(at, `Step ${i + 1} when: ${m}`);
     }
 
     if (body.confirm !== undefined && typeof body.confirm !== "boolean") add("confirm", "confirm is true or false.");
@@ -915,7 +1285,7 @@ export function validateTransaction(body, known = {}) {
         })) add("inputFlow", m);
     }
     maximizeProblem(body, add);
-    if (!list(body.callers?.users).length && !list(body.callers?.groups).length && !list(body.callers?.services).length) add("callers", "Nobody may run it yet: name who may (Callers tab).");
+    if (!list(body.callers?.users).length && !list(body.callers?.groups).length && !list(body.callers?.services).length && !list(body.callers?.flows).length) add("callers", "Nobody may run it yet: name who may (Callers tab).");
     if (body.signature !== undefined && body.signature !== null && !(isPlain(body.signature) && typeof body.signature.meaning === "string" && body.signature.meaning.trim() && body.signature.meaning.length <= 100)) add("signature", "A signature states its meaning (e.g. \"Performed\"), at most 100 characters.");
     // A second person who verifies it (§7.4): what their signature means, and who may give it.
     const verifier = isPlain(body.signature) ? body.signature.verifier : undefined;
@@ -943,6 +1313,19 @@ export function validateTransaction(body, known = {}) {
     if (callers.services !== undefined && !(Array.isArray(callers.services) && callers.services.every((x) => typeof x === "string" && IDENTIFIER.test(x)))) add("callers.services", "callers.services lists the services that may run it, by name.");
     for (const sv of list(callers.services)) if (Array.isArray(known.services) && !known.services.includes(sv)) add("callers.services", `"${sv}" is not a service.`);
     if (list(callers.services).length && body.signature) add("callers.services", "It is signed by the person running it: a service may not run it. Take the services out of its callers, or the signature off.");
+    // Routes that run it on their traveler as they move it on (§32.15), by name.
+    if (callers.flows !== undefined && !(Array.isArray(callers.flows) && callers.flows.every((x) => typeof x === "string" && IDENTIFIER.test(x)))) add("callers.flows", "callers.flows lists the routes that may run it, by name.");
+    for (const fl of list(callers.flows)) if (Array.isArray(known.flows) && !known.flows.includes(fl)) add("callers.flows", `"${fl}" is not a flow.`);
+    if (list(callers.flows).length && body.signature) add("callers.flows", "It is signed by the person running it: a route may not run it. Take the routes out of its callers, or the signature off.");
+    // Published over HTTP (§25.7, docs/contracts/http-apis): an outside system runs it as its token's person, through
+    // the same callers, checks and steps. Never one a person signs (a program does not sign for a person), nor
+    // one only routes or services run (an outside system would go around them).
+    webProblems("transaction", body, known, add);
+    deprecationProblems("transaction", body, add);
+    if (body.http?.enabled === true) {
+        if (body.signature) add("http.enabled", "It is signed by the person running it: an outside system may not run it over HTTP. Take it off the web, or the signature off.");
+        if (!list(callers.users).length && !list(callers.groups).length) add("http.enabled", "Only routes or services run it: an outside system running it over HTTP would go around them. Name the people or groups who may run it (an integration user among them), or take it off the web.");
+    }
     // A service that runs it as its own role (`known.runBy`: transaction → services) keeps needing it.
     for (const sv of list(known.runBy?.[body.name]).filter((x) => !list(callers.services).includes(x))) add("callers.services", `The service ${sv} runs it (what it may touch names it): keep ${sv} among its callers, or take the transaction out of ${sv}'s design in this change.`);
     departmentsProblem(body.stewards, known, add);
@@ -964,7 +1347,7 @@ export function derivedOrder(inputs) {
     return { order, circular: left.map(([k]) => k) };
 }
 
-export const TRANSACTION_KEYS = ["label", "description", "inputs", "form", "appearsOn", "require", "steps", "scenarios", "confirm", "signature", "maximize", "inputFlow", "callers", "stewards"];
+export const TRANSACTION_KEYS = ["label", "description", "inputs", "form", "appearsOn", "require", "steps", "scenarios", "confirm", "signature", "maximize", "inputFlow", "http", "deprecated", "callers", "stewards"];
 
 // A transaction's scenarios (§5.11, sandbox.js): what is wrong with their shape, in words. Each runs
 // in a sandbox; its records are picked ({ object, id?, where? }) or given ({ object, data, state? });
@@ -1025,14 +1408,27 @@ export function transactionFootprint(name, before, after, context = {}) {
         if (!body) return [];
         const inputs = isPlain(body.inputs) ? body.inputs : {};
         return list(body.steps).flatMap((st) => {
-            // A record it creates answers to that object's stewards.
-            if (st?.create !== undefined) return list(context.objects?.[st.create]?.stewards?.object);
+            // A record it creates answers to that object's stewards (and to its approval by value, §28.3b).
+            if (st?.create !== undefined) return [...list(context.objects?.[st.create]?.stewards?.object), ...valueApprovers(context.objects?.[st.create], { create: true })];
+            // Records it finds and changes: their object's stewards, as for an input's record (§25.1).
+            if (isPlain(st?.find) && (st.set !== undefined || st.action !== undefined)) {
+                const fdef = context.objects?.[st.find.object];
+                if (!fdef) return [];
+                const fset = Object.keys(isPlain(st.set) ? st.set : {});
+                return [...list(fdef.stewards?.object), ...fset.flatMap((f) => stewardsOf(fdef.stewards, "field", f)), ...(st.action ? stewardsOf(fdef.stewards, "transition", st.action) : []),
+                    ...(fset.length ? valueApprovers(fdef, { fields: fset }) : []), ...(st.action ? valueApprovers(fdef, { action: st.action }) : [])];
+            }
+            if (isPlain(st?.find)) return [];
             const def = context.objects?.[inputs[st?.on]?.to];
             if (!def) return [];
+            const set = Object.keys(isPlain(st.set) ? st.set : {});
             return [
                 ...list(def.stewards?.object),
-                ...Object.keys(isPlain(st.set) ? st.set : {}).flatMap((f) => stewardsOf(def.stewards, "field", f)),
+                ...set.flatMap((f) => stewardsOf(def.stewards, "field", f)),
                 ...(st.action ? stewardsOf(def.stewards, "transition", st.action) : []),
+                // What its approval by value controls, written without waiting: approved here instead.
+                ...(set.length ? valueApprovers(def, { fields: set }) : []),
+                ...(st.action ? valueApprovers(def, { action: st.action }) : []),
             ];
         });
     };
@@ -1060,6 +1456,7 @@ export function transactionFootprint(name, before, after, context = {}) {
 //
 //   { name, label, description,
 //     params: { machine: { label, type: "ref", to: "machine", required?, widget?: "scan" | "select",
+//               search?: true | { show: [fields] } (part of a title typed: the records holding it, counted by state),
 //               where?: { field | "state": [values] } (only such records open it: a die saw's screen, die saws) } }  (at most one),
 //     blocks: [ { block, title?, width?: 3–12, tab?: a label (blocks naming one share a tab; the rest show above the tabs),
 //                 showWhen?: <condition> (not drawn, and not read, unless it holds),
@@ -1067,6 +1464,7 @@ export function transactionFootprint(name, before, after, context = {}) {
 //                   a tab none of whose blocks is shown is not there, one none of whose shown blocks is enabled is greyed (§26.9),
 //                 record:      object, of: <expression, a record id>, show: [fields]
 //                 table:       object, where, columns: [fields], sort?: { field, dir }, limit?: 1–1000 (200), pageSize?: 5–200 (25 drawn at a time, more as scrolled), rowActions?: [transactions],
+//                              rowActionsIn?: "below" (unsaid: a row button's form under the table) | "panel" (in a panel over the screen),
 //                              create?: a New button, archive?: a Remove (archive) button on each row — the object's own, through its policies
 //                 kpi:         object, where, measure: "count" | { sum | avg | min | max: field }, since?: today | 7d | 30d, label
 //                 breakdown:   object, where, by: field | "state", measure
@@ -1108,7 +1506,7 @@ export function suiteElementFootprint(name, before, after) {
     return [...new Set([...Object.keys(before), ...Object.keys(after)])].filter((k) => !same(before[k], after[k])).map((k) => ({ element: `${element}.${k}`, change: "changed", stewards: answer }));
 }
 
-export const BLOCKS = ["record", "table", "kpi", "breakdown", "chart", "transaction", "text", "button", "floor"];
+export const BLOCKS = ["record", "table", "kpi", "breakdown", "chart", "transaction", "text", "button", "floor", "media", "runs", "plan"];
 // What every block may carry, a suite's included (its own settings are its kind's `config`).
 export const SUITE_BLOCK_KEYS = ["block", "title", "width", "tab", "showWhen", "enableWhen", "disabledBecause"];
 export const MEASURES = ["sum", "avg", "min", "max"];
@@ -1117,7 +1515,7 @@ export const SCREEN_KEYS = ["label", "description", "params", "blocks", "maximiz
 
 function screenExprProblems(expr, params) {
     try {
-        const out = [];
+        const out = shapeProblems(expr);
         for (const ref of referencesOf(expr)) {
             if (ref.scope === "user") continue;
             if (ref.scope === "param") { if (!Object.hasOwn(params, String(ref.path))) out.push(`it reads param.${ref.path}, which is not a parameter.`); continue; }
@@ -1134,7 +1532,7 @@ function screenExprProblems(expr, params) {
 // may read it), who is looking ({ user }: id, name, departments), and counts of records ({ count }).
 function blockCondProblems(expr, params, objects) {
     try {
-        const out = [];
+        const out = shapeProblems(expr);
         for (const ref of referencesOf(expr)) {
             if (ref.scope === "user") continue;
             if (ref.scope === "param") { if (!Object.hasOwn(params, String(ref.path))) out.push(`it reads param.${ref.path}, which is not a parameter.`); continue; }
@@ -1169,6 +1567,10 @@ export function validateScreen(body, known = {}) {
     if (!IDENTIFIER.test(body.name ?? "")) add("name", "A screen's name is lower case letters, digits and _.");
     if (!(typeof body.label === "string" && body.label.trim())) add("label", "Give the screen a label.");
     maximizeProblem(body, add);
+    // Opened on a record, it stays in its one tab, named after the screen (§26.1: a desk worked all day, one record
+    // after another): needs a parameter.
+    if (body.oneTab !== undefined && typeof body.oneTab !== "boolean") add("oneTab", "oneTab is true (the records it opens stay in its one tab) or false.");
+    if (body.oneTab === true && !Object.keys(isPlain(body.params) ? body.params : {}).length) add("oneTab", "One tab is for a screen opened on a record: give it a parameter first.");
     // How it is filled from the keyboard (§32.13): an input flow asking for its parameter ("param") and
     // its transaction blocks' inputs ("<transaction>.<input>"; the input alone when it has one block).
     if (body.inputFlow !== undefined && body.inputFlow !== null) {
@@ -1198,6 +1600,18 @@ export function validateScreen(body, known = {}) {
         if (spec.type === "ref" && !Object.hasOwn(objects, spec.to)) add(`params.${name}`, `"${name}": refers to "${spec.to ?? ""}", which is not an object.`);
         if (spec.type === "enum" && !list(spec.values).length) add(`params.${name}`, `"${name}": list the values it may take.`);
         if (spec.widget !== undefined && !["scan", "select"].includes(spec.widget)) add(`params.${name}`, `"${name}": it is picked with scan or select.`);
+        // Part of a record's title typed (§26.1): the records that hold it, counted by state, each a click from opening
+        // the screen on it; `show` names a few of their fields to tell them apart.
+        if (spec.search !== undefined) {
+            const fields = objects[spec.to]?.fields ?? {};
+            const show = isPlain(spec.search) ? spec.search.show : undefined;
+            if (spec.type !== "ref" || spec.widget === "select" || !(spec.search === true || (isPlain(spec.search) && Object.keys(spec.search).every((k) => k === "show")))) add(`params.${name}`, `"${name}": search is true or { show: [fields] }, for a reference that is scanned or typed.`);
+            else if (show !== undefined && (!Array.isArray(show) || show.length > 6 || !show.every((f) => typeof f === "string"))) add(`params.${name}`, `"${name}": search shows a list of at most 6 fields.`);
+            else for (const f of list(show)) {
+                if (!Object.hasOwn(fields, f)) add(`params.${name}`, `"${name}": ${spec.to} has no field "${f}" to show.`);
+                else if (fields[f]?.sensitive || ["image", "file", "ref"].includes(fields[f]?.type)) add(`params.${name}`, `"${name}": ${f} is not shown in a search (sensitive, a reference, a picture or a file).`);
+            }
+        }
         // Which records it opens with: fields equal to plain values (literal, not expressions).
         if (spec.where !== undefined) {
             const fields = objects[spec.to]?.fields ?? {};
@@ -1239,6 +1653,8 @@ export function validateScreen(body, known = {}) {
             }
             continue;
         }
+        // A table may show a named query's rows instead of an object's records (§23.1): its own checks, below.
+        if (b.block === "table" && b.query !== undefined) { for (const m of queryTableProblems(b, known, objects, transactions, params)) add(at, `${name}: ${m}`); continue; }
         const needsObject = ["record", "table", "kpi", "breakdown", "floor"].includes(b.block);
         if (needsObject && !Object.hasOwn(objects, b.object)) { add(at, `${name}: "${b.object ?? ""}" is not an object.`); continue; }
         if (b.where !== undefined) {
@@ -1249,6 +1665,15 @@ export function validateScreen(body, known = {}) {
             }
         }
         const numeric = (f) => ["integer", "decimal"].includes(fieldsOf(b.object)[f]?.type);
+        // A sensitive field (§6.10) may be shown in a block, masked, but nothing may pick, sort, sum or
+        // group records by its value: that would tell what it holds without anyone asking.
+        const sensitive = (f) => typeof f === "string" && fieldsOf(b.object)[f]?.sensitive === true;
+        const notBy = (f, how) => { if (sensitive(f)) add(at, `${name}: ${b.object}.${f} is sensitive, so records are not ${how} it: it is shown only to someone who asks for it, with a reason.`); };
+        for (const k of Object.keys(isPlain(b.where) ? b.where : {})) notBy(k, "picked by");
+        if (isPlain(b.sort)) notBy(b.sort.field, "sorted by");
+        if (isPlain(b.measure)) notBy(Object.values(b.measure)[0], "summed up by");
+        if (b.block === "breakdown") notBy(b.by, "grouped by");
+        if (b.block === "floor" && b.status !== undefined) notBy(b.status, "coloured by");
         const measureOk = (m) => m === "count" || (isPlain(m) && Object.keys(m).length === 1 && MEASURES.includes(Object.keys(m)[0]) && numeric(Object.values(m)[0]));
         switch (b.block) {
             // A floor layout (§35): records where they stand, each with its state as it is now.
@@ -1279,6 +1704,8 @@ export function validateScreen(body, known = {}) {
                     for (const m of screenExprProblems(v, params)) add(at, `${name}, ${k}: ${m}`);
                 }
                 if (b.fills !== undefined && !isPlain(b.fills)) add(at, `${name}: fills is { input: expression }.`);
+                // Where a row button's form opens: under the table (unsaid), or in a panel over the screen.
+                if (b.rowActionsIn !== undefined && !["below", "panel"].includes(b.rowActionsIn)) add(at, `${name}: a row button's form opens below the table or in a panel ("below" or "panel"), not "${b.rowActionsIn}".`);
                 break;
             case "kpi":
                 if (!(typeof b.label === "string" && b.label.trim()) && !(typeof b.title === "string" && b.title.trim())) add(at, `${name}: give the number a label.`);
@@ -1309,13 +1736,85 @@ export function validateScreen(body, known = {}) {
             case "text":
                 if (typeof b.text !== "string" || !b.text.trim() || b.text.length > 2000) add(at, `${name}: the text, at most 2000 characters.`);
                 break;
+            // The step a record's plan waits at (§26.10): which record (of), and of which plans, if not any.
+            case "plan":
+                if (b.of === undefined) add(at, `${name}: "of" says which record's plan (e.g. {"param": "tool"}).`);
+                else for (const m of screenExprProblems(b.of, params)) add(at, `${name}: ${m}`);
+                if (b.flows !== undefined && !Array.isArray(b.flows)) add(at, `${name}: flows lists the plans it shows (none: any).`);
+                for (const f of list(b.flows)) if (isPlain(known.flowInfo) && known.flowInfo[f]?.kind !== "plan") add(at, `${name}: "${f}" is not a plan.`);
+                break;
+            // What was done lately with some transactions (§26.10): their runs, from the audit trail.
+            case "runs": {
+                const names = list(b.transactions);
+                if (!names.length) add(at, `${name}: name the transactions whose runs it lists.`);
+                for (const t of names) if (!Object.hasOwn(transactions, t)) add(at, `${name}: "${t}" is not a transaction.`);
+                if (b.limit !== undefined && !(Number.isInteger(b.limit) && b.limit >= 5 && b.limit <= 200)) add(at, `${name}: it lists 5 to 200 runs (limit).`);
+                if (b.mine !== undefined && typeof b.mine !== "boolean") add(at, `${name}: mine is true (only the viewer's runs) or false.`);
+                break;
+            }
+            // A file shown (§35.4): a record's file or picture (object, of, field), or one of the screen's own
+            // (file: its name in the file store), a picture, a video, a PDF read in the page.
+            case "media":
+                if (b.file !== undefined) {
+                    if (typeof b.file !== "string" || !/^[0-9a-f]{64}$/.test(b.file)) add(at, `${name}: its file is one uploaded here (a 64-character name).`);
+                    if (b.object !== undefined || b.of !== undefined || b.field !== undefined) add(at, `${name}: it shows its own file or a record's, not both.`);
+                    if (b.name !== undefined && (typeof b.name !== "string" || !b.name.trim() || b.name.length > 120)) add(at, `${name}: the file's name, at most 120 characters.`);
+                } else {
+                    if (!Object.hasOwn(objects, b.object)) { add(at, `${name}: upload a file, or name the object whose file it shows.`); break; }
+                    if (b.of === undefined) add(at, `${name}: "of" says which record (e.g. {"param": "lot"}).`);
+                    else for (const m of screenExprProblems(b.of, params)) add(at, `${name}: ${m}`);
+                    if (!["file", "image"].includes(fieldsOf(b.object)[b.field]?.type)) add(at, `${name}: field names a file or picture field of ${b.object}${Object.entries(fieldsOf(b.object)).some(([, f]) => ["file", "image"].includes(f?.type)) ? ` (${Object.entries(fieldsOf(b.object)).filter(([, f]) => ["file", "image"].includes(f?.type)).map(([n]) => n).join(", ")})` : ": it has none yet"}.`);
+                }
+                if (b.height !== undefined && !(Number.isInteger(b.height) && b.height >= 160 && b.height <= 1600)) add(at, `${name}: its height is 160 to 1600 pixels.`);
+                // Its steps (media-steps.js): written here for the screen's own file, or in a text field of the
+                // record whose file it shows (each instruction its own steps; derived through a reference too).
+                if (b.steps !== undefined) for (const m of parseSteps(b.steps).problems) add(at, `${name}, steps: ${m}.`);
+                if (b.stepsField !== undefined) {
+                    if (b.file !== undefined) add(at, `${name}: a file of its own takes its steps here (steps), not from a field.`);
+                    else if (!["text", "string"].includes(fieldsOf(b.object)[b.stepsField]?.type)) add(at, `${name}: its steps come from a text field of ${b.object}: "${b.stepsField}" is none.`);
+                    else if (fieldsOf(b.object)[b.stepsField]?.sensitive) add(at, `${name}: ${b.stepsField} is sensitive: steps are shown to everyone at the screen.`);
+                    if (b.steps !== undefined) add(at, `${name}: its steps are written here or come from a field, not both.`);
+                }
+                if (b.pauseAtSteps !== undefined && typeof b.pauseAtSteps !== "boolean") add(at, `${name}: pauseAtSteps is true or false.`);
+                // Its steps marked done (§35.4): each a record a transaction makes (a click, a photo, a file at the
+                // screen) or a system makes (#device), read back from `log` to show what is done.
+                if (b.done !== undefined) for (const m of doneProblems(b, objects, transactions, params, fieldsOf, known.screens)) add(at, `${name}, done: ${m}`);
+                // Or its steps are a route's (§32.4): the sequences of the traveler's route placed in the guide
+                // (their `guide`), done as the route goes on through them.
+                if (b.route !== undefined) {
+                    const r = b.route;
+                    const info = known.flowInfo?.[r?.flow];
+                    if (!isPlain(r) || typeof r.flow !== "string") add(at, `${name}: route is { flow, of }: the route template and whose way along it.`);
+                    else if (known.flowInfo && !info) add(at, `${name}: "${r.flow}" is not a flow template.`);
+                    else if (info && info.kind !== "route") add(at, `${name}: ${r.flow} is a plan: a guide follows a route.`);
+                    else if (info && !info.guided) add(at, `${name}: none of ${r.flow}'s sequences says where it is in the guide (their guide: a page or a time).`);
+                    if (isPlain(r)) {
+                        if (r.of === undefined) add(at, `${name}: route.of says whose way it is (e.g. {"param": "lot"}).`);
+                        else for (const m of screenExprProblems(r.of, params)) add(at, `${name}: route.of: ${m}`);
+                        for (const k of Object.keys(r)) if (!["flow", "of"].includes(k)) add(at, `${name}: route has no "${k}" (flow, of).`);
+                    }
+                    if (b.steps !== undefined || b.stepsField !== undefined) add(at, `${name}: its steps are the route's: it has no steps of its own.`);
+                }
+                break;
             // A chart (§34.9): a query, run as the viewer over the views of the Queries page, drawn as its
             // spec says. A JSON query's where may name the screen's parameter ({"param": "machine"}).
             case "chart": {
                 const q = b.query;
                 const sql = isPlain(q) && typeof q.sql === "string" && q.sql.trim();
                 const jq = isPlain(q) && isPlain(q.json);
-                if (!sql && !jq) add(at, `${name}: its query is { sql: "SELECT …" } or { json: { from, select, … } }.`);
+                // A named query (§23.1): `{ named, params? }`, its parameters expressions over the screen's.
+                const nq = isPlain(q) && q.named !== undefined;
+                if (nq) {
+                    const body = known.queries?.[q.named];
+                    if (typeof q.named !== "string" || (isPlain(known.queries) && !body)) add(at, `${name}: "${q.named}" is not a named query.`);
+                    if (q.params !== undefined && !isPlain(q.params)) add(at, `${name}: its params are { parameter: expression }.`);
+                    for (const [p, e] of Object.entries(isPlain(q.params) ? q.params : {})) {
+                        if (body && !Object.hasOwn(body.params ?? {}, p)) add(at, `${name}: ${q.named} has no parameter "${p}".`);
+                        for (const m of screenExprProblems(e, params)) add(at, `${name}, ${p}: ${m}`);
+                    }
+                    for (const [p, spec] of Object.entries(body?.params ?? {})) if (spec?.required && !Object.hasOwn(isPlain(q.params) ? q.params : {}, p)) add(at, `${name}: ${q.named} needs "${p}".`);
+                    if (sql || jq) add(at, `${name}: its query is a named one, SQL or JSON: one of them.`);
+                } else if (!sql && !jq) add(at, `${name}: its query is { sql: "SELECT …" }, { json: { from, select, … } } or { named: "<query>", params? }.`);
                 else if (sql && jq) add(at, `${name}: its query is SQL or JSON, not both.`);
                 else if (sql && q.sql.length > 20_000) add(at, `${name}: a query is at most 20 000 characters.`);
                 else if (sql && /\{\s*"?param"?\s*:/.test(q.sql)) add(at, `${name}: only a JSON query names the screen's parameter.`);
@@ -1346,6 +1845,7 @@ export function validateScreen(body, known = {}) {
             if (p.while === undefined) add("popup.while", "Say while what it opens (a condition).");
             for (const [key, e] of [["while", p.while], ["with", p.with]]) {
                 if (e === undefined) continue;
+                for (const m of shapeProblems(e)) add(`popup.${key}`, m);
                 try {
                     for (const ref of referencesOf(e)) if (!["input", "lookup", "param", "user"].includes(ref.scope)) add(`popup.${key}`, `It reads ${ref.scope}; a pop-up reads input, lookup, param, user and counts.`);
                 } catch (error) {
@@ -1380,22 +1880,70 @@ export function screenFootprint(name, before, after) {
 //   { governance: <department>,                  approves what no one else stewards, and new departments and people
 //     standing: { connection: [departments], … }, who approves every element of a kind, whoever stewards it
 //     users: { id: { name, active } },
-//     departments: { id: { name, members: [users], approval: [{ label, approvers: [users] }, …] } },   steps in order
+//     departments: { id: { name, email?, members: [users], approval: [{ label, approvers: [users] }, …] } },   steps in order; email: its mailbox
 //     groups: { id: { name, members: [users] } },
 //     roles: { object: { role: ["user:olga", "group:production"] } } }   including the pseudo-objects design and query
-export const STANDING_KINDS = ["object", "script", "service", "connection", "transaction", "screen", "layout", "organization"];
+export const STANDING_KINDS = ["object", "script", "service", "connection", "transaction", "screen", "layout", "query", "organization"];
 // (`auth`: who administers sign-in, §8.2: issues password links, resets a second factor, lifts a lock.)
-export const PSEUDO_ROLES = { design: ["designer", "reviewer"], query: ["analyst"], auth: ["administrator"] };
+// (`privacy`: who answers for personal data, §27.8: reads the retention report, runs the purge now,
+// erases a person's personal data from a record.)
+export const PSEUDO_ROLES = { design: ["designer", "reviewer"], query: ["analyst"], auth: ["administrator"], privacy: ["officer"], integrity: ["reviewer"], database: ["administrator"] };
+// A data integrity finding's non-conformance report (§7.7), raised as a record of the plant's own object when
+// the organization names one: `integrity: { reportObject, fields: { <its field>: <part> }, values: { <its field>: <value> } }`,
+// each part one of these; `values` gives a field the same value every time (a severity, a category).
+export const INTEGRITY_REPORT = [["what", "What happened"], ["why", "Why"], ["decision", "Decision (accepted or corrected)"], ["action", "Action taken"], ["finding", "The finding (what and where)"]];
+export function integrityProblems(v) {
+    if (v === undefined) return [];
+    if (v === null || typeof v !== "object" || Array.isArray(v)) return ["Data integrity is set as { reportObject, fields }."];
+    const out = [];
+    for (const k of Object.keys(v)) if (!["reportObject", "fields", "values"].includes(k)) out.push(`Data integrity takes reportObject, fields and values; not "${k}".`);
+    if (v.reportObject !== undefined && v.reportObject !== null && !(typeof v.reportObject === "string" && IDENTIFIER.test(v.reportObject))) out.push("Data integrity: the report object is an object's name.");
+    if (v.fields !== undefined) {
+        if (v.fields === null || typeof v.fields !== "object" || Array.isArray(v.fields)) out.push("Data integrity: fields map an object's field to a part of the report.");
+        else for (const [f, part] of Object.entries(v.fields)) {
+            if (!IDENTIFIER.test(f)) out.push(`Data integrity: "${f}" is not a field name.`);
+            if (!INTEGRITY_REPORT.some(([k]) => k === part)) out.push(`Data integrity: ${f} takes one of ${INTEGRITY_REPORT.map(([k]) => k).join(", ")}; not "${part}".`);
+        }
+    }
+    if (v.values !== undefined) {
+        if (v.values === null || typeof v.values !== "object" || Array.isArray(v.values)) out.push("Data integrity: values give an object's field the same value every time.");
+        else for (const [f, x] of Object.entries(v.values)) {
+            if (!IDENTIFIER.test(f)) out.push(`Data integrity: "${f}" is not a field name.`);
+            if (Object.hasOwn(v.fields ?? {}, f)) out.push(`Data integrity: ${f} takes a part of the report or a value, not both.`);
+            if (!["string", "number", "boolean"].includes(typeof x)) out.push(`Data integrity: the value of ${f} is a text, a number or true/false.`);
+        }
+    }
+    if (v.reportObject && !Object.keys(v.fields ?? {}).length) out.push("Data integrity: say which of the report object's fields takes each part of the report.");
+    return out;
+}
 // Who reads every record (§27.7): the organization's `readers`, people and groups ("user:iris",
 // "group:it"), who take this role on every object, the designer's and the query page's aside: it reads
 // every record and every field (but one a policy hides), and writes nothing. Approved by governance.
 export const READ_ALL_ROLE = "$reader";
 
+// The sign-in page's id (§8.2): `signIn: { idLabel, idHint, domains }`, each optional. The label is anything the
+// plant calls it ("Windows user name", "Badge number"); the hint is shown in the empty box ("PLANT\\username");
+// a domain (PLANT, plant.local) typed before a \\ or / or after an @ is dropped when the id is read.
+export const SIGN_IN_DOMAIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,62})(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,62}))*$/;
+export function signInProblems(v) {
+    if (v === undefined) return [];
+    if (!isPlain(v)) return ["Sign-in is set as { idLabel, idHint, domains }."];
+    const out = [];
+    for (const k of Object.keys(v)) if (!["idLabel", "idHint", "domains"].includes(k)) out.push(`Sign-in takes idLabel, idHint and domains; not "${k}".`);
+    if (v.idLabel !== undefined && (typeof v.idLabel !== "string" || v.idLabel.trim().length > 40)) out.push("Sign-in: the id's label is text of at most 40 characters.");
+    if (v.idHint !== undefined && (typeof v.idHint !== "string" || v.idHint.trim().length > 60)) out.push("Sign-in: the hint is text of at most 60 characters.");
+    if (v.domains !== undefined) {
+        if (!Array.isArray(v.domains) || v.domains.length > 10) out.push("Sign-in: the domains are a list of at most 10.");
+        else for (const d of v.domains) if (typeof d !== "string" || !SIGN_IN_DOMAIN.test(d.trim())) out.push(`Sign-in: "${d}" is not a domain (letters, digits and hyphens, parts separated by dots: PLANT, plant.local).`);
+    }
+    return out;
+}
+
 // The kind of element a footprint entry is about ("service:erp_in.uses" → service; "field:qty" → object).
 export function kindOfElement(element) {
     const head = String(element).split(/[:.]/)[0];
-    if (["script", "service", "connection", "transaction", "screen", "layout"].includes(head)) return head;
-    if (["department", "person", "group", "roles", "standing", "governance"].includes(head)) return "organization";
+    if (["script", "service", "connection", "transaction", "screen", "layout", "query"].includes(head)) return head;
+    if (["department", "person", "group", "roles", "standing", "governance", "retention", "emergency", "integrity", "setup", "approval", "signIn"].includes(head)) return "organization";
     return "object";
 }
 // Standing approvers join every element of their kinds, whoever stewards it.
@@ -1416,7 +1964,7 @@ export function validateOrganization(org, known = {}) {
     const groups = isPlain(org.groups) ? org.groups : {};
     const active = (u) => isPlain(users[u]) && users[u].active !== false;
     for (const [id, u] of Object.entries(users)) {
-        if (!IDENTIFIER.test(id)) add(`users.${id}`, `"${id}": a person's id is lower case letters, digits and _.`);
+        if (!PERSON_ID.test(id)) add(`users.${id}`, `"${id}": a person's id is their sign-in id: lower case letters, digits, _ and -, starting with a letter or a digit.`);
         if (!isPlain(u) || !String(u.name ?? "").trim()) add(`users.${id}`, `${id}: give the person a name.`);
     }
     for (const id of known.liveDepartments ?? []) if (!departments[id]) add(`departments.${id}`, `Department ${id} cannot be removed (its approvals and stewardship are history); rename it, or leave it with no one.`);
@@ -1424,6 +1972,8 @@ export function validateOrganization(org, known = {}) {
         const at = `departments.${id}`;
         if (!IDENTIFIER.test(id)) add(at, `"${id}": a department's id is lower case letters, digits and _.`);
         if (!isPlain(d) || !String(d.name ?? "").trim()) { add(at, `${id}: give the department a name.`); continue; }
+        // Its mailbox (§28.6): told when a change waits for the department.
+        if (d.email !== undefined && d.email !== "" && !(typeof d.email === "string" && d.email.length <= 254 && /^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[^\s@<>()",;:]+$/.test(d.email))) add(at, `${d.name}: "${d.email}" is not an email address (engineering@plant.example).`);
         for (const m of list(d.members)) if (!active(m)) add(at, `${d.name}: member "${m}" is not an active person.`);
         const steps = list(d.approval);
         if (!steps.length) add(at, `${d.name}: it approves in at least one step, with at least one approver.`);
@@ -1441,13 +1991,28 @@ export function validateOrganization(org, known = {}) {
             }
         }
     }
+    // A group an object's approval by value names (§28.3a) stays while it does: its records' changes would wait
+    // for nobody. (The server passes each object's approvers; the designer's advice has none to pass.)
+    for (const [o, x] of Object.entries(known.objects ?? {})) for (const g of new Set(list(x?.approvers))) {
+        if (!Object.hasOwn(departments, g) && !Object.hasOwn(groups, g) && (known.liveGroups ?? []).includes(g)) add(`groups.${g}`, `Group ${g} is named by ${x.label ?? o}'s approval by value: take it out there first, or keep the group.`);
+    }
     for (const [id, g] of Object.entries(groups)) {
         if (Object.hasOwn(departments, id)) add(`groups.${id}`, `"${id}" is both a department and a group.`);
         if (!IDENTIFIER.test(id) || !isPlain(g) || !String(g.name ?? "").trim()) add(`groups.${id}`, `Group "${id}": an id (lower case) and a name.`);
         for (const m of list(g?.members)) if (!active(m)) add(`groups.${id}`, `Group ${g?.name ?? id}: member "${m}" is not an active person.`);
+        // Its mailbox (§28.6): told when a change waits for the group to approve it.
+        if (isPlain(g) && g.email !== undefined && g.email !== "" && !(typeof g.email === "string" && g.email.length <= 254 && /^[^\s@<>()",;:]+@[^\s@<>()",;:]+\.[^\s@<>()",;:]+$/.test(g.email))) add(`groups.${id}`, `Group ${g.name ?? id}: "${g.email}" is not an email address (power-eng@plant.example).`);
     }
     if (!Object.hasOwn(departments, org.governance)) add("governance", "Name the governance department: it approves what nobody else stewards.");
     // Who reads every record: people and groups that exist.
+    // The certifications the plant recognizes (§27.9): an id as designs name it (itar), a name people read.
+    if (org.certifications !== undefined && !isPlain(org.certifications)) add("certifications", "Certifications are { id: { name, description? } }.");
+    for (const [cid, c] of Object.entries(isPlain(org.certifications) ? org.certifications : {})) {
+        if (!IDENTIFIER.test(cid)) add(`certifications.${cid}`, `"${cid}": a certification's id is lower case letters, digits and _, starting with a letter (itar, cleanroom_iso5).`);
+        if (!isPlain(c) || typeof c.name !== "string" || !c.name.trim()) add(`certifications.${cid}`, `"${cid}": give it a name people read (ITAR export control).`);
+        else if (c.name.length > 80) add(`certifications.${cid}`, `"${cid}": its name is 80 characters at most.`);
+        if (isPlain(c) && c.description !== undefined && (typeof c.description !== "string" || c.description.length > 500)) add(`certifications.${cid}`, `"${cid}": its description is text, 500 characters at most.`);
+    }
     if (org.readers !== undefined && !Array.isArray(org.readers)) add("readers", "Who reads every record is a list of people and groups.");
     for (const s of list(org.readers)) {
         const [kind, sid] = String(s).split(":");
@@ -1457,6 +2022,34 @@ export function validateOrganization(org, known = {}) {
     for (const p of formatsProblems(org.formats)) add("formats", p);
     // How the plant's pages look, and whether each person picks light or dark (§10.8, theme.js).
     for (const p of themeProblems(org.theme)) add("theme", p);
+    // How long each kind of data is kept (§27.8, retention.js).
+    for (const p of retentionProblems(org.retention)) add("retention", p);
+    // How much approval a change needs (§5.16).
+    if (org.approval !== undefined) {
+        if (!isPlain(org.approval) || !["full", "one", "none"].includes(org.approval.level) || Object.keys(org.approval).some((k) => k !== "level")) add("approval", "Approval is set as { level: \"full\" }, { level: \"one\" } or { level: \"none\" }.");
+    }
+    // What the sign-in page calls the id people type, and the plant's domains a typed id may carry (§8.2).
+    for (const p of signInProblems(org.signIn)) add("signIn", p);
+    // Setup (§5.15): whether a designer's change executes on their signature alone, until the plant governs.
+    if (org.setup !== undefined) {
+        if (!isPlain(org.setup)) add("setup", "Setup is set as { open: true } or { open: false }.");
+        else {
+            for (const k of Object.keys(org.setup)) if (k !== "open") add("setup", `Setup takes open; not "${k}".`);
+            if (typeof org.setup.open !== "boolean") add("setup", "Setup: open is true or false.");
+        }
+    }
+    // Where a closed data integrity finding's non-conformance report is raised, and which field takes what (§7.7).
+    for (const p of integrityProblems(org.integrity)) add("integrity", p);
+    // Whether changes may be submitted as emergencies, and how soon they are reviewed afterwards (§5.7).
+    if (org.emergency !== undefined) {
+        const e = org.emergency;
+        if (!isPlain(e)) add("emergency", "Emergency changes are set as { allowed, reviewDays }.");
+        else {
+            for (const k of Object.keys(e)) if (!["allowed", "reviewDays"].includes(k)) add("emergency", `Emergency changes take allowed and reviewDays; not "${k}".`);
+            if (e.allowed !== undefined && typeof e.allowed !== "boolean") add("emergency", "Emergency changes: allowed is true or false.");
+            if (e.reviewDays !== undefined && !(Number.isInteger(e.reviewDays) && e.reviewDays >= 1 && e.reviewDays <= 30)) add("emergency", "Emergency changes are reviewed afterwards within 1 to 30 days.");
+        }
+    }
     for (const [kind, depts] of Object.entries(isPlain(org.standing) ? org.standing : {})) {
         if (!STANDING_KINDS.includes(kind)) add("standing", `Standing approvers are per kind: ${STANDING_KINDS.join(", ")}; not "${kind}".`);
         for (const d of list(depts)) if (!Object.hasOwn(departments, d)) add("standing", `Standing approvers for ${kind}: "${d}" is not a department.`);
@@ -1475,8 +2068,22 @@ export function validateOrganization(org, known = {}) {
     };
     const designers = holders("designer");
     const reviewers = new Set([...designers, ...holders("reviewer")]);
+    // While the plant is set up (§5.15) a designer's change executes on their own signature: one engineer is
+    // enough. Someone to review them is needed from when setup ends, and ending it waits for them.
+    const inSetup = isPlain(org.setup) && org.setup.open === true;
+    // At approval level one or none (§5.16) nobody reviews: a second person is needed to approve (one), or nobody.
+    const lighter = isPlain(org.approval) && ["one", "none"].includes(org.approval.level);
+    const ending = known.liveSetup === true && !inSetup && !lighter ? "Setup cannot end yet: " : "";
     if (!designers.size) add("roles.design", "Someone active must remain a designer: only a designer starts a change, this one's undoing included.");
-    else if (reviewers.size < 2) add("roles.design", `Someone besides ${[...designers].map((u) => users[u]?.name ?? u).join(", ")} must be able to review (a reviewer or another designer): an author never reviews their own change, so none could be reviewed.`);
+    // At approval level One (§5.16) a change is signed by an approver who is not its author: whoever designs a change to
+    // People & departments, someone else must approve for governance, or no change to it could ever be approved.
+    if (isPlain(org.approval) && org.approval.level === "one" && designers.size && Object.hasOwn(departments, org.governance)) {
+        const gov = departments[org.governance];
+        const approvers = new Set(list(gov.approval).flatMap((st) => list(st?.approvers)).filter(active));
+        const stuck = [...designers].filter((d) => ![...approvers].some((a) => a !== d));
+        if (stuck.length) add("approval", `At approval level One, someone besides ${stuck.map((u) => users[u]?.name ?? u).join(", ")} must approve for ${gov.name ?? org.governance} (it approves changes to People & departments): an author never signs their own change, so nobody could approve one of theirs. Add another approver there.`);
+    }
+    else if (reviewers.size < 2 && !inSetup && !lighter) add("roles.design", `${ending}Someone besides ${[...designers].map((u) => users[u]?.name ?? u).join(", ")} must be able to review (a reviewer or another designer): an author never reviews their own change, so none could be reviewed.`);
     const objects = known.objects ?? {};
     for (const [object, roles] of Object.entries(isPlain(org.roles) ? org.roles : {})) {
         const declared = PSEUDO_ROLES[object] ?? objects[object]?.roles;
@@ -1525,8 +2132,22 @@ export function organizationFootprint(before, after, context = {}) {
     // How the plant writes dates, times and numbers: governance approves it.
     push("formats", before?.formats ?? {}, after.formats ?? {}, []);
     push("theme", before?.theme ?? {}, after.theme ?? {}, []);
+    // How long each kind of data is kept: governance approves it.
+    push("retention", before?.retention ?? {}, after.retention ?? {}, []);
+    // The approval level (§5.16): governance approves it.
+    push("approval", before?.approval ?? {}, after.approval ?? {}, []);
+    // The sign-in page's words for the id, and the domains it may carry: governance approves it.
+    push("signIn", before?.signIn ?? {}, after.signIn ?? {}, []);
+    // Setup, opened again or ended (§5.15): governance approves it (while setup is open, it executes at once).
+    push("setup", before?.setup ?? {}, after.setup ?? {}, []);
+    // Where integrity findings' reports are raised: governance approves it.
+    push("integrity", before?.integrity ?? {}, after.integrity ?? {}, []);
+    // Whether emergencies are allowed, and their review's time: governance approves it.
+    push("emergency", before?.emergency ?? {}, after.emergency ?? {}, []);
     // Who reads every record: governance approves it.
     push("readers", [...list(before?.readers)].sort(), [...list(after.readers)].sort(), []);
+    // The certifications the plant recognizes (§27.9): governance approves them.
+    push("certifications", before?.certifications ?? {}, after.certifications ?? {}, []);
     return out;
 }
 
@@ -1666,9 +2287,11 @@ export const FLOW_NODE_WORDS = { start: "Start", sequence: "Sequence", auto_deci
 // The kinds a suite's node kind may extend (the start is the core's own).
 export const FLOW_EXTENDABLE = FLOW_NODE_KINDS.filter((k) => k !== "start");
 export const WAIT_MODES = ["auto", "acknowledge", "retry"];
-export const INPUT_TYPES = ["string", "integer", "decimal", "boolean", "enum", "file", "image", "link"];
+export const INPUT_TYPES = ["string", "integer", "decimal", "boolean", "enum", "file", "image", "link", "query"];
+// What an input screen field of type "query" may name besides its own (§32.6).
+export const QUERY_FIELD_KEYS = ["name", "label", "type", "required", "query", "value", "display", "separator", "params"];
 // asSub (a route, §32.14): it runs only inside another route, as its sub flow; it takes up no traveler by itself.
-export const FLOW_KEYS = ["label", "description", "kind", "participants", "context", "ends", "nodes", "edges", "layout", "roles", "scenarios", "stewards", "asSub"];
+export const FLOW_KEYS = ["label", "description", "kind", "participants", "context", "ends", "nodes", "edges", "layout", "roles", "scenarios", "stewards", "asSub", "everySequence"];
 export const FLOW_TEMPLATE = (name, label, stewards) => ({
     name, label: label?.trim() || name.replace(/_/g, " "), description: "", kind: "route", participants: {}, context: {},
     nodes: { start: { kind: "start", label: "Start" }, first: { kind: "sequence", label: "First step", offers: [], leaves: [] }, done: { kind: "end", label: "Done" } },
@@ -1680,7 +2303,7 @@ export const FLOW_TEMPLATE = (name, label, stewards) => ({
 // transaction, a screen, a flow template): all of it, under its new name and label; its scenarios
 // that ran the original (a transaction's steps, a plan they answer) run the copy. Plain data in,
 // plain data out, so the designer and the server agree. Scripts are copied with copyScript.
-export const COPYABLE = ["object", "service", "connection", "transaction", "screen", "flow", "layout"];
+export const COPYABLE = ["object", "service", "connection", "transaction", "screen", "flow", "layout", "query"];
 export function copyDesign(kind, body, { name, label } = {}) {
     const copy = JSON.parse(JSON.stringify(body ?? {}));
     const from = kind === "object" ? copy.object : copy.name;
@@ -1714,6 +2337,82 @@ export const flowSetsOff = (body) => {
 export const flowStartOf = (body) => Object.entries(isPlain(body?.nodes) ? body.nodes : {}).find(([, n]) => n?.kind === "start")?.[0] ?? null;
 // The names a run's context holds besides its records: its initial values, what its input screens
 // collect, what its sub flows return.
+// A field removed in the designer: taken out of what merely lists it (the form's sections, the list's
+// columns, analytics, the policies' grants and denials, approval of edits, rules' writes), so removing it
+// leaves nothing behind there. What decides by it (an expression, the title, the import key, a flow's
+// step) is left for the checks to name: the person decides what it should read instead. → a new body
+export function withoutField(body, name) {
+    const out = JSON.parse(JSON.stringify(body ?? {}));
+    if (isPlain(out.fields)) delete out.fields[name];
+    const keep = (xs) => list(xs).filter((e) => (typeof e === "string" ? e : e?.field) !== name);
+    const sections = (ss) => list(ss).map((sec) => (isPlain(sec) ? { ...sec, fields: keep(sec.fields) } : sec));
+    if (isPlain(out.form)) {
+        if (Array.isArray(out.form.sections)) out.form.sections = sections(out.form.sections);
+        if (Array.isArray(out.form.tabs)) out.form.tabs = out.form.tabs.map((t) => (isPlain(t) ? { ...t, sections: sections(t.sections) } : t));
+    }
+    if (isPlain(out.list) && Array.isArray(out.list.columns)) out.list.columns = out.list.columns.filter((c) => c !== name);
+    if (isPlain(out.history) && Array.isArray(out.history.fields)) out.history.fields = out.history.fields.filter((c) => c !== name);
+    if (isPlain(out.analytics)) for (const k of ["dimensions", "measures"]) if (Array.isArray(out.analytics[k])) out.analytics[k] = out.analytics[k].filter((d) => (isPlain(d) ? d.field : d) !== name);
+    for (const pol of list(out.policies)) {
+        if (!isPlain(pol)) continue;
+        if (isPlain(pol.fields)) delete pol.fields[name];
+        if (isPlain(pol.deny)) for (const k of ["fields", "read"]) if (Array.isArray(pol.deny[k])) pol.deny[k] = pol.deny[k].filter((f) => f !== name);
+    }
+    if (isPlain(out.approval?.edit) && Array.isArray(out.approval.edit.fields)) out.approval.edit.fields = out.approval.edit.fields.filter((f) => f !== name);
+    for (const r of list(out.rules)) if (isPlain(r) && Array.isArray(r.writes)) r.writes = r.writes.filter((f) => f !== name);
+    return out;
+}
+
+// States changed in the designer: a tone kept only for a state still listed (§10.8). → a new states block
+export function withStates(states, listed) {
+    const out = { ...(isPlain(states) ? states : {}), list: listed };
+    if (isPlain(out.tones)) {
+        const tones = Object.fromEntries(Object.entries(out.tones).filter(([st]) => listed.includes(st)));
+        if (Object.keys(tones).length) out.tones = tones; else delete out.tones;
+    }
+    return out;
+}
+
+// A node renamed (§32.6): its key, where it is drawn, the wires from and to it, and the nodes its
+// scenarios expect, all at once. Runs keep the version they started on, so a draft may rename freely.
+// → the body, or a problem in words (the name taken or not a name).
+export function renameFlowNode(body, from, to) {
+    if (!isPlain(body?.nodes) || !Object.hasOwn(body.nodes, from)) return { problem: `There is no node ${from}.` };
+    if (!IDENTIFIER.test(to ?? "")) return { problem: "A node's id is lower case letters, digits and _, starting with a letter." };
+    if (to === from) return { body };
+    if (Object.hasOwn(body.nodes, to)) return { problem: `${to} is another node's id already.` };
+    const out = JSON.parse(JSON.stringify(body));
+    out.nodes = Object.fromEntries(Object.entries(out.nodes).map(([k, v]) => [k === from ? to : k, v]));
+    if (isPlain(out.layout)) out.layout = Object.fromEntries(Object.entries(out.layout).map(([k, v]) => [k === from ? to : k, v]));
+    for (const e of list(out.edges)) { if (!isPlain(e)) continue; if (e.from === from) e.from = to; if (e.to === from) e.to = to; }
+    for (const sc of list(out.scenarios)) for (const st of list(sc?.steps)) if (isPlain(st?.expect?.node)) for (const [k, v] of Object.entries(st.expect.node)) if (v === from) st.expect.node[k] = to;
+    return { body: out };
+}
+
+// A participant renamed (§32.3): its key, and everything of the template that reads it: conditions and
+// lists ({ "context": "record_1.layer" }), another participant's `from` ("record_1.product"), and the
+// nodes its scenarios expect of it. Scripts are definitions of their own, not rewritten: `scripts` names
+// those the template runs, for the person to check. → { body, scripts } or { problem }
+export function renameFlowParticipant(body, from, to) {
+    if (!isPlain(body?.participants) || !Object.hasOwn(body.participants, from)) return { problem: `There is no record ${from}.` };
+    if (!IDENTIFIER.test(to ?? "")) return { problem: "A record's name is lower case letters, digits and _, starting with a letter." };
+    if (to === from) return { body, scripts: [] };
+    if (Object.hasOwn(body.participants, to) || flowContextNames(body).includes(to)) return { problem: `${to} names something of the template already.` };
+    const moved = (v) => (v === from ? to : typeof v === "string" && v.startsWith(`${from}.`) ? to + v.slice(from.length) : v);
+    // Every { context: … } operand, wherever it sits (a start's when, a wire's condition, the ends, a list's parameters).
+    const walk = (v) => {
+        if (Array.isArray(v)) return v.map(walk);
+        if (!isPlain(v)) return v;
+        return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, k === "context" && typeof x === "string" ? moved(x) : walk(x)]));
+    };
+    const out = JSON.parse(JSON.stringify(body));
+    out.participants = Object.fromEntries(Object.entries(out.participants).map(([k, p]) => [k === from ? to : k, isPlain(p) && typeof p.from === "string" ? { ...p, from: moved(p.from) } : p]));
+    for (const key of ["nodes", "edges", "ends"]) if (out[key] !== undefined) out[key] = walk(out[key]);
+    for (const sc of list(out.scenarios)) for (const st of list(sc?.steps)) if (isPlain(st?.expect?.node) && Object.hasOwn(st.expect.node, from)) st.expect.node = Object.fromEntries(Object.entries(st.expect.node).map(([k, v]) => [k === from ? to : k, v]));
+    const scripts = [...new Set(Object.values(isPlain(out.nodes) ? out.nodes : {}).flatMap((n) => [n?.onEnter, n?.onExit]).filter((x) => typeof x === "string"))];
+    return { body: out, scripts };
+}
+
 export function flowContextNames(body) {
     const nodes = Object.values(isPlain(body?.nodes) ? body.nodes : {});
     return [...new Set([
@@ -1729,7 +2428,7 @@ export function flowContextNames(body) {
 // state) and its values.
 function flowExprProblems(expr, participants, objects, names) {
     try {
-        const out = [];
+        const out = shapeProblems(expr);
         for (const ref of referencesOf(expr)) {
             if (ref.scope !== "context") { out.push(`it reads ${ref.scope}, but a flow's condition reads its context: {"context": "lot.state"}.`); continue; }
             const [key, field] = String(ref.path).split(".");
@@ -1748,6 +2447,156 @@ const PLAIN_VALUE = (v) => v === null || ["string", "number", "boolean"].include
 // their `flow` opt-in, fields, states, transitions, roles), transactions ({ inputs, appearsOn }), screens,
 // scripts, flows (the other templates' names), users, groups, departments, and flowNodes (the installed
 // suites' node kinds).
+// An input screen's field drawn from a named query (§32.6): the query, its value and display columns, and
+// each parameter bound to an expression over the run's context and the user (or a constant). `known.queries`:
+// { name: body } of the queries there will be (undefined: not known yet, not checked).
+export function queryFieldProblems(spec, known = {}) {
+    const out = [];
+    for (const k of Object.keys(spec)) if (!QUERY_FIELD_KEYS.includes(k)) out.push(`a field from a query has no "${k}".`);
+    if (typeof spec.query !== "string" || !IDENTIFIER.test(spec.query)) { out.push("name the query its list comes from."); return out; }
+    const body = isPlain(known.queries) ? known.queries[spec.query] : undefined;
+    if (isPlain(known.queries) && !body) out.push(`"${spec.query}" is not a query.`);
+    if (typeof spec.value !== "string" || !spec.value) out.push("say which column is kept as its value.");
+    if (spec.display !== undefined && !(Array.isArray(spec.display) && spec.display.length && spec.display.length <= 6 && spec.display.every((c) => typeof c === "string" && c))) out.push("its display is a list of 1 to 6 columns.");
+    if (spec.separator !== undefined && (typeof spec.separator !== "string" || spec.separator.length > 10)) out.push("its separator is text, at most 10 characters.");
+    const params = spec.params === undefined ? {} : spec.params;
+    if (!isPlain(params)) { out.push("its params are { parameter: expression }."); return out; }
+    const declared = isPlain(body?.params) ? body.params : null;
+    for (const [p, expr] of Object.entries(params)) {
+        if (declared && !Object.hasOwn(declared, p)) out.push(`${spec.query} has no parameter "${p}".`);
+        const scopes = [...new Set(referencesOf(expr).map((r) => r.scope))].filter((sc) => !["context", "user"].includes(sc));
+        if (scopes.length) out.push(`${p} reads ${scopes.join(", ")}: a list's parameters read the run's context ({"context": "lot.product"}) and the user.`);
+    }
+    if (declared) {
+        const used = typeof body.sql === "string" ? paramsIn(body.sql).names : Object.keys(declared);
+        for (const [p, d] of Object.entries(declared)) if (d?.required && used.includes(p) && !Object.hasOwn(params, p)) out.push(`${spec.query} needs ${d.label ?? p}: bind it (params.${p}).`);
+    }
+    out.push(...queryColumnProblems(spec.query, [spec.value, ...(Array.isArray(spec.display) ? spec.display : [])], known, "its list"));
+    return out;
+}
+
+// ---- choices, and a screen's rows, from a named query (§23.1) ----
+// A reference (an object's field, a transaction's input) may offer, in place of every record of its object, the
+// rows a named query gives the person: options: { query, display?: [columns], params?: { parameter: expression } }.
+// The query returns the records' id (a column "id"), its display columns say each; its parameters read the form
+// being filled (data, record, user) or the transaction (input, lookup, user, node). A screen's table may show a
+// query's rows: { block: "table", query, params?, columns?, sort?, object? (whose records its id names, for row
+// buttons) }. The columns each names are checked against those the query gives (`known.queryColumns`: the
+// server's description of each, without running it), so a change to a query that takes a column away, or to an
+// object a query reads, is said of every design that would break.
+export const QUERY_SOURCE_KEYS = ["query", "display", "params"];
+export const QUERY_TABLE_KEYS = ["block", "title", "width", "tab", "showWhen", "enableWhen", "disabledBecause", "query", "params", "columns", "sort", "limit", "pageSize", "object", "rowActions", "rowActionsIn", "fills"];
+// A screen's table of a query's rows: [words].
+function queryTableProblems(b, known, objects = {}, transactions = {}, params = {}) {
+    const out = [];
+    for (const k of Object.keys(b)) if (!QUERY_TABLE_KEYS.includes(k)) out.push(`a table of a query's rows has no "${k}"${["where", "create", "archive"].includes(k) ? ": its query says which rows" : ""}.`);
+    if (typeof b.query !== "string" || !IDENTIFIER.test(b.query)) return [...out, "name the query its rows come from."];
+    out.push(...queryBindingProblems(b.query, b.params, known, QUERY_SCOPES.screen));
+    for (const [p, expr] of Object.entries(isPlain(b.params) ? b.params : {})) for (const r of referencesOf(expr)) if (r.scope === "param" && !Object.hasOwn(params, String(r.path))) out.push(`${p} reads param.${r.path}, which is not the screen's parameter.`);
+    if (b.columns !== undefined && !(Array.isArray(b.columns) && b.columns.length && b.columns.every((c) => typeof c === "string" && c))) out.push("its columns are a list of the query's columns (or none: all of them).");
+    if (b.sort !== undefined && !(isPlain(b.sort) && typeof b.sort.field === "string" && ["asc", "desc"].includes(b.sort.dir ?? "asc"))) out.push("sort is { field: one of the query's columns, dir: asc | desc }.");
+    if (b.limit !== undefined && !(Number.isInteger(b.limit) && b.limit >= 1 && b.limit <= 1000)) out.push("limit is 1 to 1000 rows.");
+    if (b.pageSize !== undefined && !(Number.isInteger(b.pageSize) && b.pageSize >= 5 && b.pageSize <= 200)) out.push("a page is 5 to 200 rows.");
+    if (b.object !== undefined && !Object.hasOwn(objects, b.object)) out.push(`"${b.object}" is not an object (whose records the rows' id names).`);
+    const actions = Array.isArray(b.rowActions) ? b.rowActions : [];
+    if (b.rowActions !== undefined && !Array.isArray(b.rowActions)) out.push("rowActions is a list of transactions.");
+    if (actions.length && b.object === undefined) out.push("row buttons need the object whose records the rows' id names (object).");
+    for (const t of actions) {
+        const tx = transactions[t];
+        if (!tx) out.push(`"${t}" is not a transaction.`);
+        else if (b.object !== undefined && tx.appearsOn?.object !== b.object) out.push(`${t} does not appear on ${b.object} records (its appearsOn), so a row cannot start it.`);
+    }
+    if (b.rowActionsIn !== undefined && !["below", "panel"].includes(b.rowActionsIn)) out.push(`a row button's form opens below the table or in a panel ("below" or "panel"), not "${b.rowActionsIn}".`);
+    const wanted = [...(Array.isArray(b.columns) ? b.columns : []), ...(isPlain(b.sort) && b.sort.field ? [b.sort.field] : []), ...(b.object !== undefined ? ["id"] : [])];
+    out.push(...queryColumnProblems(b.query, wanted, known, "its columns"));
+    return out;
+}
+export const QUERY_SCOPES = { form: ["data", "record", "user"], transaction: ["input", "lookup", "user", "node"], screen: ["param", "user"], flow: ["context", "user"] };
+export function querySourceProblems(src, known = {}, scopes = []) {
+    if (!isPlain(src)) return ["its choices from a query are { query, display?, params? }."];
+    const out = [];
+    for (const k of Object.keys(src)) if (!QUERY_SOURCE_KEYS.includes(k)) out.push(`its choices from a query have no "${k}" (query, display, params).`);
+    if (typeof src.query !== "string" || !IDENTIFIER.test(src.query)) { out.push("name the query its choices come from."); return out; }
+    if (src.display !== undefined && !(Array.isArray(src.display) && src.display.length && src.display.length <= 6 && src.display.every((c) => typeof c === "string" && c))) out.push("its display is a list of 1 to 6 of the query's columns.");
+    out.push(...queryBindingProblems(src.query, src.params, known, scopes));
+    out.push(...queryColumnProblems(src.query, ["id", ...(Array.isArray(src.display) ? src.display : [])], known, "its choices"));
+    return out;
+}
+// A query named, its parameters bound: a query there is, each binding one of its parameters and reading only what
+// that place may (`scopes`), every required one used by its text bound.
+export function queryBindingProblems(query, params = {}, known = {}, scopes = []) {
+    const out = [];
+    const body = isPlain(known.queries) ? known.queries[query] : undefined;
+    if (isPlain(known.queries) && !body) { out.push(`"${query}" is not a query.`); return out; }
+    if (params !== undefined && !isPlain(params)) return [...out, "its params are { parameter: expression }."];
+    const declared = isPlain(body?.params) ? body.params : null;
+    for (const [p, expr] of Object.entries(params ?? {})) {
+        if (declared && !Object.hasOwn(declared, p)) out.push(`${query} has no parameter "${p}".`);
+        out.push(...shapeProblems(expr).map((m) => `${p}: ${m}`));
+        const off = [...new Set(referencesOf(expr).map((r) => r.scope))].filter((sc) => !scopes.includes(sc));
+        if (off.length) out.push(`${p} reads ${off.join(", ")}: here a query's parameters read ${scopes.join(", ")}.`);
+    }
+    if (declared) {
+        const used = typeof body.sql === "string" ? paramsIn(body.sql).names : Object.keys(declared);
+        for (const [p, d] of Object.entries(declared)) if (d?.required && used.includes(p) && !Object.hasOwn(params ?? {}, p)) out.push(`${query} needs ${d.label ?? p}: bind it (params.${p}).`);
+    }
+    return out;
+}
+// The columns a design names against those the query gives, when they are known.
+export function queryColumnProblems(query, wanted, known = {}, what = "it") {
+    const cols = isPlain(known.queryColumns) ? known.queryColumns[query] : undefined;
+    if (!Array.isArray(cols)) return [];
+    const missing = [...new Set(wanted.filter((c) => typeof c === "string" && c))].filter((c) => !cols.includes(c));
+    if (!missing.length) return [];
+    return [`${what} ${missing.length === 1 ? "uses" : "use"} ${missing.map((c) => `"${c}"`).join(", ")}, which ${query} does not give (it gives ${cols.join(", ") || "no columns"}).`];
+}
+// Every place a named query is used, among the designs given (live and drafted, merged by the caller): each a
+// form field's choices, a transaction input's, a screen table's rows or a plan screen's list, with what of the
+// query it names. → [{ kind, name, label, at (words), path, query, columns, params, scopes }]
+export function queryUses({ definitions = {}, transactions = {}, screens = {}, flows = {} } = {}) {
+    const out = [];
+    const list = (v) => (Array.isArray(v) ? v : []);
+    for (const [name, def] of Object.entries(definitions ?? {})) {
+        for (const [f, field] of Object.entries(isPlain(def?.fields) ? def.fields : {})) {
+            const o = field?.options;
+            if (isPlain(o) && typeof o.query === "string") out.push({ kind: "object", name, label: def.label ?? name, at: `field ${field.label ?? f}`, path: `fields.${f}.options`, query: o.query, columns: ["id", ...list(o.display)], params: o.params ?? {}, scopes: QUERY_SCOPES.form });
+        }
+    }
+    for (const [name, tx] of Object.entries(transactions ?? {})) {
+        for (const [k, spec] of Object.entries(isPlain(tx?.inputs) ? tx.inputs : {})) {
+            const o = spec?.options;
+            if (isPlain(o) && typeof o.query === "string") out.push({ kind: "transaction", name, label: tx.label ?? name, at: `input ${spec.label ?? k}`, path: `inputs.${k}.options`, query: o.query, columns: ["id", ...list(o.display)], params: o.params ?? {}, scopes: QUERY_SCOPES.transaction });
+        }
+    }
+    for (const [name, sc] of Object.entries(screens ?? {})) {
+        for (const [i, b] of list(sc?.blocks).entries()) {
+            // A chart reading a named query (§23.1): the columns it draws.
+            if (isPlain(b) && b.block === "chart" && isPlain(b.query) && typeof b.query.named === "string") {
+                const drawn = [...["x", "series", "size", "value", "source", "target", "open", "high", "low", "close"].map((k) => b[k]), ...["y", "path", "lines"].flatMap((k) => list(b[k]))].filter((c) => typeof c === "string");
+                out.push({ kind: "screen", name, label: sc.label ?? name, at: `chart "${b.title ?? b.query.named}"`, path: `blocks.${i}.query`, query: b.query.named, columns: [...new Set(drawn)], params: b.query.params ?? {}, scopes: QUERY_SCOPES.screen });
+                continue;
+            }
+            if (!isPlain(b) || b.block !== "table" || typeof b.query !== "string") continue;
+            const ids = b.object !== undefined || list(b.rowActions).length ? ["id"] : [];
+            out.push({ kind: "screen", name, label: sc.label ?? name, at: `table "${b.title ?? b.query}"`, path: `blocks.${i}`, query: b.query, columns: [...list(b.columns), ...(isPlain(b.sort) && b.sort.field ? [b.sort.field] : []), ...ids], params: b.params ?? {}, scopes: QUERY_SCOPES.screen });
+        }
+    }
+    for (const [name, fl] of Object.entries(flows ?? {})) {
+        for (const [id, n] of Object.entries(isPlain(fl?.nodes) ? fl.nodes : {})) {
+            for (const spec of list(n?.fields)) {
+                if (spec?.type !== "query" || typeof spec.query !== "string") continue;
+                out.push({ kind: "flow", name, label: fl.label ?? name, at: `${n.label ?? id}, field ${spec.label ?? spec.name}`, path: `nodes.${id}.fields`, query: spec.query, columns: [spec.value, ...list(spec.display)], params: spec.params ?? {}, scopes: QUERY_SCOPES.flow });
+            }
+        }
+    }
+    return out;
+}
+// What is wrong with one use of a query, against the queries and their columns there will be: [words].
+export const queryUseProblems = (use, known = {}) => [
+    ...queryBindingProblems(use.query, use.params, known, use.scopes),
+    ...queryColumnProblems(use.query, use.columns, known, use.kind === "screen" ? "its columns" : "it"),
+];
+
 export function validateFlow(body, known = {}) {
     const problems = [];
     const add = (path, message) => problems.push({ path, message });
@@ -1782,6 +2631,24 @@ export function validateFlow(body, known = {}) {
     const byRole = (role) => Object.entries(participants).filter(([, p]) => p?.as === role).map(([k]) => k);
     if (body.kind === "route" && byRole("traveler").length !== 1) add("participants", "A route has one traveler: the record that goes through it (a lot).");
     if (body.asSub !== undefined && (body.kind !== "route" || typeof body.asSub !== "boolean")) add("asSub", "asSub is true or false, on a route: it runs only inside another route.");
+    // What the route does at every step (§32.15): a transaction it runs on its traveler, as the route, as the traveler
+    // enters any step (onEnter) or leaves one (onExit). It appears on the traveler's object, names this route among its
+    // callers, and is signed by nobody (a route has no person to sign).
+    if (body.everySequence !== undefined) {
+        const every = body.everySequence;
+        const [, travelerP] = Object.entries(participants).find(([, p]) => p?.as === "traveler") ?? [];
+        if (body.kind !== "route" || !isPlain(every)) add("everySequence", "everySequence is a route's: { onEnter?: { run: transaction }, onExit?: { run: transaction } }.");
+        else for (const [which, spec] of Object.entries(every)) {
+            const at = `everySequence.${which}`;
+            if (!["onEnter", "onExit"].includes(which)) { add(at, `everySequence has onEnter and onExit, not "${which}".`); continue; }
+            if (!isPlain(spec) || typeof spec.run !== "string" || Object.keys(spec).some((k) => k !== "run")) { add(at, `${which} is { run: <a transaction> }.`); continue; }
+            const tx = transactions[spec.run];
+            if (!tx) { add(at, `${which}: "${spec.run}" is not a transaction.`); continue; }
+            if (travelerP && (tx.appearsOn?.object !== travelerP.object || !tx.appearsOn?.fills)) add(at, `${which}: ${tx.label ?? spec.run} does not appear on ${travelerP.object} records (its appearsOn, filling the record), so the route cannot run it on its traveler.`);
+            if (tx.signed) add(at, `${which}: ${tx.label ?? spec.run} is signed by the person running it: a route does not run it.`);
+            if (tx.callers && !list(tx.callers.flows).includes(body.name)) add(at, `${which}: ${tx.label ?? spec.run} does not name this route among its callers (Callers: routes): add ${body.name} there.`);
+        }
+    }
     if (body.kind === "route" && byRole("resource").length > 1) add("participants", "A route has at most one kind of resource (where the work is done).");
     if (body.kind === "plan" && byRole("subject").length !== 1) add("participants", "A plan has one subject: the record whose event sets it off.");
     const traveler = participants[byRole("traveler")[0]];
@@ -1864,6 +2731,9 @@ export function validateFlow(body, known = {}) {
             }
             if (n.settings !== undefined && (!isPlain(n.settings) || !Object.entries(n.settings).every(([k, v]) => IDENTIFIER.test(k) && ["string", "number", "boolean"].includes(typeof v)))) add(at, `${name}: settings are { name: a plain value }.`);
             if (n.screen !== undefined && known.screens && !known.screens.includes(n.screen)) add(at, `${name}: "${n.screen}" is not a screen.`);
+            // Where it is in the route's guide (§35.4): a page of a PDF ("3") or a moment of a video ("0:45"),
+            // so a media block showing the guide steps with the route.
+            if (n.guide !== undefined && !(typeof n.guide === "string" && /^\d{1,6}(:\d{1,2}){0,2}$/.test(n.guide.trim()) && secondsOf(n.guide.trim()) !== null)) add(at, `${name}: guide is where it is in the guide: a page ("3") or a time ("0:45").`);
             if (n.state !== undefined && traveler && !list(objects[traveler.object]?.states).includes(n.state)) add(at, `${name}: ${traveler.object} has no state "${n.state}".`);
             if (traveler && !stepField) add(at, `${name}: a sequence marks the traveler's step, and ${traveler.object} names no step field (Flows, on its General tab).`);
             // Entering it marks the traveler's step field with its name: a choice field must offer it.
@@ -1891,6 +2761,7 @@ export function validateFlow(body, known = {}) {
                 seen.add(f);
                 if (!isPlain(spec) || !INPUT_TYPES.includes(spec.type)) add(at, `${name}: ${f} is one of ${INPUT_TYPES.join(", ")}.`);
                 else if (spec.type === "enum" && !(list(spec.values).length && list(spec.values).every((v) => typeof v === "string" && v))) add(at, `${name}: ${f}: list the values it may take.`);
+                else if (spec.type === "query") for (const m of queryFieldProblems(spec, known)) add(at, `${name}: ${f}: ${m}`);
             }
         }
         if (kind === "sub_flow") {
@@ -1978,16 +2849,23 @@ export function flowFootprint(name, before, after, context = {}) {
     if (same(before, after)) return [];
     const reach = (body) => {
         if (!body) return [];
+        // A sequence that puts its traveler in a state takes that transition without waiting: the traveler's
+        // approval by value approves the route instead (§28.3b).
+        const travelers = Object.values(isPlain(body.participants) ? body.participants : {}).filter((p) => p?.as === "traveler").map((p) => context.objects?.[p.object]).filter(Boolean);
+        const intoState = (st) => travelers.flatMap((def) => valueApprovers(def, { actions: list(def.transitions ?? def.states?.transitions).filter((t) => t?.to === st).map((t) => t.action) }));
         return [
             ...Object.values(isPlain(body.nodes) ? body.nodes : {}).flatMap((n) => list(n?.offers).flatMap((t) => list(context.transactions?.[t]?.stewards))),
             ...Object.keys(isPlain(body.roles) ? body.roles : {}).flatMap((o) => list(context.objects?.[o]?.stewards?.object)),
+            ...Object.values(isPlain(body.nodes) ? body.nodes : {}).filter((n) => typeof n?.state === "string").flatMap((n) => intoState(n.state)),
+            // The transaction it runs at every step: its stewards approve that it does (§32.15).
+            ...Object.values(isPlain(body.everySequence) ? body.everySequence : {}).flatMap((x) => list(context.transactions?.[x?.run]?.stewards)),
         ];
     };
     const answer = (change, extra = []) => [...new Set([...(change !== "added" ? list(before?.stewards) : []), ...(change !== "removed" ? list(after?.stewards) : []), ...extra])].filter(Boolean).sort();
     const element = `flow:${name}`;
     if (!before) return [{ element, change: "added", stewards: answer("added", reach(after)) }];
     if (!after) return [{ element, change: "removed", stewards: answer("removed", reach(before)) }];
-    return FLOW_KEYS.filter((k) => !same(before[k], after[k])).map((k) => ({ element: `${element}.${k}`, change: "changed", stewards: answer("changed", ["nodes", "roles"].includes(k) ? [...reach(before), ...reach(after)] : []) }));
+    return FLOW_KEYS.filter((k) => !same(before[k], after[k])).map((k) => ({ element: `${element}.${k}`, change: "changed", stewards: answer("changed", ["nodes", "roles", "everySequence"].includes(k) ? [...reach(before), ...reach(after)] : []) }));
 }
 
 // Tidy (and the AI's layout_flow): left to right by distance from the start, a node's branches below
@@ -2031,6 +2909,8 @@ export function flowMapOf(body, flowNodes = {}) {
         nodes: Object.fromEntries(Object.entries(nodes).map(([id, n]) => [id, {
             kind: flowKindOf(n, flowNodes) ?? "missing", label: String(n?.label ?? id),
             words: flowNodes[n?.kind]?.label ?? FLOW_NODE_WORDS[n?.kind] ?? String(n?.kind ?? ""), hooks: Boolean(n?.onEnter || n?.onExit),
+            // The template a sub flow runs, by name: a route's page opens it from the node (§32.14).
+            ...(flowKindOf(n, flowNodes) === "sub_flow" && typeof n?.flow === "string" ? { flow: n.flow } : {}),
         }])),
         edges: list(body?.edges).filter((e) => isPlain(e) && nodes[e.from] && nodes[e.to]).map((e) => ({ from: e.from, to: e.to, ...(e.label ? { label: String(e.label) } : {}), ...(e.retry ? { retry: true } : {}), ...(e.when !== undefined ? { cond: true } : {}) })),
         layout: isPlain(body?.layout) ? body.layout : {},

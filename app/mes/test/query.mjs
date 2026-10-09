@@ -10,7 +10,7 @@
 //   DATABASE_URL=postgres:///openmes_poc node app/mes/test/query.mjs
 import pg from "pg";
 import { randomBytes, randomUUID } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createStore } from "../server/store.js";
 import { createQuery, conditionSql } from "../server/query.js";
 import { mask } from "../server/policy.js";
@@ -158,7 +158,7 @@ try {
     step("the stays of each object are a view too", stays.columns.join() === "state,n" && stays.rows.length > 0, stays.rows);
     const schema = await query.services["query.schema"].call(as("olga"), {});
     const lotView = schema.views.find((v) => v.name === "lot");
-    step("the schema explorer: views, typed columns, what the viewer may read, a sample query", lotView && lotView.columns.find((c) => c.name === "qty")?.type === "numeric" && lotView.columns.find((c) => c.name === "disposition")?.access === "always" && /FROM lot/.test(lotView.sample) && !schema.views.some((v) => v.name === "deviation" && !added.includes("olga")), lotView?.columns.slice(-4));
+    step("the schema explorer: views, typed columns, what the viewer may read, a sample query", lotView && lotView.columns.find((c) => c.name === "qty")?.type === "numeric" && lotView.columns.find((c) => c.name === "disposition")?.access === "always" && /FROM lot/.test(lotView.sample) && !schema.views.some((v) => v.name === "deviation" && !added.includes("olga")), { qty: lotView?.columns.find((c) => c.name === "qty")?.type, disposition: lotView?.columns.find((c) => c.name === "disposition")?.access, sample: lotView?.sample, views: schema.views.map((v) => v.name), added });
 
     // ---- views follow the definitions ----
     const [lot] = await db.query("SELECT version, body FROM mes.definitions WHERE object = 'lot' AND status = 'published'");
@@ -179,6 +179,8 @@ try {
     await pool.end();
 }
 const failed = steps.filter((s) => !s.ok);
-console.log(JSON.stringify(steps, null, 1));
+for (const st of steps) console.log(`${st.ok ? "✓" : "✗"} ${st.step}`);
+// The failed ones last, with what they found: what a log's tail keeps.
+for (const st of failed) console.log(`\n✗ ${st.step}\n${JSON.stringify(st.detail ?? null).slice(0, 4000)}`);
 console.log(failed.length ? `\n${failed.length} step(s) FAILED` : `\nall ${steps.length} steps passed`);
 process.exit(failed.length ? 1 : 0);

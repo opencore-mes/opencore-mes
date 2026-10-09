@@ -8,7 +8,7 @@ import { icon } from "./icons.js";
 import { windowRows } from "./window-rows.js";
 import { plant } from "./format.js";
 
-const KIND_WORDS = { definitions: "object", scripts: "script", connections: "connection", services: "service", transactions: "transaction", screens: "screen", flows: "flow template", layouts: "report layout", elements: "design element" };
+const KIND_WORDS = { definitions: "object", scripts: "script", connections: "connection", services: "service", transactions: "transaction", screens: "screen", flows: "flow template", layouts: "report layout", queries: "query", elements: "design element" };
 const WILL = { create: "to create", update: "to update", approval: "to wait for approval", unchanged: "unchanged", refused: "refused" };
 const DID = { create: "created", update: "updated", approval: "sent for approval", unchanged: "unchanged", refused: "refused" };
 

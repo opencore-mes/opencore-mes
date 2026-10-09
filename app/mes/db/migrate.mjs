@@ -19,6 +19,7 @@ import { rebuildIntervals } from "../server/analytics.js";
 import { appendAudit } from "../server/audit.js";
 import { syncPeople } from "../server/organization.js";
 import { BUILT_INS, BUILT_IN_SCRIPTS, BUILT_IN_FIRST_ROLES } from "../client/builtins.js";
+import { sealDesigns, platformWrites, ACCESS } from "../server/integrity.js";
 
 const here = (file) => new URL(file, import.meta.url);
 
@@ -114,6 +115,44 @@ export const MIGRATIONS = [
     // Sign-in hardened (§8.2, §7.4): sessions hashed and idle, re-authentication at signatures, password
     // ageing and history, a second factor, tokens that expire.
     { name: "auth-hardening", file: "migrate-auth-hardening.sql" },
+    // The audit chain verified on a schedule, from where it was last checked (§7.3, COMPLIANCE.md G3).
+    { name: "audit-verify", file: "migrate-audit-verify.sql" },
+    // Emergency changes (§5.7, COMPLIANCE.md G15): one signature executes it; reviewed afterwards within a set time.
+    { name: "emergency", file: "migrate-emergency.sql" },
+    // Data retention (§27.8, COMPLIANCE.md G11): the purge's runs, its indexes, the event log's copy purged past a year.
+    { name: "retention", file: "migrate-retention.sql" },
+    // Named queries (§23.1): a SELECT over the query views, designed and approved like a screen.
+    { name: "named-queries", file: "migrate-named-queries.sql" },
+    // Setup (§5.15): a change executed on its designer's signature while the plant is set up.
+    { name: "setup", file: "migrate-setup.sql" },
+    // Approval levels (§5.16): the level a change was submitted under.
+    { name: "approval-levels", file: "migrate-approval-levels.sql" },
+    // A kept prompt's run by the clock (§34.7): tried again after a stop or a failure, and said when late.
+    { name: "report-retries", file: "migrate-report-retries.sql" },
+    { name: "certifications", file: "migrate-certifications.sql" },
+    { name: "files", file: "migrate-files.sql" },
+    // Setup codes (§8.2): five letters on a printed slip, to set a first password.
+    { name: "setup-codes", file: "migrate-setup-codes.sql" },
+    // Every suite version an installation has run, and what it gave designs (§29.5, §29.10).
+    { name: "suite-versions", file: "migrate-suite-versions.sql" },
+    {
+        name: "integrity", file: "migrate-integrity.sql",
+        // The data integrity review (§7.7, COMPLIANCE.md G16): its first reviewers are those who review designs.
+        // Its baseline is taken by one of them, signed (a new database's by the reset).
+        async first(tx) {
+            const rows = await tx.query(
+                `INSERT INTO mes.assignments (subject_kind, subject_id, object, role)
+                 SELECT DISTINCT subject_kind, subject_id, 'integrity', 'reviewer' FROM mes.assignments
+                 WHERE object = 'design' AND role = 'reviewer'
+                 ON CONFLICT DO NOTHING RETURNING subject_id`,
+            );
+            return `integrity reviewer role given to ${rows.map((r) => r.subject_id).join(", ") || "nobody new"}`;
+        },
+    },
+    { name: "mail", file: "migrate-mail.sql" },
+    { name: "database", file: "migrate-database.sql" },
+    { name: "audit-chains", file: "migrate-audit-chains.sql" },
+    { name: "call-stats", file: "migrate-call-stats.sql" },
 ];
 
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
@@ -128,6 +167,8 @@ export async function migrate(db, { log = console, suites = [] } = {}) {
     const done = [];
     await db.transaction(async (tx) => {
         await tx.query("SELECT pg_advisory_xact_lock(hashtext('mes.migrations'))");
+        // The platform's own writes (built-ins, first roles): let by the integrity tripwire (§7.7).
+        await platformWrites(tx);
         await tx.query(`CREATE TABLE IF NOT EXISTS mes.schema_migrations (
             name text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())`);
         const applied = new Map((await tx.query("SELECT name, checksum FROM mes.schema_migrations")).map((r) => [r.name, r.checksum]));
@@ -148,22 +189,41 @@ export async function migrate(db, { log = console, suites = [] } = {}) {
             done.push({ name: m.name, action: before === undefined ? "applied" : "re-applied", ...(note ? { note } : {}) });
         }
         done.push(...(await ensureBuiltIns(tx)));
+        // What the platform published or granted just now, sealed (§7.7); nothing else is (a hand edit stays found).
+        const changed = new Set();
+        for (const d of done) {
+            if (d.action !== "applied") continue;
+            if (d.name.startsWith("built-in-roles:") || ((d.name === "queries" || d.name === "integrity" || d.name === "organization") && d.note)) changed.add(ACCESS);
+            const built = BUILT_INS.find((b) => `built-in:${b.object}` === d.name);
+            if (built) for (const k of [`definitions:${built.object}`, ...(built.rules ?? []).map((r) => `scripts:${r.script}`)]) changed.add(k);
+        }
+        const [sealing] = await tx.query("SELECT to_regclass('mes.integrity_seals') IS NOT NULL AS ok");
+        if (changed.size && sealing?.ok) await sealDesigns(tx, undefined, [...changed]);
     });
     for (const d of done) log.info?.(`database: ${d.action} ${d.name}${d.note ? ` (${d.note})` : ""}`);
     return done;
 }
 
-// A built-in the platform has since given a field (a report's tags): the live definition gets it, as
-// a new version published by the platform, with everything the plant made of the object kept as it
-// is (its own fields, policies, form, rules). Only fields are added, never changed or taken away; a
-// field of that name the plant already has stays the plant's. The form's first section shows it.
+// A built-in the platform has since given a field (a report's tags), or a setting (GROWN: Person's scanBy, its
+// sign-in id scanned off a badge): the live definition gets it, as a new version published by the platform,
+// with everything the plant made of the object kept as it is (its own fields, policies, form, rules). Only
+// added, never changed or taken away; a field of that name, or a setting, the plant already has stays the
+// plant's. The form's first section shows a new field.
+const GROWN = ["scanBy"];
 async function growBuiltIn(tx, builtIn) {
     const [live] = await tx.query("SELECT version, body FROM mes.definitions WHERE object = $1 AND status = 'published' FOR UPDATE", [builtIn.object]);
     if (!live?.body?.builtIn) return [];
     const added = Object.keys(builtIn.fields).filter((f) => !Object.hasOwn(live.body.fields ?? {}, f));
-    if (!added.length) return [];
+    // Given once (marked done): a plant that takes it away later keeps it away.
+    const given = new Set((await tx.query("SELECT name FROM mes.schema_migrations WHERE name LIKE $1", [`built-in-grown:${builtIn.object}:%`])).map((r) => r.name.split(":").pop()));
+    const settings = GROWN.filter((k) => builtIn[k] !== undefined && !Object.hasOwn(live.body, k) && !given.has(k));
+    if (!added.length && !settings.length) return [];
     const body = JSON.parse(JSON.stringify(live.body));
     for (const f of added) body.fields[f] = builtIn.fields[f];
+    for (const k of settings) {
+        body[k] = JSON.parse(JSON.stringify(builtIn[k]));
+        await tx.query("INSERT INTO mes.schema_migrations (name, checksum) VALUES ($1, 'once') ON CONFLICT DO NOTHING", [`built-in-grown:${builtIn.object}:${k}`]);
+    }
     const section = body.form?.sections?.[0];
     if (section && Array.isArray(section.fields)) {
         const shown = new Set((body.form.sections ?? []).flatMap((s) => (s.fields ?? []).map((e) => (typeof e === "string" ? e : e?.field))));
@@ -172,8 +232,8 @@ async function growBuiltIn(tx, builtIn) {
     const [{ v }] = await tx.query("SELECT coalesce(max(version), 0) + 1 AS v FROM mes.definitions WHERE object = $1", [builtIn.object]);
     await tx.query("UPDATE mes.definitions SET status = 'superseded' WHERE object = $1 AND version = $2", [builtIn.object, live.version]);
     await tx.query("INSERT INTO mes.definitions (object, version, status, body) VALUES ($1, $2, 'published', $3)", [builtIn.object, v, JSON.stringify(body)]);
-    await appendAudit(tx, { actor: "platform", object: builtIn.object, recordId: null, defVersion: v, action: "publish:built-in", after: { object: builtIn.object, version: v, added } });
-    return [{ name: `built-in:${builtIn.object}`, action: "applied", note: `the platform added ${added.join(", ")} (version ${v})` }];
+    await appendAudit(tx, { actor: "platform", object: builtIn.object, recordId: null, defVersion: v, action: "publish:built-in", after: { object: builtIn.object, version: v, added, ...(settings.length ? { settings } : {}) } });
+    return [{ name: `built-in:${builtIn.object}`, action: "applied", note: `the platform added ${[...added, ...settings].join(", ")} (version ${v})` }];
 }
 
 // The platform's built-in objects (builtins.js), published in every installation the first time it
@@ -229,7 +289,7 @@ export async function ensureBuiltIns(tx) {
 // Run directly: migrate DATABASE_URL.
 if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href) {
     const { default: pg } = await import("pg");
-    const { fromPg } = await import("../../../src/server/db.js");
+    const { fromPg } = await import("@opencore-mes/juris-kit/server/db.js");
     const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL ?? "postgres:///openmes_poc" });
     try {
         const done = await migrate(fromPg(pool), { log: console });

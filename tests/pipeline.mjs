@@ -53,7 +53,7 @@ async function files(dir, test) {
 async function startServer() {
     // Its event log in a directory of its own, never beside a development server's (one process per
     // instance name and directory).
-    const events = await mkdtemp(path.join(os.tmpdir(), "openmes-pipeline-events-"));
+    const events = await mkdtemp(path.join(os.tmpdir(), "opencore-mes-pipeline-events-"));
     const child = spawn(process.execPath, ["app/mes/server.mjs"], {
         cwd: ROOT, env: { ...process.env, HOST: "127.0.0.1", EVENT_LOG_DIR: events, DATABASE_URL: DB, PORT: "0", PROD: "1", BUILD: "pipeline", OUTBOX: "0", AI_PROVIDER: "", ANTHROPIC_API_KEY: "", BUS: "", REPLICA_URL: "" },
         stdio: ["ignore", "pipe", "pipe"],
@@ -102,7 +102,7 @@ const stages = [
     {
         name: "syntax", needs: null,
         async run() {
-            const all = [...(await files("src", (n) => n.endsWith(".js"))), ...(await files("app", (n) => /\.(m?js)$/.test(n))), ...(await files("tests", (n) => n.endsWith(".mjs")))];
+            const all = [...(await files("app", (n) => /\.(m?js)$/.test(n))), ...(await files("tests", (n) => n.endsWith(".mjs")))];
             const bad = [];
             for (let i = 0; i < all.length; i += 16) {
                 const batch = all.slice(i, i + 16);
@@ -110,13 +110,6 @@ const stages = [
                 for (const { f, r } of results) if (r.code !== 0) bad.push(`${f}\n${r.out.trim()}`);
             }
             return { ok: !bad.length, detail: `${all.length} files${bad.length ? `, ${bad.length} with errors` : ""}`, out: bad.join("\n\n") };
-        },
-    },
-    {
-        name: "juris framework", needs: null,
-        async run() {
-            const r = await node("--test", ...(await files("tests/framework", (n) => n.endsWith(".test.mjs"))));
-            return { ok: r.code === 0, detail: nodeTest(r.out) ?? `exit ${r.code}`, out: r.out };
         },
     },
     {
@@ -147,6 +140,12 @@ const stages = [
     { name: "the HTTP APIs' contract: versions, the API kit, notice before a change (e2e)", needs: "db", run: script("app/mes/test/api-versions.mjs") },
     { name: "a service runs a transaction (e2e)", needs: "db", run: script("app/mes/test/service-transactions.mjs") },
     { name: "archive & restore (e2e)", needs: "db", run: script("app/mes/test/archive.mjs") },
+    { name: "what a person typed, trimmed wherever it enters (e2e)", needs: "db", run: script("app/mes/test/trimming.mjs") },
+    { name: "sensitive fields: masked, shown with a reason, audited (e2e)", needs: "db", run: script("app/mes/test/sensitive.mjs") },
+    { name: "derived fields: through references, kept in step, audited (e2e)", needs: "db", run: script("app/mes/test/derived.mjs") },
+    { name: "certifications: what an object's access requires, everywhere it is read (e2e)", needs: "db", run: script("app/mes/test/restricted.mjs") },
+    { name: "files on records and screens: video, PDF in the page, read through the record (e2e)", needs: "db", run: script("app/mes/test/media.mjs") },
+    { name: "a guide's steps done: a click, a value, a photo, the equipment; a guide following a route (e2e)", needs: "db", run: script("app/mes/test/guide-steps.mjs") },
     { name: "database outage (e2e)", needs: "db", run: script("app/mes/test/outage.mjs") },
     { name: "scheduler (e2e)", needs: "db", run: script("app/mes/test/scheduler.mjs") },
     { name: "analytics (e2e)", needs: "db", run: script("app/mes/test/analytics.mjs") },
@@ -169,11 +168,22 @@ const stages = [
     { name: "attachments: copilots, kept prompts, a report's media (e2e)", needs: "db", run: script("app/mes/test/attachments.mjs") },
     { name: "the test sandbox: changes under test together (e2e)", needs: "db", run: script("app/mes/test/test-sandbox.mjs") },
     { name: "rolling a change back (e2e)", needs: "db", run: script("app/mes/test/rollback.mjs") },
+    { name: "emergency changes: one signature, reviewed afterwards, overdue and flagged (e2e)", needs: "db", run: script("app/mes/test/emergency.mjs") },
+    { name: "setup: changes on their designer's signature until it ends, opened at install or by governance (e2e)", needs: "db", run: script("app/mes/test/setup.mjs") },
+    { name: "the first administrator of an empty installation (e2e)", needs: "db", run: script("app/mes/test/first-admin.mjs") },
+    { name: "approval levels: full, one approval, none (e2e)", needs: "db", run: script("app/mes/test/approval-levels.mjs") },
+    { name: "setup codes, the move to the directory, the sign-in id as the plant calls it (e2e)", needs: "db", run: script("app/mes/test/setup-codes.mjs") },
     { name: "the built-in Person, locks (e2e)", needs: "db", run: script("app/mes/test/people.mjs") },
     { name: "sign-in: passwords, directory, single sign-on (e2e)", needs: "db", run: script("app/mes/test/auth.mjs") },
     { name: "sign-in hardened: sessions, password age, second factor, signatures, SSO simulator (e2e)", needs: "db", run: script("app/mes/test/auth-hardening.mjs") },
     { name: "retiring designs (e2e)", needs: "db", run: script("app/mes/test/retire.mjs") },
     { name: "lists page by page (e2e)", needs: "db", run: script("app/mes/test/lists.mjs") },
+    { name: "the Database area: statements, plans, indexes built and dropped (e2e)", needs: "db", run: script("app/mes/test/database.mjs") },
+    { name: "records a step finds, and a route's transaction at every step (e2e)", needs: "db", run: script("app/mes/test/every-step.mjs") },
+    { name: "the use cases book against the designer's checks (e2e)", needs: "db", run: script("app/mes/test/usecases.mjs") },
+    { name: "what a transaction's run locks: written records, and those it only reads (e2e)", needs: "db", run: script("app/mes/test/transaction-locks.mjs") },
+    { name: "named queries as a reference's choices and a screen's table, kept in line (e2e)", needs: "db", run: script("app/mes/test/query-sources.mjs") },
+    { name: "transactions and named queries as web services, every call counted (e2e)", needs: "db", run: script("app/mes/test/web-designs.mjs") },
     { name: "the navigator: by search, favorites (e2e)", needs: "db", run: script("app/mes/test/navigator.mjs") },
     { name: "dates, times and numbers (e2e)", needs: "db", run: script("app/mes/test/formats.mjs") },
     { name: "co-designers and object names (e2e)", needs: "db", run: script("app/mes/test/codesign.mjs") },
@@ -185,15 +195,26 @@ const stages = [
     { name: "viewing a live design (e2e)", needs: "db", run: script("app/mes/test/design-view.mjs") },
     { name: "the sandbox and scenarios (e2e)", needs: "db", run: script("app/mes/test/sandbox.mjs") },
     { name: "flows: routes (e2e)", needs: "db", run: script("app/mes/test/flows.mjs") },
+    { name: "named queries: designed, tried, a plan's dropdown from one, a node script setting its context (e2e)", needs: "db", run: script("app/mes/test/named-queries.mjs") },
     { name: "UI guides (e2e)", needs: "db", run: script("app/mes/test/guides.mjs") },
+    { name: "embedding: framed by the sites a plant names (e2e)", needs: "db", run: script("app/mes/test/embed.mjs") },
+    { name: "data retention: periods, the purge, erasure (e2e)", needs: "db", run: script("app/mes/test/retention.mjs") },
+    { name: "the audit chain verified: from a checkpoint, breaks found and reported (e2e)", needs: "db", run: script("app/mes/test/audit-verify.mjs") },
+    { name: "the audit trail out of the application's reach: protected, still written, never changed (e2e)", needs: "db", run: script("app/mes/test/audit-protect.mjs") },
     { name: "suites: the extension point (e2e)", needs: "db", run: script("app/mes/test/suites.mjs") },
     { name: "suites: capabilities, steps, blocks, elements and schedules, and their removal (e2e)", needs: "db", run: script("app/mes/test/suite-extensions.mjs") },
     ...installed.flatMap((x) => x.e2e.map((file) => ({ name: `suite ${x.name}: ${path.basename(file, ".mjs")} (e2e)`, needs: "db", run: script(file) }))),
+    // After the suites' own tests have filled their tables: removed and installed again, nothing of theirs is lost.
+    { name: "suites removed and installed again keep their data (e2e)", needs: "db", run: script("app/mes/test/suite-reinstall.mjs") },
     { name: "blank training instance (e2e)", needs: "db", run: script("app/mes/test/blank.mjs") },
     { name: "a reset with the suites' packs (e2e)", needs: "db", run: script("app/mes/test/reset-suites.mjs") },
     { name: "input flows: keyboard entry, designed (e2e)", needs: "db", run: script("app/mes/test/input-flows.mjs") },
     { name: "several designs in one change (e2e)", needs: "db", run: script("app/mes/test/batch-changes.mjs") },
     { name: "a model file: export, import as a change, its records (e2e)", needs: "db", run: script("app/mes/test/model-file.mjs") },
+    { name: "a screen parameter's search: part of a title, counted by state (e2e)", needs: "db", run: script("app/mes/test/screen-search.mjs") },
+    { name: "who is at the screen: a badge's sign-in id, a check reading departments, Person grown by it once (e2e)", needs: "db", run: script("app/mes/test/scan-departments.mjs") },
+    // Last of the database's suites: what the ones before wrote by hand to set their scenes, it accepts first.
+    { name: "data integrity: seals, the tripwire, findings, non-conformance reports (e2e)", needs: "db", run: script("app/mes/test/integrity.mjs") },
     ...(FULL ? [{
         name: "load (50/s for 8 s)", needs: "server",
         async run(ctx) {

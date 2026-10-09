@@ -10,6 +10,9 @@ import { noDefault } from "./select.js";
 // there (Tab cycles), Esc cancels, Enter confirms (Ctrl/⌘ + Enter in a text box), and focus returns to
 // where it was. Text is drawn as text; nothing a caller passes is markup.
 //
+//   await infoDialog(api, { title: "About", sections: [{ title: "Suites", rows: [["Shift Calendar", "0.5.2"]] }] });
+//                                     // something to read: sections of label and value, one Close button
+//
 // askDialog's field: { type: "text" | "number" | "date" | "enum", multiline, values (enum), label,
 // placeholder, required, value (the starting value), check: (value) → words when it is not right }.
 
@@ -47,6 +50,11 @@ function finish(api, id, answer) {
 // → true (confirmed) or false (cancelled).
 export const confirmDialog = (api, { title, message = "", confirm = "OK", cancel = "Cancel", danger = false } = {}) =>
     open(api, { kind: "confirm", title, message, confirm, cancel, danger });
+// A part of a design taken out of a draft (a policy, a field, a step), asked first by its name (undo.js
+// brings it back). → an onclick handler; `remove` runs once it is confirmed.
+export const confirmRemove = (api, what, remove) => async (...args) => {
+    if (await confirmDialog(api, { title: `Remove ${what}?`, message: "It is taken out of this change; nothing live changes until the change executes. Undo (⌘Z or Ctrl+Z) brings it back.", confirm: "Remove", danger: true })) remove(...args);
+};
 
 // → the value entered, or null when cancelled.
 export const askDialog = (api, { title, message = "", label = "", placeholder = "", required = false, multiline = false, type = "text", values = null, value = "", check = null, confirm = "OK", cancel = "Cancel", danger = false } = {}) =>
@@ -62,6 +70,10 @@ export const signDialog = (api, { title, message = "", confirm = "Sign", danger 
     return answer.then((v) => (v === false || v === null ? null : asks ? v : {}));
 };
 
+// Something to read (About, §29.9): sections of [label, value] rows, plain text; one button closes it. → true.
+export const infoDialog = (api, { title, message = "", sections = [], confirm = "Close" } = {}) =>
+    open(api, { kind: "info", title, message, sections, confirm });
+
 export function registerDialog(juris) {
     juris.registerComponent("DialogHost", (props, api) => () => {
         const d = api.getState("ui.dialog", null);
@@ -74,7 +86,7 @@ export function registerDialog(juris) {
             return typeof raw === "string" ? raw.trim() : raw;
         };
         const accept = () => {
-            if (d.kind === "confirm") return finish(api, d.id, true);
+            if (d.kind === "confirm" || d.kind === "info") return finish(api, d.id, true);
             // A signature: the password typed (a single sign-on answers by its own button).
             if (d.kind === "sign") {
                 const pw = String(api.peek("ui.dialog.value") ?? "");
@@ -94,7 +106,12 @@ export function registerDialog(juris) {
         // Focus into the dialog once it is drawn: the input, or the confirm button.
         setTimeout(() => {
             const panel = globalThis.document?.getElementById(panelId);
-            if (panel && !panel.contains(globalThis.document.activeElement)) (panel.querySelector("input, textarea, select") ?? panel.querySelector(".dialog-confirm"))?.focus();
+            // Into the dialog: its field, with a value it starts from selected (typing replaces it, as in a rename).
+            if (panel && !panel.contains(globalThis.document.activeElement)) {
+                const field = panel.querySelector("input, textarea, select");
+                (field ?? panel.querySelector(".dialog-confirm"))?.focus();
+                if (field && typeof field.select === "function" && field.value) field.select();
+            }
         }, 0);
         const keys = (e) => {
             if (e.key === "Escape") { e.preventDefault(); cancel(); return; }
@@ -127,6 +144,13 @@ export function registerDialog(juris) {
                         children: [
                             { h2: { id: `${panelId}-title`, className: "dialog-title", textContent: d.title ?? "" } },
                             d.message ? { p: { id: `${panelId}-message`, className: "dialog-message", textContent: d.message } } : { span: {} },
+                            // Something to read: each section a heading and its rows, as text.
+                            ...(d.kind === "info" ? (d.sections ?? []).map((sec, i) => ({ section: { key: `s${i}`, className: "dialog-section", children: [
+                                sec.title ? { h3: { textContent: sec.title } } : { span: {} },
+                                sec.rows?.length
+                                    ? { dl: { className: "dialog-rows", children: sec.rows.flatMap(([label, value], k) => [{ dt: { key: `t${k}`, textContent: String(label ?? "") } }, { dd: { key: `d${k}`, textContent: String(value ?? "—") } }]) } }
+                                    : { p: { className: "muted small", textContent: sec.empty ?? "None." } },
+                            ] } })) : []),
                             f ? { label: { className: "dialog-field", htmlFor: inputId, children: [f.label ? { span: `${f.label}${f.required ? " *" : ""}` } : { span: {} }, control] } } : { span: {} },
                             // A fresh single sign-on instead of the password (sign.js): its own small window.
                             d.kind === "sign" && d.sso ? { div: { className: "dialog-sso", children: [
@@ -137,9 +161,9 @@ export function registerDialog(juris) {
                                     if (ok) finish(api, d.id, { sso: true }); else api.setValue("ui.dialog.error", "Single sign-on did not complete: try again, or enter your password.");
                                 } } },
                             ] } } : { span: {} },
-                            { p: { className: "field-error", role: "alert", textContent: () => api.getState("ui.dialog.error", "") ?? "" } },
+                            d.kind === "info" ? { span: {} } : { p: { className: "field-error", role: "alert", textContent: () => api.getState("ui.dialog.error", "") ?? "" } },
                             { div: { className: "dialog-buttons", children: [
-                                { button: { type: "button", className: "btn ghost dialog-cancel", textContent: d.cancel, onclick: cancel } },
+                                d.kind === "info" ? { span: {} } : { button: { type: "button", className: "btn ghost dialog-cancel", textContent: d.cancel, onclick: cancel } },
                                 { button: { type: "button", className: `btn primary dialog-confirm${d.danger ? " danger" : ""}`, textContent: d.confirm, onclick: accept } },
                             ] } },
                         ],

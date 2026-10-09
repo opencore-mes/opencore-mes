@@ -1,0 +1,13 @@
+# Updates proposed as pull requests (COMPLIANCE.md G8): npm's packages and the workflows' actions, weekly; each
+# one passes the test pipeline like any change before it is merged.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

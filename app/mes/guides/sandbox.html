@@ -13,9 +13,19 @@
 
   <h3>1. The records it starts with</h3>
   <dl>
+    <dt data-highlight=".sbx-needs-group">What a route needs</dt>
+    <dd>Pick a route: each record it takes to be walked to its end, in the order a traveler meets them
+    (first the traveler itself, of the kind the route's start takes; a tool of each step's process, through the routes it runs; what its steps' transactions must be
+    given; a traveler's own references, like a lot's device). Ticked when a chosen record gives it; else
+    live records that would, to add with a click, or <strong>Add all required records</strong>. For the traveler,
+    those on their way along the route come first; or make one instead with the transaction it names, as a
+    step once the sandbox is open.</dd>
     <dt data-highlight=".sbx-records table.grid">The list</dt>
     <dd>Each record the sandbox starts with, by its key (<code>@lot</code>): picked from live, or given
     here; and, once open, what it is in the sandbox now. Records they refer to come with them.</dd>
+    <dt data-highlight=".sbx-records .sbx-starts select">Starts as</dt>
+    <dd>A drop-down beside each record picked from live: the state its copy starts in (a tool down in the
+    plant, idle here). As it is live unless you pick one; the plant's record is never changed.</dd>
     <dt data-highlight=".sbx-records [data-guide='sbx:key']">Key</dt>
     <dd>A text field: the short name later steps use for it, written <code>@key</code>.</dd>
     <dt data-highlight=".sbx-records [data-guide='sbx:object']">Object</dt>
@@ -38,7 +48,26 @@
     not copied). Start again makes fresh copies; Close drops it.</dd>
   </dl>
 
-  <h3>2. Run a step</h3>
+  <h3>2. Follow a route</h3>
+  <dl>
+    <dt data-highlight=".sbx-follow [data-guide='sbx:traveler']">Traveler</dt>
+    <dd>A drop-down of the records on a route here: those it started with, and those its steps made (a
+    lot a receiving transaction made). After every step it is read again.</dd>
+    <dt data-highlight=".sbx-follow .flow-route-maps">Its route</dt>
+    <dd>Where it is, and the route's map with its way on it. Click a sub flow to open its own map; the
+    line above the map takes you back up.</dd>
+    <dt data-highlight=".sbx-follow .sbx-offers .btn">What its step offers</dt>
+    <dd>A button for each transaction its step offers: it fills the step below in, the traveler as its
+    input. Under each record input, the step suggests what it allows (a tool of its process), each
+    tried as the person: ticked if it would be taken, crossed with the reason if refused. With no
+    traveler given yet, it asks for it first; when none can be tried (the person may not run it), it
+    says why once.</dd>
+    <dt data-highlight=".sbx-follow .sbx-task">A plan waiting on it</dt>
+    <dd>Its question and whom it is for: a choice's buttons, or Fill it in… for its screen, fill the
+    step in as an answer (its fields ready to fill).</dd>
+  </dl>
+
+  <h3>3. Run a step</h3>
   <dl>
     <dt data-highlight=".sbx-run [data-guide='sbx:what']">What</dt>
     <dd>A drop-down: run a transaction, take a record's action, edit a record, make one, call a service,
@@ -65,7 +94,7 @@
     <dd>Opened from a scenario: its steps, to run again in one go.</dd>
   </dl>
 
-  <h3>3. What ran</h3>
+  <h3>4. What ran</h3>
   <dl>
     <dt data-highlight=".sbx-step.ran">Ran</dt>
     <dd>A step that ran: the states it left, the records it made.</dd>

@@ -55,6 +55,18 @@ export function inputFlowExprProblems(expr) {
     }
 }
 
+// What its conditions read as `input`, from [ask target, value] pairs: a screen's "<transaction>.<input>" nested
+// under its transaction, as `{ "input": "take_in.condition" }` reads it (a dotted path goes down), the rest
+// as they are.
+export function inputScope(pairs, into = {}) {
+    for (const [name, value] of pairs) {
+        const [tx, field] = String(name).split(".");
+        if (field === undefined) into[tx] = value;
+        else into[tx] = { ...(isPlain(into[tx]) ? into[tx] : {}), [field]: value };
+    }
+    return into;
+}
+
 // The node an ask, a run or an end stops at, walking on from `from` (null: the start) through fills and
 // decisions. `scope`: { input, lookup, param, user }, updated by the fills on the way; `filled(input)`:
 // whether an input holds a value (an ask on one is passed over). → { id, node, fills: [{ input, value }] }
@@ -64,7 +76,7 @@ export function stepFrom(body, from, scope, { filled = () => false } = {}) {
     const edges = list(body?.edges);
     const onward = (id) => edges.filter((e) => e?.from === id);
     const fills = [];
-    const local = { ...scope, input: { ...(scope?.input ?? {}) } };
+    const local = { ...scope, input: inputScope(Object.entries(scope?.input ?? {})) };
     let id = from ?? Object.entries(nodes).find(([, n]) => n?.kind === "start")?.[0];
     if (!id) return { error: "It has no start." };
     let leaving = from !== null && from !== undefined;
@@ -77,7 +89,7 @@ export function stepFrom(body, from, scope, { filled = () => false } = {}) {
             if (n.kind === "fill") {
                 const value = evaluate(n.value, local);
                 fills.push({ input: n.input, value });
-                if (!String(n.input).includes(".")) local.input[n.input] = value;
+                inputScope([[n.input, value]], local.input);
             }
         }
         leaving = false;

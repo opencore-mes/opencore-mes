@@ -1,0 +1,386 @@
+<!-- The screen editor's guide (DESIGN.md §33, §26): a screen in a change request, or live and read only.
+     Drawn through an allowlist: data-highlight="<CSS selector>" outlines what the selector finds in the
+     change page. The guide to a screen as people use it is screen.html. -->
+<article data-title="The screen editor">
+  <p>A screen is a page made of <strong>blocks</strong>: a record, a table, a number, a chart, a
+  transaction's form, a floor layout. Each block reads with the viewer's own rights, so a screen never
+  shows what their forms would not. You design it here, inside a change; it reaches the plant only once
+  the change is reviewed, approved and executed.</p>
+
+  <h3>Its tabs</h3>
+  <dl>
+    <dt data-highlight=".subtabs">The tabs</dt>
+    <dd>The screen's settings, by topic. A number on a tab counts what differs there from the live
+    version; a new screen counts everything.</dd>
+    <dt data-highlight=".subtabs .tab-diff">The numbers</dt>
+    <dd>Differences from the published version on that tab. Changes lists them all, line by line.</dd>
+  </dl>
+
+  <h3 data-highlight=".subtabs .subtab:nth-child(1)">Copilot</h3>
+  <dl>
+    <dt data-highlight=".copilot">The copilot</dt>
+    <dd>An AI that drafts, checks and explains, working on the whole change as you. It never submits,
+    reviews or approves. A live design shows no copilot: press Change it first.</dd>
+    <dt data-highlight=".copilot-off">Not set up</dt>
+    <dd>Shown when this installation has no AI configured: it says what is missing.</dd>
+    <dt data-highlight=".copilot-log">The conversation</dt>
+    <dd>What you asked, its answers, and each design tool it used (a tick when it worked, a cross when
+    not). It is kept with the change: come back any time and it picks up there.</dd>
+    <dt data-highlight=".copilot-input textarea">The box</dt>
+    <dd>Type what you want ("add a table of the lots on this machine"). <kbd>Ctrl</kbd>+<kbd>Enter</kbd>
+    (<kbd>⌘</kbd>+<kbd>Enter</kbd> on a Mac) sends it. What you type is kept if you leave the tab.</dd>
+    <dt data-highlight=".copilot-input .att-btn">Attach</dt>
+    <dd>Adds up to five files for it to read: pictures (a sketch of the screen), PDFs, CSV files or Excel
+    workbooks. You can also paste or drop one into the box; × takes one off.</dd>
+    <dt data-highlight=".copilot-buttons .btn.primary">Send</dt>
+    <dd>Saves your unsaved edits first, so it works on what you see, then sends. What it saves shows in
+    every window at once.</dd>
+    <dt data-highlight=".copilot-buttons .btn.ghost">New conversation</dt>
+    <dd>Deletes the conversation kept with this change, after asking. The draft stays as it is.</dd>
+  </dl>
+
+  <h3 data-highlight=".subtabs .subtab:nth-child(2)">Changes</h3>
+  <dl>
+    <dt data-highlight=".changes-view > p">The count</dt>
+    <dd>How many differences from the published version: changed, added, removed. A new screen says so;
+    one that matches what is live says "Nothing differs".</dd>
+    <dt data-highlight=".changes-head">By tab</dt>
+    <dd>Differences grouped by the tab where each is edited. <em>Open …</em> takes this window to that
+    tab.</dd>
+    <dt data-highlight=".change-item">A difference</dt>
+    <dd>Click its line to fold or unfold it. Lines starting with + are the draft, lines with − the
+    published version. A green edge is added, amber changed.</dd>
+  </dl>
+
+  <h3 data-highlight=".subtabs .subtab:nth-child(3)">General</h3>
+  <dl>
+    <dt data-highlight=".ed-grid > label.ed-field:nth-child(1)">Name</dt>
+    <dd>Its fixed name, set when it was created. It opens at <code>/s/</code> and this name.</dd>
+    <dt data-highlight=".ed-grid > label.ed-field:nth-child(2)">Label</dt>
+    <dd>What the navigator and the screen's tab say.</dd>
+    <dt data-highlight=".ed-grid > label.ed-field:nth-child(3)">Description</dt>
+    <dd>One line shown under the title.</dd>
+    <dt data-highlight=".ed-grid > label.ed-field:nth-child(4)">Opened with</dt>
+    <dd>What the screen is about: <em>nothing</em> (the same for everyone), a record of an object (a
+    machine's screen), a word (a line), or a date. The address carries it, and blocks read it as
+    <code>{"param": "name"}</code>.</dd>
+    <dt data-highlight=".ed-grid > label.ed-field:nth-child(5)">…called</dt>
+    <dd>The name blocks use for it: lower case, letters, digits and _. A name that does not fit is not
+    taken.</dd>
+    <dt data-highlight=".ed-grid > label.ed-field:nth-child(6)">…picked by</dt>
+    <dd>For a record: how the person picks it on opening, by scanning or typing its label, or from a
+    list.</dd>
+    <dt data-highlight="input[placeholder^='any (e.g.']">…only those where</dt>
+    <dd>Fields equal to these values, as JSON (<code>{"process": ["die_saw"]}</code>): a die saw's screen
+    offers, and opens with, die saws only. Empty: any.</dd>
+    <dt data-highlight=".ed-grid > label.ed-field:nth-child(8)">Fill the window</dt>
+    <dd><em>No</em>: the usual page. <em>On request</em>: a Maximize button sets the navigator, top bar
+    and tabs aside (a board on a wall, a tablet at a machine). <em>Always at first</em>: it opens
+    maximized. Each device remembers the person's choice.</dd>
+    <dt data-highlight=".ed-grid > label.ed-field:nth-child(9)">Input flow</dt>
+    <dd>How the screen is filled from a keyboard or scanner: its parameter, then its transactions'
+    inputs, their tabs in turn, and back to the start. Pick one drawn in the Flow designer (kind
+    <em>input</em>); <em>none</em> goes from input to input with Enter.</dd>
+    <dt data-highlight=".ed-grid a[href*='/s/']">Open it</dt>
+    <dd>Shown once it is published: opens the live version, not your draft (see Preview for that).</dd>
+  </dl>
+
+  <h3 data-highlight=".subtabs .subtab:nth-child(4)">Blocks</h3>
+  <p>Blocks are drawn in this order on a row of 12 columns; a narrow screen stacks them.</p>
+  <dl>
+    <dt data-highlight=".screen-card">A block</dt>
+    <dd>One card per block, numbered, with its kind. A green edge is new in this change, amber
+    changed.</dd>
+    <dt data-highlight=".screen-card legend button[title='Earlier'], .screen-card legend button[title='Later']">Earlier, Later</dt>
+    <dd>Move the block up or down the page.</dd>
+    <dt data-highlight=".screen-card legend .linkish">remove</dt>
+    <dd>Takes the block out, after asking.</dd>
+    <dt data-highlight=".screen-card input[placeholder='shown above it']">Title</dt>
+    <dd>Shown above the block.</dd>
+    <dt data-highlight=".screen-card input[placeholder^='none: above the tabs']">Tab</dt>
+    <dd>The name of a tab of the screen to put it on; blocks with the same tab name share it. Empty: above
+    the tabs.</dd>
+    <dt data-highlight=".screen-card > div.ed-row:first-of-type > :nth-child(3)">Width</dt>
+    <dd>How many of the 12 columns it takes: 12 the whole row, 6 half, 4 a third.</dd>
+    <dt data-highlight=".screen-card > div.ed-row:first-of-type > :nth-child(4)">Of</dt>
+    <dd>For a record, table, number, breakdown or floor: the object it reads. Changing it starts the
+    block's settings afresh.</dd>
+    <dt data-highlight=".screen-card .ed-field[aria-label='Shown when']">Shown when</dt>
+    <dd>A condition box over what the screen was opened with, its record, the person and counts. While
+    it does not hold the block is not drawn, nor read. Empty: always.</dd>
+    <dt data-highlight=".screen-card .ed-field[aria-label='Enabled when']">Enabled when</dt>
+    <dd>While it does not hold the block is greyed and cannot be used; a tab whose blocks are all greyed
+    is greyed too. Empty: always.</dd>
+    <dt data-highlight=".screen-card input[placeholder^='what the person reads']">…because</dt>
+    <dd>Shown once there is an <em>Enabled when</em>: what the person reads on the greyed block and its
+    tab ("This tool already has a lot on it.").</dd>
+    <dt data-highlight=".editor .add-block">+ add a block</dt>
+    <dd>Pick a kind to add it at the end, with settings to start from. Suites may add kinds of their own.
+    A screen holds at most 20 blocks.</dd>
+  </dl>
+
+  <h4>One record</h4>
+  <dl>
+    <dt data-highlight=".screen-card > label.ed-field:nth-child(3) .expr-input">Which record</dt>
+    <dd>Usually the screen's own record, <code>{"param": "machine"}</code>; give the screen one to be
+    opened with on General first.</dd>
+    <dt data-highlight=".screen-card .ed-field[aria-label='Shows']">Shows</dt>
+    <dd>Tick the fields to show, and its state.</dd>
+  </dl>
+
+  <h4>A table of records</h4>
+  <dl>
+    <dt data-highlight=".screen-card .tx-sets">Only records where</dt>
+    <dd>Conditions, each <code>field = value</code>; with none, every record in use. Also on numbers and
+    breakdowns.</dd>
+    <dt data-highlight=".screen-card .tx-sets .mini-select">+ condition</dt>
+    <dd>Pick the field (or state) to filter on. A reference to the screen's own kind of record starts as
+    the screen's parameter.</dd>
+    <dt data-highlight=".screen-card .tx-set .expr-input">Its value</dt>
+    <dd>JSON on one line: <code>"value"</code>, a list such as <code>["processing"]</code> (any of them),
+    or <code>{"param": "machine"}</code>. Outlined red until it reads.</dd>
+    <dt data-highlight=".screen-card button[title='Remove the condition']">×</dt>
+    <dd>Removes that condition.</dd>
+    <dt data-highlight=".screen-card .ed-field[aria-label='Columns']">Columns</dt>
+    <dd>Tick the columns to show. The first links to the record.</dd>
+    <dt data-highlight=".screen-card [aria-label='Columns'] + .ed-row > :nth-child(1)">Sorted by</dt>
+    <dd>A column to sort on, or <em>last changed first</em>.</dd>
+    <dt data-highlight=".screen-card [aria-label='Columns'] + .ed-row > :nth-child(2)">Direction</dt>
+    <dd>Ascending or descending, once sorted by a column.</dd>
+    <dt data-highlight=".screen-card input[type=number][max='1000']">At most</dt>
+    <dd>Rows in all, 1 to 1000.</dd>
+    <dt data-highlight=".screen-card input[type=number][max='200']">Drawn at a time</dt>
+    <dd>Rows drawn at first, 5 to 200; more come as it is scrolled.</dd>
+    <dt data-highlight=".screen-card .ed-field[aria-label='Record buttons']">Record buttons</dt>
+    <dd><em>New</em> for whoever may create one; <em>Remove</em> on each row (it archives the record) for
+    whoever may archive it. Through the object's own policies and rules.</dd>
+    <dt data-highlight=".screen-card .ed-field[aria-label='Buttons on each row']">Buttons on each row</dt>
+    <dd>Tick transactions that appear on these records: each runs right there, the row filled in, on
+    rows in its states.</dd>
+    <dt data-highlight=".screen-card .ed-field[aria-label='…filling in']">…filling in</dt>
+    <dd>When the screen is opened with a record: inputs of those transactions the screen's record can
+    fill, shown locked on the row's form (the screen's machine on Move in), or left to the person.</dd>
+  </dl>
+
+  <h4>A number, and a breakdown (bars)</h4>
+  <dl>
+    <dt data-highlight=".screen-card > .tx-sets + .ed-row">By</dt>
+    <dd>A breakdown only: what the bars are, its state or a field with few values.</dd>
+    <dt data-highlight=".screen-card > .tx-sets + .ed-row">Measure</dt>
+    <dd>How many records, or the sum, average, least or most of a number field.</dd>
+    <dt data-highlight=".screen-card > .tx-sets + .ed-row">Changed</dt>
+    <dd>Only records last changed today, in the last 7 or 30 days, or at any time.</dd>
+    <dt data-highlight=".screen-card input[placeholder='lots']">Says</dt>
+    <dd>A number only: the word after it (<em>lots</em>).</dd>
+  </dl>
+
+  <h4>A chart from a query</h4>
+  <dl>
+    <dt data-highlight=".screen-card > div.ed-row:nth-child(3) > :nth-child(1)">Chart</dt>
+    <dd>The kind: bar, line, area, scatter, bubble, pie, donut, funnel, heat map, box plot, histogram,
+    radar, gauge, tree map, sunburst, sankey, waterfall, Pareto, candlestick, or bars and lines. Under it,
+    what the kind is for. Changing it keeps the query.</dd>
+    <dt data-highlight=".screen-card > div.ed-row:nth-child(3) > :nth-child(2)">Query</dt>
+    <dd>Written as JSON (it may name the screen's parameter) or as SQL. Switching starts the query
+    afresh.</dd>
+    <dt data-highlight=".screen-card input[placeholder^='{&quot;from']">JSON query</dt>
+    <dd>As on the Queries page: <code>from</code>, <code>select</code>, <code>groupBy</code>,
+    <code>where</code>, in which <code>{"param": "…"}</code> stands for the screen's parameter. Run as
+    whoever opens the screen.</dd>
+    <dt data-highlight=".screen-card textarea[placeholder^='SELECT']">SELECT</dt>
+    <dd>One SELECT over the views of the Queries page, run as whoever opens the screen. Name its columns
+    (<code>AS lots</code>) and use those names below.</dd>
+    <dt data-highlight=".screen-card input[placeholder='a column']">Its columns</dt>
+    <dd>Which query column goes where, by name; * marks those the kind needs. <em>x</em> along the
+    bottom; <em>series</em> a column whose values each become a series; <em>size</em> a bubble's size;
+    <em>value</em> the amount of a cell, part or flow; <em>source</em> and <em>target</em> a sankey's
+    ends; <em>open</em>, <em>close</em>, <em>low</em>, <em>high</em> a candle.</dd>
+    <dt data-highlight=".screen-card .ed-row .pick">Column lists</dt>
+    <dd>Tag lists of columns: <em>y</em> the values drawn, <em>path</em> a tree map's or sunburst's
+    levels (top first), <em>lines</em> a combo's columns drawn as lines.</dd>
+    <dt data-highlight=".screen-card input[placeholder='h, %, pcs']">unit</dt>
+    <dd>A word after each value: h, %, pcs.</dd>
+    <dt data-highlight=".screen-card .ed-field[aria-label='Drawn']">Drawn</dt>
+    <dd>Tick what applies to this kind: stacked, bars across, smooth or stepped lines, each value
+    written, a logarithmic axis.</dd>
+    <dt data-highlight=".screen-card input[placeholder^='[{&quot;value']">Reference lines</dt>
+    <dd>Lines across the chart, as JSON: <code>[{"value": 95, "label": "target", "tone": "ok"}]</code>; a
+    target, control limits. Tones: neutral, info, ok, warn, danger.</dd>
+    <dt data-highlight=".screen-card input[placeholder^='[{&quot;from']">Bands</dt>
+    <dd>Shaded ranges, as JSON: <code>[{"from": 0, "to": 60, "tone": "danger"}]</code>; a gauge's
+    coloured arcs.</dd>
+  </dl>
+  <p>The value axis's least and most, and a histogram's number of bins, are set on the JSON tab
+  (<code>min</code>, <code>max</code>, <code>bins</code>).</p>
+
+  <h4>A transaction's form</h4>
+  <dl>
+    <dt data-highlight=".screen-card > label.ed-field:nth-child(3) select">Transaction</dt>
+    <dd>The transaction whose form the block shows. Changing it clears what the screen fills in.</dd>
+    <dt data-highlight=".screen-card .ed-field[aria-label='Filled in by the screen']">Filled in by the screen</dt>
+    <dd>For each input: entered by the person, or the screen's parameter where it fits, shown locked.</dd>
+    <dt data-highlight=".screen-card .ed-field[aria-label='In a dialog']">In a dialog</dt>
+    <dd>Ticked, the dialog closes once the transaction is done, when this screen was opened as a dialog
+    (by a button or a pop-up).</dd>
+  </dl>
+
+  <h4>Text</h4>
+  <dl>
+    <dt data-highlight=".screen-card > label.ed-field:nth-child(3) textarea">Text</dt>
+    <dd>Words for the people at the screen, an instruction or a note: a line per paragraph, - for a list,
+    **bold**, # a heading, [words](https://…) or [words](/s/screen) for a link.</dd>
+  </dl>
+
+  <h4>A file: a guide, a picture, a video or a PDF</h4>
+  <dl>
+    <dt data-highlight=".screen-card .file-field">Shows</dt>
+    <dd>A file of its own, uploaded here: the station's guide, a drawing, a video of the job (a picture up to
+    5 MB, a PDF 10 MB, a video, MP4 or WebM, 100 MB). Or a record's file or picture: Of an object, Which record
+    (the screen's: {"param": "lot"}) and the Field; a field derived through a reference shows that record's,
+    so a station opened with a lot shows its step's instruction. A record's file is read as whoever opens
+    the screen.</dd>
+    <dt>Steps</dt>
+    <dd>A line each: the page (a PDF) or the time (a video, 0:45) the step starts at, then its words. Written
+    here for its own file; for a record's, Steps from a text field of that record. At the screen they give
+    big Previous and Next buttons, the step being shown, and the steps to jump to; a video's step stops at
+    its end unless that box is unticked. A line may end with how the step is done: #click (the default),
+    #value:&lt;input&gt;, #photo, #file, #device, #wait or #screen:&lt;name&gt;.</dd>
+    <dt>Steps marked done by</dt>
+    <dd>A transaction that records a step done, one record per step: the input taking the step's number, where
+    photos and files go, what the screen fills in, and the records that say a step is done (Done when there
+    is a, whose step is, and where). Each mark is that transaction's run, with its checks and the audit
+    trail; a record the equipment writes ticks its step at once. Tick Next only once the step in view is
+    done to hold the operator on each step. A step done can be undone by whoever may archive its record; a
+    transaction a second person verifies asks for them beside the operator, as on its form.</dd>
+    <dt>Follows a route</dt>
+    <dd>The steps are the route's sequences placed in this guide (In the guide at, in the Flow designer), for
+    the lot in Whose way: it opens where the lot is and ticks each step it has left.</dd>
+    <dt>Height</dt>
+    <dd>For a PDF, read in the page, or a video, played there: in pixels.</dd>
+  </dl>
+
+  <h4>A button that opens a screen</h4>
+  <dl>
+    <dt data-highlight=".screen-card > div.ed-row:nth-child(3) > :nth-child(1)">Opens</dt>
+    <dd>Another screen, opened as a dialog over this one.</dd>
+    <dt data-highlight=".screen-card input[placeholder^='the screen']">Label</dt>
+    <dd>The button's words; left unset, it says the other screen's label.</dd>
+    <dt data-highlight=".screen-card .ed-row > :nth-child(3) .expr-input">Opened with</dt>
+    <dd>The value it opens the other screen with, if that one takes one, as JSON:
+    <code>{"param": "machine"}</code>.</dd>
+  </dl>
+
+  <h4>A floor layout</h4>
+  <dl>
+    <dt data-highlight=".screen-card > div.ed-row:nth-child(3) > :nth-child(1)">Status</dt>
+    <dd>What each record's small square shows: its state, or a field. It follows the record as it
+    changes.</dd>
+    <dt data-highlight=".screen-card > div.ed-row:nth-child(3) > :nth-child(2)">Each record's picture</dt>
+    <dd>An image field of the record, or of what it refers to (its model: one picture for every tool of
+    the model). None: a plain tile with its name.</dd>
+    <dt data-highlight=".screen-card .floor-colours">Legend</dt>
+    <dd>A colour for each value of the status, or its tone, or grey. Colours are the theme's, so they
+    read in light and dark.</dd>
+    <dt data-highlight=".floor-tools label.btn">Upload the floor's picture</dt>
+    <dd>A top view of the floor or the line: PNG, JPEG or WebP, at most 5 MB. Replace it the same
+    way.</dd>
+    <dt data-highlight=".floor-arrange input[aria-label='Find records to place']">Find records to place</dt>
+    <dd>Type part of a name, then click a record (or press Enter) to put it on the floor; up to 200.</dd>
+    <dt data-highlight=".floor.floor-edit">The floor</dt>
+    <dd>Drag a record to where it stands, and its small square to where it sits on it (its signal tower,
+    its screen). Click one to choose it; the arrow keys move it a step, with Shift a larger one.</dd>
+    <dt data-highlight=".floor-tools input[type=range]">Size</dt>
+    <dd>How wide the chosen record is drawn.</dd>
+    <dt data-highlight="button[title^='Every record with the same picture']">Same size and square for its like</dt>
+    <dd>Draws every record with the same picture as wide, its square at the same spot.</dd>
+    <dt data-highlight=".floor-tools .btn.ghost:last-child">Take it off the floor</dt>
+    <dd>Removes the chosen record from the floor.</dd>
+  </dl>
+
+  <h4>A suite's block</h4>
+  <dl>
+    <dt data-highlight=".screen-card">Its settings</dt>
+    <dd>A block an installed suite adds: its settings by name, <em>(needed)</em> where one must be given.
+    If its suite is not installed it says so; the screen's other blocks still work.</dd>
+  </dl>
+
+  <h3 data-highlight=".subtabs .subtab:nth-child(5)">Preview</h3>
+  <dl>
+    <dt data-highlight=".editor .query-bar label">What it is opened with</dt>
+    <dd>For a screen opened with something: pick the record, or type the value, to draw it with.</dd>
+    <dt data-highlight=".editor .query-bar .btn">Redraw with the draft</dt>
+    <dd>Draws the draft again with your latest edits.</dd>
+    <dt data-highlight=".editor ul.error">Problems</dt>
+    <dd>What stops the draft from drawing, in red.</dd>
+    <dt data-highlight=".screen-preview">The screen</dt>
+    <dd>The draft as it will look, read with your own rights on each object. Its buttons do nothing
+    here.</dd>
+  </dl>
+
+  <h3 data-highlight=".subtabs .subtab:nth-child(6)">Pop-up</h3>
+  <dl>
+    <dt data-highlight=".ed-field[aria-label='Opens by itself']">Opens by itself</dt>
+    <dd>Ticked, this screen opens as a dialog over the pages you choose while its condition holds, and
+    closes when it no longer does. It only shows: what must not happen is refused by the transaction's
+    own checks.</dd>
+    <dt data-highlight=".editor h4 + .checks:first-of-type">Over</dt>
+    <dd>Tick the pages: every page, a transaction's screen, or another screen.</dd>
+    <dt data-highlight=".editor h4 + .checks:not(:first-of-type)">For: groups</dt>
+    <dd>Tick the groups it opens for.</dd>
+    <dt data-highlight=".editor .pick">For: people</dt>
+    <dd>People named one by one: type part of a name and pick from the suggestions.</dd>
+    <dt data-highlight=".ed-field[aria-label='While']">While</dt>
+    <dd>A condition box over the page: a transaction's inputs (<code>{"lookup": "machine.state"}</code>),
+    a screen's parameter, the person and counts. None: it never opens by itself.</dd>
+    <dt data-highlight="input[placeholder^='{&quot;input']">Opened with</dt>
+    <dd>Its parameter, if it has one, taken from the page: <code>{"input": "machine"}</code>.</dd>
+  </dl>
+
+  <h3 data-highlight=".subtabs .subtab:nth-child(7)">Callers</h3>
+  <dl>
+    <dt data-highlight=".editor h4 + .checks">Groups</dt>
+    <dd>Tick the groups whose members may open it. Nobody may until named here.</dd>
+    <dt data-highlight=".editor .pick">Users</dt>
+    <dd>People named one by one: type part of a name and pick from the suggestions; × on a name removes
+    it.</dd>
+  </dl>
+  <p>What each sees in it is still their own rights on each object.</p>
+
+  <h3 data-highlight=".subtabs .subtab:nth-child(8)">Stewards</h3>
+  <dl>
+    <dt data-highlight=".editor .checks">Departments</dt>
+    <dd>Tick the departments that approve every change to it. A screen writes nothing itself: a
+    transaction it shows is approved as a transaction.</dd>
+  </dl>
+
+  <h3 data-highlight=".subtabs .subtab:nth-child(9)">JSON</h3>
+  <dl>
+    <dt data-highlight=".code-editor.ce-json">The whole screen</dt>
+    <dd>All of it as JSON, for integrators. Edit it here; nothing changes until you apply.</dd>
+    <dt data-highlight=".code-editor.ce-json ~ .btn">Apply JSON</dt>
+    <dd>Replaces the draft with it, checked like any other edit. Refused if it does not read, or if
+    the name changes.</dd>
+  </dl>
+
+  <h3>Everywhere in it</h3>
+  <dl>
+    <dt data-highlight=".expr-field">Condition boxes</dt>
+    <dd>A rule in words. Click it, or Edit (<em>Add a condition</em> while empty), to build it from rows:
+    a field, an operator, a value, in groups (all of, any of, none of), or from a pattern. JSON shows the
+    same as text; Try lets you type values and see whether it holds. Empty means what its box says
+    (always, never).</dd>
+    <dt data-highlight=".expr-problem">A condition's problem</dt>
+    <dd>Said in red under the box: what does not read, or names something unknown.</dd>
+    <dt data-highlight=".pick">Tag lists</dt>
+    <dd>Chosen values as chips; × removes one. Click into the box for suggestions, Enter or a click adds
+    one, <em>Add "…"</em> adds a new value, Backspace in the empty box removes the last. Lists of people
+    take only people who exist.</dd>
+    <dt data-highlight=".expr-input">JSON on one line</dt>
+    <dd>A value or expression as JSON, outlined red until it reads; applied as soon as it does.</dd>
+    <dt data-highlight=".screen-card.diff-added, .screen-card.diff-changed">Diff marks</dt>
+    <dd>Green: added in this change. Amber: changed. What was removed is listed on Changes.</dd>
+    <dt data-highlight=".undo-redo">Remove, and Undo</dt>
+    <dd>Remove always asks first; nothing live changes until the change executes. Undo
+    (<kbd>⌘</kbd>+<kbd>Z</kbd> or <kbd>Ctrl</kbd>+<kbd>Z</kbd>, outside a text box) brings it back.</dd>
+  </dl>
+</article>

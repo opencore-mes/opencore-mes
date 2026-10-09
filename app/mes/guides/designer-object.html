@@ -1,0 +1,366 @@
+<!-- The object editor's guide (DESIGN.md §33): every tab of an object open in a change, and every control
+     on it. Drawn through an allowlist: an element with data-highlight="<CSS selector>" outlines what the
+     selector finds in the change's page. -->
+<article data-title="The object editor">
+  <p>An object is a kind of record the plant keeps: its <strong>fields</strong>, the <strong>states</strong>
+  it goes through, who may do what with it, the <strong>rules</strong> that check it, and how its form and
+  list look. Each tab below sets one part. On a live design, or a change that is not open for your edits,
+  every tab is read only.</p>
+
+  <h3>Around the tabs</h3>
+  <dl>
+    <dt data-highlight=".subtabs">The tabs</dt>
+    <dd>Copilot, Changes, General, Fields, States, Roles &amp; policies, Rules, Layout, Preview, Stewards, a
+    tab per installed suite, then JSON. Click one to open it in this window.</dd>
+    <dt data-highlight=".subtabs .tab-diff">The number on a tab</dt>
+    <dd>How many things on that tab differ from the published version. On Changes, it counts them all.</dd>
+    <dt data-highlight=".diff-pill">new, changed, removed</dt>
+    <dd>Marks inside a tab on a field, a policy or a form card that this change adds, changes or removes.
+    Something removed stays listed, struck through, until the change executes.</dd>
+    <dt data-highlight=".editor-head .tab-close">Close this window</dt>
+    <dd>Shown when the change is split into several windows: closes this one. Nothing is lost; the others
+    show the same draft.</dd>
+  </dl>
+
+  <h3>Chips and conditions, more closely</h3>
+  <dl>
+    <dt data-highlight=".pick-box">Typing into a list of words</dt>
+    <dd><kbd>↑</kbd> <kbd>↓</kbd> move through the suggestions, <kbd>Enter</kbd> adds, <kbd>Esc</kbd>
+    closes them. Where new words are allowed (a role, a state, an enum value), leaving the box adds what you
+    typed; where only this object's fields or states fit, you pick from the list.</dd>
+    <dt data-highlight=".expr-builder">Building a condition</dt>
+    <dd>Each row is a thing to test (a field, the state, the person), how, and a value, or <em>a field</em>
+    to compare with another. <em>+ condition</em> adds a row, <em>+ group</em> a group (all of, any of, none
+    of these), <em>+ from a pattern…</em> starts from a common one; × removes a row or a group. Done closes
+    it. Problems are said in red under the box.</dd>
+    <dt data-highlight=".expr-json">Its JSON</dt>
+    <dd>The same condition as text, applied as soon as it reads correctly. Empty means none.</dd>
+    <dt data-highlight=".expr-try">Try</dt>
+    <dd>Type a value for each thing it reads, and see whether it holds. Nothing is saved.</dd>
+  </dl>
+
+  <h3>Copilot</h3>
+  <dl>
+    <dt data-highlight=".copilot-log">The conversation</dt>
+    <dd>Ask the AI to change the object (“add a moisture field Quality can edit while on hold”) or to
+    explain it. Each design tool it used is listed with a tick or a cross. It works as you, saves into this
+    draft, and never submits.</dd>
+    <dt data-highlight=".copilot-off">Not set up</dt>
+    <dd>Shown when no AI is configured for the plant, saying what is missing.</dd>
+    <dt data-highlight=".copilot-input textarea">Ask the copilot…</dt>
+    <dd>Type your request. <kbd>⌘Enter</kbd> or <kbd>Ctrl+Enter</kbd> sends it, like Send. What you type is
+    kept if you leave the tab.</dd>
+    <dt data-highlight=".copilot .att-btn">Attach</dt>
+    <dd>Adds up to five files for it to read: a picture, a PDF, a CSV file or an Excel workbook. You can also
+    paste or drop one into the box.</dd>
+    <dt data-highlight=".copilot-buttons .btn.primary">Send</dt>
+    <dd>Saves your unsaved edits first, so it works on what you see, then sends. While it works,
+    <em>Working…</em> shows which step it is on.</dd>
+    <dt data-highlight=".copilot-buttons .btn.ghost">New conversation</dt>
+    <dd>Deletes the conversation kept with this change, after asking. The draft stays as it is.</dd>
+  </dl>
+
+  <h3>Changes</h3>
+  <dl>
+    <dt data-highlight=".changes-view">What differs</dt>
+    <dd>Every difference from the published version, counted as changed, added and removed. Reviewers and
+    approvers open the change here: it is what they pass or approve.</dd>
+    <dt data-highlight=".changes-head">By tab</dt>
+    <dd>Differences are grouped by the tab they are on. <em>Open …</em> goes to that tab.</dd>
+    <dt data-highlight=".change-item">A difference</dt>
+    <dd>Click it to fold it open or closed. Lines with − are taken out, lines with + are put in. A group of
+    four or fewer opens by itself.</dd>
+  </dl>
+
+  <h3>General</h3>
+  <dl>
+    <dt data-highlight=".ed-grid > .ed-field:nth-child(1)">Name</dt>
+    <dd>The object's name: lower case letters, digits and _. You can change it until its first version is
+    approved; after that its records carry it, and only the label changes.</dd>
+    <dt data-highlight=".ed-grid > .ed-field:nth-child(2)">Label</dt>
+    <dd>What people see it called.</dd>
+    <dt data-highlight=".ed-grid > .ed-field:nth-child(3)">Area</dt>
+    <dd>The group it is listed under in the navigator.</dd>
+    <dt data-highlight=".ed-grid textarea">Description</dt>
+    <dd>What it is for, in a sentence or two.</dd>
+    <dt data-highlight=".ed-grid > .ed-field:nth-child(5) select">Title field</dt>
+    <dd>Pick the field that names a record in lists, tabs and search.</dd>
+    <dt data-highlight="[aria-label='Analytics dimensions']">Analytics dimensions</dt>
+    <dd>Up to five of its fields, picked from the list. Each time a record enters a state their values are
+    copied, so reports can group by the value a record had then.</dd>
+    <dt data-highlight=".transfer-controls">Excel import and export</dt>
+    <dd>Tick what a file may do: be exported, create new records, update existing ones. <em>Rows matched
+    by</em> picks the field that finds the record a row updates (or its record id). Imports go through the
+    same policies and rules as the forms.</dd>
+    <dt data-highlight="[aria-label='Flows']">Flows</dt>
+    <dd>Tick how its records may take part in flow templates: as a traveler (goes along a route, like a
+    lot), a resource (where a route's work is done), a subject (its events may set a plan off) or a
+    reference (a flow may read it). None ticked: they take no part.</dd>
+    <dt data-highlight="[aria-label='Flows'] label.ed-field select">Its step field</dt>
+    <dd>For a traveler: the field holding the step it is at. A route writes it on entering a step, and
+    writing it any other way moves the route there.</dd>
+  </dl>
+
+  <h3>Fields</h3>
+  <dl>
+    <dt data-highlight=".locks-note">Built in, locked</dt>
+    <dd>Says when the platform or an installed suite relies on this object or some of its fields, and why.
+    A locked field is kept and its type fixed; a lock beside its name says by whom.</dd>
+    <dt data-highlight="table.ed-table .field-name">Name</dt>
+    <dd>Click a name (with its pencil) to rename it: the form, list, policies, conditions and analytics
+    follow, and the checks name scripts, transactions or screens that still read the old name. Once
+    published, a name is fixed: change the label instead.</dd>
+    <dt data-highlight="table.ed-table td:nth-child(2) input">Label</dt>
+    <dd>What people see beside the field.</dd>
+    <dt data-highlight="table.ed-table td:nth-child(3) select">Type</dt>
+    <dd>Pick string, text, integer, decimal, boolean, date, enum (a list of values), ref (another object's
+    record) or image.</dd>
+    <dt data-highlight="table.ed-table td:nth-child(4) input">Required</dt>
+    <dd>Ticked: a record cannot be saved without it. For “required only when…”, use Required when on the
+    Layout tab.</dd>
+    <dt data-highlight="input[aria-label$='is sensitive']">Sensitive</dt>
+    <dd>Health or personal data: hidden wherever records are shown or exported, and never in queries,
+    analytics or the AI. Someone who may read it sees it on the record after saying why, and each showing is
+    recorded. Not for a reference or a picture.</dd>
+    <dt data-highlight="input[aria-label$='is erasable']">Erasable</dt>
+    <dd>Personal data a privacy officer may erase from a record when someone asks: the value is replaced,
+    the record and its history kept. Not for a picture.</dd>
+    <dt data-highlight=".derived-cell">Derived from a reference</dt>
+    <dd>Derive from a reference… makes a field the platform keeps from what the record's references point
+    at: pick one of this object's references, then a field of what it points to (a lot's Product → Control),
+    and on through another reference when that field is one. Use an expression turns it into a condition
+    over the record and those fields (is its product military?). Nobody types it: it is worked out at every
+    save, and again at once when the record it reads changes; the change that adds it fills every record
+    already there. Never required, sensitive or erasable; the × makes it an ordinary field again.</dd>
+    <dt data-highlight=".values-cell">Values</dt>
+    <dd>For an enum: its values, as chips (any new one may be added). Tick <em>several values</em> for a
+    list of them; stored values are converted when the change executes.</dd>
+    <dt data-highlight="input[aria-label$='takes pdf']">What a file takes</dt>
+    <dd>For a file field (a work instruction, a drawing, a video of the job): tick picture, pdf, video or
+    spreadsheet; none ticked takes pictures, PDFs and videos. A file is read through its record, by whoever
+    may read that record; derived through a reference, a lot shows its step's.</dd>
+    <dt data-highlight="table.ed-table td:nth-child(7) select">Refers to</dt>
+    <dd>For a ref: pick the object its records point at.</dd>
+    <dt data-highlight="table.ed-table button[title='Remove the field']">Remove</dt>
+    <dd>Takes the field out, after asking. A locked field says <em>kept</em> instead.</dd>
+    <dt data-highlight=".add-row">New field name, Add</dt>
+    <dd>Type a name (lower case letters, digits and _), then Add. It starts as a string, placed at the end of
+    the form's last section; set its type and label in its row.</dd>
+  </dl>
+
+  <h3>States</h3>
+  <dl>
+    <dt data-highlight="p.notice">A list</dt>
+    <dd>With one state and no transitions, its records have no lifecycle and show no state, like
+    departments. List states to give it one.</dd>
+    <dt data-highlight="[aria-label='States']">States</dt>
+    <dd>Its states in order, as chips. Empty keeps it (or makes it) a list. Renaming a state records are in
+    needs a migration.</dd>
+    <dt data-highlight=".ed-grid label.ed-field select">Initial state</dt>
+    <dd>Pick the state a new record starts in.</dd>
+    <dt data-highlight=".theme-color">Tones</dt>
+    <dd>For each state, pick how it shows: plain, neutral, info, ok, warn or danger. The badge beside it is
+    how it will look; the plant's theme sets the colours.</dd>
+    <dt data-highlight="table.ed-table">Transitions</dt>
+    <dd>The object's actions, one per row. The action's name is fixed; type its <em>Label</em> (the
+    button people see), pick the states it may start <em>From</em> (only this object's states), and pick
+    the state it goes <em>To</em>.</dd>
+    <dt data-highlight="table.ed-table .btn.ghost">Remove</dt>
+    <dd>Takes the transition out, after asking.</dd>
+    <dt data-highlight=".add-row">New action, Add</dt>
+    <dd>Type an action's name and Add: it goes from the initial state to the last one until you change
+    it. Who may take it is set on Roles &amp; policies.</dd>
+  </dl>
+
+  <h3>Roles &amp; policies</h3>
+  <p>Nothing is allowed until a policy grants it. A policy grants reading, writing and actions to its roles
+  while its condition holds.</p>
+  <dl>
+    <dt data-highlight=".access-requires">Reserved to a certification</dt>
+    <dd>Before any policy: records only those holding a certification may see, whatever their roles, even
+    if they read every record. Reserve records to a certification adds one: the certification (People &amp;
+    departments lists them) and For the records where, a condition on the record (empty: every record). A
+    lot whose Military is derived from its product requires ITAR when it is military. Someone without it
+    finds nothing of such a record anywhere, and a save that would make a record theirs no more is refused.
+    Approved by the stewards and governance.</dd>
+    <dt data-highlight="[role='group'][aria-label='Roles']:not(.policy *)">Roles</dt>
+    <dd>The roles this object declares; users and groups are assigned to them. Suggestions are the roles
+    other objects use, to keep the plant's words alike; a new one is lower case letters, digits and _.</dd>
+    <dt data-highlight=".pm">Overview</dt>
+    <dd>What each role may do, over every policy: read, create and archive records, each field, each
+    action. Click its title to fold it. Colours: write, yes or allow; read; — not granted; denied (locked,
+    hidden, refused). A * means only under a condition.</dd>
+    <dt data-highlight=".pm-role">A role's name</dt>
+    <dd>Click it to show only the policies that name that role; click again, or Show all, for every
+    policy.</dd>
+    <dt data-highlight=".pm-btn">A cell</dt>
+    <dd>Click it to see, under the grid, which policies make it so. Double-click it (or press
+    <kbd>Enter</kbd>) to change it at once, when one policy is that role's alone and always applies.</dd>
+    <dt data-highlight=".pm-edit">Which policies make it so</dt>
+    <dd>Each policy's grant as a tile: click it for the next level. It says when a policy is shared with
+    other roles, or holds only under its condition, and when a deny wins. <em>Grant it in a new policy for …
+    alone</em> adds a policy for that role only; <em>close</em> hides this.</dd>
+    <dt data-highlight=".policy legend">A policy</dt>
+    <dd>Its name, a mark if this change adds or changes it, <em>rename</em>, and <em>remove</em> (after
+    asking). The name only says what the policy is for: what it grants is what is ticked below it.</dd>
+    <dt data-highlight=".policy-summary">In short</dt>
+    <dd>Under each policy's settings, the policy in one sentence as it stands: who may read, create,
+    archive, which fields they read or write, which actions they take, its condition in words, the
+    transactions it is limited to and the fields it never lets them write. It follows every tick.</dd>
+    <dt data-highlight=".policy-together">With its other policies</dt>
+    <dd>For each of its roles that other policies also name: what that role may do once they are all
+    counted (desktop-read and desktop-edit together), noting when some of it holds only under a
+    condition.</dd>
+    <dt data-highlight=".policy-advice">What to look at</dt>
+    <dd>Said in the same place when it matters: roles that may change records but read them through no
+    policy (they could not open one), and a name that says the opposite of what it grants (named edit,
+    changing nothing; named read, changing records).</dd>
+    <dt data-highlight=".policy-presets">Set it to</dt>
+    <dd><strong>Read only</strong> (records and every field, read), <strong>Read and edit</strong> (read and
+    create records, write every field) or <strong>Nothing</strong>: sets what is ticked at once, to change
+    from there. Its roles, condition, transactions and denied fields stay as they are.</dd>
+    <dt data-highlight=".policy [aria-label='Roles']">Its roles</dt>
+    <dd>Whom it is for. A new role typed here is declared on the object too.</dd>
+    <dt data-highlight=".policy [aria-label='Only when']">Only when</dt>
+    <dd>A condition on the record and the person; none means always. Its roles still decide whom it is
+    for.</dd>
+    <dt data-highlight=".policy [aria-label='Only through transactions']">Only through transactions</dt>
+    <dd>Transactions by name, such as move_in: the policy then grants only to writes made through them.
+    Empty: any write.</dd>
+    <dt data-highlight=".policy .checks">may read, create, archive and restore records</dt>
+    <dd>Tick what it allows with whole records.</dd>
+    <dt data-highlight=".policy .grant-grid[aria-label^='What']">Fields</dt>
+    <dd>A tile per field: click it to go from — to read to write and round again. <em>* every other
+    field</em> is every field the policy does not name.</dd>
+    <dt data-highlight=".policy .grant-grid[aria-label^='The actions']">Actions allowed</dt>
+    <dd>A tile per transition: click it to allow it, or take it back.</dd>
+    <dt data-highlight=".policy [aria-label^='Deny writing']">Deny writing these fields</dt>
+    <dd>Fields its roles may never write while it holds, whatever another policy grants. Only this
+    object's fields.</dd>
+    <dt data-highlight=".add-row">New policy id, Add</dt>
+    <dd>Type an id and Add: the new policy is for the first role, and reads records and every field until
+    you change it.</dd>
+  </dl>
+
+  <h3>Rules</h3>
+  <p>The rule pipe: scripts that check and complete a record, in order, on every change of state. Each takes
+  the record's context and returns it, or refuses with a message.</p>
+  <dl>
+    <dt data-highlight="table.ed-table">The pipe</dt>
+    <dd>One row per script, in the order they run. <em>edited</em> marks a script this change
+    alters.</dd>
+    <dt data-highlight="table.ed-table .linkish">A script's name</dt>
+    <dd>Click it to open the script below.</dd>
+    <dt data-highlight="table.ed-table td:nth-child(3) .pick">May write</dt>
+    <dd>The fields the script may set. Changing any other stops the pipe, so a reviewer sees from here what
+    each script can alter.</dd>
+    <dt data-highlight="table.ed-table td:nth-child(4) input">Backend only</dt>
+    <dd>Ticked: it runs on the server only, as for a script that looks up other records.</dd>
+    <dt data-highlight="table.ed-table td:nth-child(5) input">After commit</dt>
+    <dd>Ticked: it runs after the record is saved, not before.</dd>
+    <dt data-highlight="table.ed-table button[title='Earlier']">Earlier, Remove</dt>
+    <dd>The arrow moves a script one place up the pipe. Remove takes it out of this object's pipe, after
+    asking; the script itself stays.</dd>
+    <dt data-highlight=".add-row select">Add a published script, Add to pipe</dt>
+    <dd>Pick a script that already exists, then <em>Add to pipe</em>: it runs last.</dd>
+    <dt data-highlight=".add-row input">New script name, Add</dt>
+    <dd>Type a name and Add: a new script, from a short template, joins the pipe and opens below.</dd>
+    <dt data-highlight=".script-editor .code-editor">The script</dt>
+    <dd>Its code. A published script is shown as it is live until you edit it; then this change holds its
+    new version. Under it, whether it compiles, or the first problem.</dd>
+    <dt data-highlight=".dry-run">Dry run</dt>
+    <dd>Runs the draft on the server, as you, with the input in its box, and shows what it gave and would
+    write: nothing is saved. <em>Run</em> runs it; <em>Reset input</em> brings the example back.</dd>
+    <dt data-highlight=".dry-save">Save as test case</dt>
+    <dd>After a run, name what it shows and save it: the fitness test runs it again on every submit.</dd>
+    <dt data-highlight=".test-cases">Test cases</dt>
+    <dd>Each with its last result. A new or changed script needs at least one. <em>JSON</em> shows them as
+    text; <em>remove</em> takes one out, after asking.</dd>
+  </dl>
+
+  <h3>Layout</h3>
+  <p>The list and the form people see for this object.</p>
+  <dl>
+    <dt data-highlight=".lay-list .chip-row">List columns</dt>
+    <dd>Its columns, in order. The arrows move one earlier or later, × removes it, <em>+ column</em> adds a
+    field.</dd>
+    <dt data-highlight=".lay-list > label:nth-of-type(1)">Sorted by</dt>
+    <dd>Pick the field the list is sorted by, then ascending or descending; or last changed first.</dd>
+    <dt data-highlight=".lay-list > label:nth-of-type(2)">Search first</dt>
+    <dd>For an object with too many records to browse: its list starts empty, with a search box.
+    Development, demo and test instances list them anyway.</dd>
+    <dt data-highlight=".lay-tabs">Form tabs</dt>
+    <dd>Click a tab to lay it out. <em>+ tab</em> adds one.</dd>
+    <dt data-highlight=".lay-tab-head">A tab's label, move, Remove tab</dt>
+    <dd>With several tabs: type its label, move it left or right, or remove it. Its fields go to
+    <em>Not on the form</em>.</dd>
+    <dt data-highlight=".lay-section-head">A section</dt>
+    <dd>Type its label. Tick <em>can fold</em> to let people fold it, and <em>folded at first</em> to start
+    it folded. The arrows move it up or down, the drop-down moves it to another tab, and Remove takes it
+    out (its fields go to the tray).</dd>
+    <dt data-highlight=".lay-card">A field's card</dt>
+    <dd>Drag it to move it, within a section or to another. Click it to set it up below. It shows how the
+    field is drawn, its width of 12, and whether it has conditions.</dd>
+    <dt data-highlight=".lay-card-tools">Its buttons</dt>
+    <dd>The arrows move it earlier or later; − and + make it narrower or wider. Widths are of a 12-column
+    row; on a narrow screen every field takes the whole row.</dd>
+    <dt data-highlight=".layout-editor > button.btn">Add section</dt>
+    <dd>Adds an empty section to this tab. Drop fields into it.</dd>
+    <dt data-highlight=".lay-tray">Not on the form</dt>
+    <dd>Fields the form does not show. Drag one into a section, or pick <em>place in…</em>; drag a card here
+    to take it off the form.</dd>
+    <dt data-highlight=".lay-inspector .ed-row">Width, Drawn as, Help text, Placeholder</dt>
+    <dd>For the selected field: how much of the row it takes, the control it is drawn as (such as a
+    dropdown, radio list, buttons, toggle, search as you type, scan), and words shown under it or inside it
+    while empty. A text field also has <em>Rows</em>.</dd>
+    <dt data-highlight=".lay-rule">Shown when, Enabled when, Required when</dt>
+    <dd>Conditions on the form as it is filled in, the record as saved, and the person. None: always shown
+    and enabled, and required only as the Fields tab says. Required when is checked by the server too.
+    They change only what the form shows; what a person may read or write is the policies'.</dd>
+    <dt data-highlight=".lay-inspector .btn.ghost">Take it off the form</dt>
+    <dd>Moves the selected field to the tray. It stays a field of the object.</dd>
+    <dt data-highlight=".layout-editor .preview">Preview</dt>
+    <dd>The tab you are laying out, as people will see it, redrawn on every edit.</dd>
+  </dl>
+
+  <h3>Preview</h3>
+  <dl>
+    <dt data-highlight=".live-preview">The form</dt>
+    <dd>The whole form as this draft lays it out, with its inputs disabled, redrawn on every edit in any
+    window. Split opens it beside the tab you are editing.</dd>
+  </dl>
+
+  <h3>Stewards</h3>
+  <p>Stewards are the departments that approve changes to what they steward.</p>
+  <dl>
+    <dt data-highlight="[aria-label='The object']">The object</dt>
+    <dd>Tick the departments that steward the whole object.</dd>
+    <dt data-highlight=".steward-row">Fields, States</dt>
+    <dd>Tick departments for one field or one state. One with none ticked is stewarded by the
+    object's.</dd>
+    <dt data-highlight=".approval-settings">Approval of record changes</dt>
+    <dd>Changes to its records made outside a transaction (on a form, in a list, by an import) can wait
+    until these stewards approve them, never by the person who asked. A transaction never waits.</dd>
+    <dt data-highlight=".approval-settings > label">Changing values, a new record, actions</dt>
+    <dd>Tick which changes wait: changed values, a new record, or actions (when it has any).</dd>
+    <dt data-highlight=".approval-narrow">Only these</dt>
+    <dd>Narrow what waits to some fields, some states or some actions. None ticked: any.</dd>
+  </dl>
+
+  <h3>A tab per installed suite</h3>
+  <dl>
+    <dt data-highlight=".subtabs .subtab:nth-child(n+11):not(:last-child)">The suite's tab</dt>
+    <dd>Each suite installed here may add a tab, named by the suite, before JSON, with its own part of the
+    object's design. What you set there is part of the same draft, reviewed and approved with the
+    rest.</dd>
+  </dl>
+
+  <h3>JSON</h3>
+  <dl>
+    <dt data-highlight=".code-editor.ce-json">The definition</dt>
+    <dd>The whole object as JSON, for integrators. Edit it here; nothing changes until you apply it.</dd>
+    <dt>Apply JSON</dt>
+    <dd>Replaces the draft with what you typed, and every check runs on it as on any other edit. The
+    object's name must stay the same; if the text is not JSON, it says what is wrong.</dd>
+  </dl>
+</article>

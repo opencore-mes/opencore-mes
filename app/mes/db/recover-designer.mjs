@@ -12,9 +12,11 @@
 //
 // Then the designer starts a change to People & departments that puts the roles right; the reviewer
 // reviews it, and it is approved like any other.
+// The data integrity review (§7.7) reports the roles given here as access changed outside the platform, on
+// purpose: an integrity reviewer closes it with its non-conformance report (why, and that it was this).
 import os from "node:os";
 import pg from "pg";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { appendAudit } from "../server/audit.js";
 
 const args = process.argv.slice(2);

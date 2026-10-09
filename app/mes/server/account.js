@@ -10,9 +10,10 @@
 //                    sessions, last sign-in), issue a one-time link to set a password, take off a second
 //                    factor (a lost phone), lift a lock, end their sessions; and what the sign-in trail
 //                    says needs a look (ids locked, wrong passwords spread over many ids). Each audited.
-import { fail } from "../../../src/errors.js";
+import { fail } from "@opencore-mes/juris-kit/errors.js";
 import { sessionKey } from "./store.js";
-import { audit, policyOf, expiresAt, expiredAt, lockedUntil, clearFailures, issuePasswordLink, newTotpSecret, otpauthUri, recoveryCodes, codeHash, totpStep, checkSecondFactor, signInAlerts, SPRAY, ID_PATTERN, LINK_HOURS } from "./sign-in.js";
+import { audit, policyOf, expiresAt, expiredAt, lockedUntil, clearFailures, issuePasswordLink, issueSetupCodes, ldapBind, countFailure, newTotpSecret, otpauthUri, recoveryCodes, codeHash, totpStep, checkSecondFactor, signInAlerts, SPRAY, ID_PATTERN, LINK_HOURS, LINK_DAYS, LINK_MAX_DAYS } from "./sign-in.js";
+import { sealSecret, openSecret } from "./seal.js";
 
 export const ADMIN_ROLE = "administrator";
 const iso = (t) => (t instanceof Date ? t.toISOString() : t ?? null);
@@ -45,7 +46,7 @@ export function createAccount({ store, signIn = {} }) {
             return {
                 id: user.id, password: Boolean(own), setAt: iso(own?.set_at), expiresAt: iso(expiresAt(own?.set_at, policy)), expired: Boolean(expiredAt(own?.set_at, policy)),
                 sso: Boolean(signIn.sso), signing: Boolean(signing), signingSetAt: iso(signing?.set_at), signingExpiresAt: iso(expiresAt(signing?.set_at, policy)), signingExpired: Boolean(expiredAt(signing?.set_at, policy)),
-                picker: Boolean(signIn.picker),
+                picker: Boolean(signIn.picker), directory: signIn.ldap ? (signIn.ldap.label ?? "the plant's directory") : null,
                 mfa: { policy: policy.mfa, enabled: Boolean(mfa?.enabled_at), since: iso(mfa?.enabled_at), codesLeft, applies: policy.mfa !== "off" && (await signsWithPassword(user.id)) },
                 maxDays: policy.maxDays, history: policy.history, idleMinutes: policy.idleMinutes, signWithPassword: policy.signWithPassword,
             };
@@ -60,6 +61,35 @@ export function createAccount({ store, signIn = {} }) {
 
         // ---- their second factor ----
         // Setting it up: a new key and recovery codes, shown once; nothing changes until a code confirms it.
+        // From their own password to the plant's directory (§8.2): the person types their directory password
+        // once; if the directory accepts it, their password here is taken off, and from then on they sign in
+        // with the directory's. A wrong one counts as a wrong password (the id's lock).
+        async "auth.useDirectory"({ password } = {}) {
+            const user = await me(this);
+            if (!signIn.ldap) fail("This installation has no directory to sign in through: ask IT.", { status: 409 });
+            const [own] = await db.query("SELECT hash FROM mes.credentials WHERE user_id = $1", [user.id]);
+            if (!own) fail("You already sign in through the directory.", { status: 409 });
+            if (typeof password !== "string" || !password) fail("Type your directory password.", { fields: { password: "Required." } });
+            if (await lockedUntil(db, user.id)) fail("Too many wrong passwords: try again in 15 minutes.", { status: 429 });
+            const bound = await ldapBind(signIn.ldap, user.id, password);
+            // Its name as the plant gave it ("the plant directory"), at the start of a sentence.
+            const Directory = ((l) => l.charAt(0).toUpperCase() + l.slice(1))(signIn.ldap.label ?? "the plant's directory");
+            if (bound.reason === "directory") fail(`${Directory} did not answer: try again in a moment, or ask IT if it goes on.`, { status: 503 });
+            if (!bound.ok) {
+                const locked = await countFailure(db, user.id);
+                await audit(db, user.id, "directory refused", { reason: locked ? "locked" : "wrong" });
+                fail(locked ? "Too many wrong passwords: try again in 15 minutes." : `${Directory} did not accept that password for ${user.id}: your password here is kept. Check it, or ask IT whether you have an account there.`, { status: 403, fields: { password: "Not accepted." } });
+            }
+            await db.transaction(async (tx) => {
+                await tx.query("DELETE FROM mes.credentials WHERE user_id = $1", [user.id]);
+                await tx.query("UPDATE mes.password_tokens SET used_at = now() WHERE user_id = $1 AND used_at IS NULL", [user.id]);
+                // Signed in elsewhere with the password just taken off: those sessions end; this one stays.
+                await tx.query("DELETE FROM mes.sessions WHERE user_id = $1 AND id <> $2", [user.id, sessionKey(this.sessionId)]);
+            });
+            await clearFailures(db, user.id);
+            await audit(db, user.id, "password removed", { by: "themselves", now: "directory" });
+            return { ok: true, directory: signIn.ldap.label ?? "the plant's directory" };
+        },
         async "auth.mfa.start"() {
             const user = await me(this);
             if (policy.mfa === "off") fail("A second factor is not used on this installation.", { status: 409 });
@@ -70,7 +100,7 @@ export function createAccount({ store, signIn = {} }) {
                 // An authenticator already on stays on until the new one is confirmed: kept beside it.
                 const [had] = await tx.query("SELECT enabled_at FROM mes.mfa WHERE user_id = $1", [user.id]);
                 if (had?.enabled_at) fail("Your authenticator is set up already: take it off first, or renew your recovery codes.", { status: 409 });
-                await tx.query("INSERT INTO mes.mfa (user_id, secret) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET secret = $2, enabled_at = NULL, last_step = 0", [user.id, secret]);
+                await tx.query("INSERT INTO mes.mfa (user_id, secret) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET secret = $2, enabled_at = NULL, last_step = 0", [user.id, sealSecret(secret)]);
                 await tx.query("DELETE FROM mes.mfa_recovery WHERE user_id = $1", [user.id]);
                 for (const c of codes) await tx.query("INSERT INTO mes.mfa_recovery (user_id, code_hash) VALUES ($1, $2)", [user.id, codeHash(c)]);
             });
@@ -80,7 +110,7 @@ export function createAccount({ store, signIn = {} }) {
             const user = await me(this);
             const [m] = await db.query("SELECT secret FROM mes.mfa WHERE user_id = $1 AND enabled_at IS NULL", [user.id]);
             if (!m) fail("Start setting up your authenticator first.", { status: 409 });
-            const step = totpStep(m.secret, code);
+            const step = totpStep(openSecret(m.secret), code);
             if (step === null) fail("That code is not the one your authenticator shows now: check its clock, and type the 6 digits it shows.", { fields: { code: "Not this code." } });
             await db.query("UPDATE mes.mfa SET enabled_at = now(), last_step = $2 WHERE user_id = $1", [user.id, step]);
             await audit(db, user.id, "second factor set", { by: "themselves", at: "account" });
@@ -130,12 +160,50 @@ export function createAccount({ store, signIn = {} }) {
             }));
         },
         // A one-time link to set a password (a new person, a forgotten password), shown once to hand over.
-        async "auth.admin.link"({ id, hours = LINK_HOURS } = {}) {
+        // How long it lasts: `days` (1 to 14; the plant's PASSWORD_LINK_DAYS unless given), or `hours` as before.
+        async "auth.admin.link"({ id, days = null, hours = null } = {}) {
             const by = await admin(this);
             if (!signIn.passwords) fail("This installation signs people in through single sign-on or the directory: there is no password here to set.", { status: 409 });
             if (typeof id !== "string" || !ID_PATTERN.test(id)) fail("Pick the person.", { fields: { id: "Required." } });
-            if (!Number.isInteger(hours) || hours < 1 || hours > 168) fail("A link lasts 1 to 168 hours.", { fields: { hours: "1 to 168." } });
-            try { return { ...(await issuePasswordLink(db, id, { by: by.id, hours })), hours }; } catch (error) { fail(error.message, { status: 404 }); }
+            if (days !== null && (!Number.isInteger(days) || days < 1 || days > LINK_MAX_DAYS)) fail(`A link lasts 1 to ${LINK_MAX_DAYS} days.`, { fields: { days: `1 to ${LINK_MAX_DAYS}.` } });
+            if (hours !== null && (!Number.isInteger(hours) || hours < 1 || hours > LINK_MAX_DAYS * 24)) fail(`A link lasts 1 to ${LINK_MAX_DAYS * 24} hours.`, { fields: { hours: `1 to ${LINK_MAX_DAYS * 24}.` } });
+            const lasts = days !== null ? days * 24 : hours ?? (signIn.linkDays ?? LINK_DAYS) * 24;
+            try { return { ...(await issuePasswordLink(db, id, { by: by.id, hours: lasts })), hours: lasts, days: lasts / 24 }; } catch (error) { fail(error.message, { status: 404 }); }
+        },
+        // Setup codes (§8.2): everyone who has no password here and has never signed in (people just
+        // loaded, a whole department at once), each given a code for a printed slip or a mail merge. With
+        // `count`, only how many there are (nothing issued); else each a new code, their earlier ones spent.
+        // `id` alone: one person's code (any active person, signed in before or not: a forgotten password).
+        async "auth.admin.setupCodes"({ department = null, days = null, count = false, id = null } = {}) {
+            const by = await admin(this);
+            if (!signIn.passwords) fail("This installation signs people in through single sign-on or the directory: there is no password here to set.", { status: 409 });
+            if (days !== null && (!Number.isInteger(days) || days < 1 || days > LINK_MAX_DAYS)) fail(`A code lasts 1 to ${LINK_MAX_DAYS} days.`, { fields: { days: `1 to ${LINK_MAX_DAYS}.` } });
+            if (department !== null && typeof department !== "string") fail("Pick a department, or everyone.", { fields: { department: "A department." } });
+            if (id !== null && (typeof id !== "string" || !ID_PATTERN.test(id))) fail("Pick the person.", { fields: { id: "Required." } });
+            const rows = id !== null
+                ? await db.query("SELECT u.id, u.name FROM mes.users u WHERE u.id = $1 AND u.active", [id])
+                : await db.query(
+                    `SELECT u.id, u.name FROM mes.users u
+                     WHERE u.active AND NOT EXISTS (SELECT 1 FROM mes.credentials c WHERE c.user_id = u.id)
+                       AND NOT EXISTS (SELECT 1 FROM mes.audit_log a WHERE a.object = '$auth' AND a.action = 'sign-in' AND a.actor = u.id)
+                       AND ($1::text IS NULL OR EXISTS (SELECT 1 FROM mes.group_members m WHERE m.user_id = u.id AND m.group_id = $1))
+                     ORDER BY u.id`, [department || null]);
+            if (id !== null && !rows.length) fail(`${id} is not an active person in People & departments.`, { status: 404 });
+            if (count) return { count: rows.length };
+            const lasts = (days ?? signIn.linkDays ?? LINK_DAYS) * 24;
+            const issued = await issueSetupCodes(db, rows.map((r) => r.id), { by: by.id, hours: lasts, about: id !== null ? null : department ? { department } : { everyone: true } });
+            const depts = rows.length ? await db.query(
+                "SELECT m.user_id, string_agg(g.name, '; ' ORDER BY g.name) AS names FROM mes.group_members m JOIN mes.groups g ON g.id = m.group_id AND g.kind = 'department' WHERE m.user_id = ANY($1::text[]) GROUP BY m.user_id",
+                [rows.map((r) => r.id)]) : [];
+            const deptOf = new Map(depts.map((d) => [d.user_id, d.names]));
+            const codeOf = new Map(issued.map((i) => [i.id, i.code]));
+            const expiresAt = new Date(Date.now() + lasts * 3600_000).toISOString();
+            return { days: lasts / 24, expiresAt, people: rows.map((r) => ({ id: r.id, name: r.name, departments: deptOf.get(r.id) ?? "", code: codeOf.get(r.id) })) };
+        },
+        // The departments, for the setup codes' choice.
+        async "auth.admin.departments"() {
+            await admin(this);
+            return db.query("SELECT id, name FROM mes.groups WHERE kind = 'department' ORDER BY name");
         },
         // A second factor taken off (a lost phone): the person sets up a new one at their next sign-in.
         async "auth.admin.resetMfa"({ id, reason } = {}) {
@@ -176,6 +244,6 @@ export function createAccount({ store, signIn = {} }) {
             ...a.locks.map((l) => ({ kind: "alert", id: `auth:locked:${l.actor}`, title: `${l.actor}: locked after wrong passwords`, what: `${l.n > 1 ? `${l.n} times` : "Once"} in the last day.`, link: `/design/sign-in?q=${encodeURIComponent(l.actor)}` })),
         ];
     }
-    const touches = { "auth.account": [], "auth.active": [], "auth.mfa.start": [{ name: "auth.account" }], "auth.mfa.confirm": [{ name: "auth.account" }], "auth.mfa.off": [{ name: "auth.account" }], "auth.mfa.codes": [{ name: "auth.account" }], "auth.admin.people": [], "auth.admin.link": [], "auth.admin.resetMfa": [{ name: "inbox.mine" }], "auth.admin.unlock": [{ name: "inbox.mine" }], "auth.admin.endSessions": [], "auth.admin.alerts": [] };
+    const touches = { "auth.account": [], "auth.active": [], "auth.mfa.start": [{ name: "auth.account" }], "auth.mfa.confirm": [{ name: "auth.account" }], "auth.mfa.off": [{ name: "auth.account" }], "auth.mfa.codes": [{ name: "auth.account" }], "auth.admin.people": [], "auth.admin.link": [], "auth.admin.setupCodes": [], "auth.admin.departments": [], "auth.useDirectory": [{ name: "auth.account" }], "auth.admin.resetMfa": [{ name: "inbox.mine" }], "auth.admin.unlock": [{ name: "inbox.mine" }], "auth.admin.endSessions": [], "auth.admin.alerts": [] };
     return { services, touches, inboxOf, policy };
 }

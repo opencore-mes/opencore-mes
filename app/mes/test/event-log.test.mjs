@@ -1,12 +1,13 @@
 // The event log (server/event-log.js), on a temporary directory and a fake database. `npm test`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createEventLog, verifyEvents, readEvents, watchDb } from "../server/event-log.js";
+import { createAlerts } from "../server/alerts.js";
 
-const dirOf = () => mkdtempSync(path.join(tmpdir(), "openmes-events-"));
+const dirOf = () => mkdtempSync(path.join(tmpdir(), "opencore-mes-events-"));
 const quiet = { error() {} };
 
 // A database that takes event rows, or refuses while `down`.
@@ -125,4 +126,57 @@ test("the file lost, the database ahead: said as a critical event, and this run'
     assert.deepEqual(mine.map((r) => r.seq), [1, 2, 3, 4, 5, 6, 7]);
     assert.deepEqual(mine.slice(4).map((r) => [r.kind, r.severity]), [["event_log.reset", "critical"], ["after the loss", "info"], ["and on", "info"]]);
     assert.match(said[0], /the file was lost/);
+});
+
+test("a file grown too large is set aside once the database holds it all; the next carries the chain on, and verifies", async () => {
+    const db = fakeDb();
+    const dir = dirOf();
+    const events = createEventLog({ dir, log: quiet, maxBytes: 600 });
+    for (let i = 0; i < 4; i++) events.emit("filler", { details: { pad: "x".repeat(100) } });
+    events.emit("before the first flush"); // not yet set aside: the database has not been asked
+    assert.equal(readdirSync(dir).filter((f) => /\.log\./.test(f)).length, 0);
+    await events.flush(db);
+    events.emit("after");
+    const aside = readdirSync(dir).filter((f) => /^event\.log\.\d/.test(f));
+    assert.equal(aside.length, 1);
+    const now = readEvents(events.file);
+    assert.deepEqual(now.map((e) => [e.seq, e.kind]), [[6, "event_log.rotated"], [7, "after"]]);
+    assert.equal(now[0].prev, readEvents(path.join(dir, aside[0])).at(-1).hash);
+    assert.deepEqual(verifyEvents(events.file), { ok: true, checked: 2, brokenAt: null });
+    assert.equal(verifyEvents(path.join(dir, aside[0])).ok, true);
+    await events.flush(db);
+    assert.deepEqual([...db.rows.values()].map((r) => r.seq), [1, 2, 3, 4, 5, 6, 7]);
+    // A restart reads on from the new file.
+    assert.equal(createEventLog({ dir, log: quiet }).emit("again").seq, 8);
+});
+
+test("alerts: at or above the floor, a JSON line in the journal and a webhook post; the same kind held back for ten minutes", async () => {
+    const posts = [];
+    const said = [];
+    let t = 0;
+    const fetchFn = async (url, init) => { posts.push({ url, body: JSON.parse(init.body) }); return { ok: true, status: 200 }; };
+    const alerts = createAlerts({ url: "https://hooks.example/x", instance: "web-1", fetchFn, now: () => t, log: { error: (m) => said.push(m) } });
+    const events = createEventLog({ dir: dirOf(), instance: "web-1", log: quiet, onEvent: alerts.onEvent });
+    events.emit("quiet", { severity: "warning" });
+    events.emit("db.down", { severity: "error", message: "The database is unreachable." });
+    events.emit("db.down", { severity: "error" });
+    events.emit("db.down", { severity: "error" });
+    t = 11 * 60_000;
+    events.emit("db.down", { severity: "error", message: "Still down." });
+    events.emit("audit.broken", { severity: "critical", message: "Broken." });
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(posts.map((p) => p.body.text), [
+        "[ERROR] web-1: The database is unreachable.",
+        "[ERROR] web-1: Still down. (and 2 more like it in the last minutes)",
+        "[CRITICAL] web-1: Broken.",
+    ]);
+    assert.equal(posts[0].body.event.kind, "db.down");
+    assert.equal(said.filter((m) => m.startsWith("alert {")).length, 5);
+    assert.throws(() => createAlerts({ minSeverity: "loud" }), /ALERT_MIN_SEVERITY/);
+    assert.throws(() => createAlerts({ url: "ftp://x" }), /ALERT_WEBHOOK_URL/);
+    // A webhook that fails is said, and nothing more.
+    const failing = createAlerts({ url: "https://hooks.example/x", fetchFn: async () => { throw new Error("refused"); }, log: { error: (m) => said.push(m) } });
+    failing.onEvent({ kind: "x", severity: "critical", message: "m", instance: "local" });
+    await new Promise((r) => setImmediate(r));
+    assert.match(said.at(-1), /webhook failed for x: refused/);
 });

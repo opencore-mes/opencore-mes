@@ -1,0 +1,9 @@
+[Unit]
+Description=OpenCore MES: the restore tested every month
+
+[Timer]
+OnCalendar=*-*-01 04:00:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

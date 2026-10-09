@@ -44,7 +44,7 @@ Read these before a larger change; a pull request that goes against them is sent
 - **AI builds on the contracts too.** Each contract is served to the AI, with tools that draft, check
   and test what is built on it; the AI never reviews or approves, submits only through a token its
   person gave the `design:submit` scope (the copilot never does), and never acts on a real tool.
-- **Plain JavaScript, no build step.** Node 24, PostgreSQL, Juris (`src/`). Match the surrounding
+- **Plain JavaScript, no build step.** Node 24, PostgreSQL, Juris (`@opencore-mes/juris-kit` from npm; a change to the framework is made in [its repository](https://github.com/opencore-mes/juris-kit), released, then taken here). Match the surrounding
   code: its naming, its comments (they say why), its idioms.
 
 ## Getting started

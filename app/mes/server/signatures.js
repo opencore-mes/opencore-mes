@@ -10,8 +10,8 @@
 // transaction signed by one, a change approved, a record change approved. The signer proves who they
 // are with their password, or with a fresh sign-in at the identity provider (`{ sso: true }`: one made
 // in this session, for this person, in the last few minutes, spent by this signature).
-import { ID_PATTERN, audit, clearFailures, countFailure, hashPassword, ldapBind, lockedUntil, passwordProblem, spendDecoy, verifyPassword, policyOf, expiredAt, reused, remember } from "./sign-in.js";
-import { fail } from "../../../src/errors.js";
+import { ID_PATTERN, signInIdOf, signInSettings, audit, clearFailures, countFailure, hashPassword, ldapBind, lockedUntil, passwordProblem, spendDecoy, verifyPassword, policyOf, expiredAt, reused, remember } from "./sign-in.js";
+import { fail } from "@opencore-mes/juris-kit/errors.js";
 import { sessionKey } from "./store.js";
 
 // How long a fresh sign-in at the provider stays good for the signature it was made for.
@@ -122,7 +122,7 @@ export function createSignatures({ store, signIn = {}, sandbox = false }) {
         async "auth.second.join"({ id, password } = {}) {
             const user = await sessionUser(this);
             if (user.second) fail(`${user.second.name} is signed in beside you already: two at most. They sign out first.`, { status: 409, code: "second.full" });
-            const who = String(id ?? "").trim().toLowerCase();
+            const who = signInIdOf(id, (await signInSettings(db)).domains);
             if (!ID_PATTERN.test(who)) fail("Enter their sign-in id.", { fields: { id: "Required." } });
             if (who === user.id) fail("The second person is someone else.", { fields: { id: "Someone else." } });
             const second = await store.user(who);

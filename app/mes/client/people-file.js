@@ -8,7 +8,8 @@
 // departments the row gives (a column left out, or an empty name or active, keeps what is there; an
 // empty departments cell means none). People not in the file are left as they are: nobody leaves by
 // being missing from a spreadsheet.
-import { IDENTIFIER } from "./definition.js";
+import { PERSON_ID } from "./definition.js";
+import { checkRow, rowMessage } from "./row-check.js";
 
 // The sign-in picker shows at most this many people at once; the server sends one more to say there are.
 export const PICKER_SHOWN = 60;
@@ -30,6 +31,14 @@ export function peopleCsv(org) {
         id, u.name ?? "", u.active === false ? "no" : "yes", deps.filter(([, d]) => (d.members ?? []).includes(id)).map(([d]) => d).join(" "),
     ]);
     return `﻿${[["id", "name", "active", "departments"], ...rows].map((r) => r.map((v) => cell(String(v))).join(",")).join("\r\n")}\r\n`;
+}
+
+// Setup codes as a file for slips or a mail merge (§8.2): one row a person, with where to type the code
+// and until when it works (the plant's format). The codes are in no other file: whoever holds this one
+// holds them, so it is printed and deleted.
+export function setupCodesCsv(people, { expires = "", address = "" } = {}) {
+    const rows = (people ?? []).map((p) => [p.id, p.name ?? "", p.departments ?? "", p.code, expires, address]);
+    return `\ufeff${[["id", "name", "departments", "code", "expires", "address"], ...rows].map((r) => r.map((v) => cell(String(v))).join(",")).join("\r\n")}\r\n`;
 }
 
 // RFC 4180, with the separator the header line uses. → [[cell]]
@@ -65,30 +74,34 @@ export function importPeople(org, text) {
     next.departments ??= {};
     const changes = { added: [], renamed: [], activated: [], deactivated: [], moved: [] };
     const problems = [];
+    // The people whose row says what this change says already: nothing to do for them.
+    const same = [];
     const [header, ...rows] = parseTable(text);
     if (!header) return { next, changes, problems: [{ row: 0, message: "The file is empty." }] };
     const at = Object.fromEntries(Object.entries(COLUMNS).map(([k, names]) => [k, header.findIndex((h) => names.includes(h.trim().toLowerCase()))]));
     if (at.id < 0) return { next, changes, problems: [{ row: 1, message: `No "id" column: the first row names the columns (id, name, active, departments).` }] };
+    // The columns' constraints (row-check.js): checked and worded as every import's are.
+    const columns = [
+        { key: "id", label: "Sign-in id", type: "string", required: true, lower: true, unique: true, pattern: PERSON_ID, patternWords: "a sign-in id: lower case letters, digits, _ and -, starting with a letter or a digit" },
+        { key: "name", label: "Name", type: "string", required: "new" },
+        { key: "active", label: "Active", type: "boolean" },
+        { key: "departments", label: "Departments", type: "ref", multiple: true, separator: /[\s,;]+/, lower: true,
+            ref: { label: "department", yet: true, find: (d) => (next.departments[d] ? d : null), known: () => Object.keys(next.departments), hint: "Add it on the Departments tab, then import again" } },
+    ];
     const seen = new Set();
     rows.forEach((r, k) => {
         const line = k + 2;
-        const get = (col) => (at[col] < 0 ? undefined : String(r[at[col]] ?? "").trim());
-        const id = get("id").toLowerCase();
-        if (!IDENTIFIER.test(id)) return problems.push({ row: line, message: `"${get("id")}" is not an id: lowercase letters, digits and _, starting with a letter.` });
-        if (seen.has(id)) return problems.push({ row: line, message: `${id} is in the file twice: only its first row is taken.` });
-        seen.add(id);
+        const get = (col) => (at[col] < 0 ? undefined : r[at[col]] ?? "");
+        const id = String(get("id") ?? "").trim().toLowerCase();
+        const { values, problems: wrong } = checkRow(columns, get, { isNew: !next.users[id], seen });
+        if (Object.keys(wrong).length) return problems.push({ row: line, message: `${id || "(no id)"}: ${rowMessage(wrong, columns)}.` });
         // The apostrophe an export put before a name a spreadsheet would read as a formula comes off.
-        const name = get("name")?.replace(/^'(?=[=+\-@])/, "");
-        const activeCell = get("active");
-        const active = activeCell === undefined || activeCell === "" ? undefined : YES.has(activeCell.toLowerCase()) ? true : NO.has(activeCell.toLowerCase()) ? false : null;
-        if (active === null) return problems.push({ row: line, message: `${id}: active is "${activeCell}"; write yes or no.` });
-        const depCell = get("departments");
-        const deps = depCell === undefined ? undefined : depCell.split(/[\s,;]+/).map((d) => d.trim().toLowerCase()).filter(Boolean);
-        const unknown = (deps ?? []).filter((d) => !next.departments[d]);
-        if (unknown.length) return problems.push({ row: line, message: `${id}: no department ${unknown.join(", ")} (departments are named by their id: ${Object.keys(next.departments).join(", ")}).` });
+        const name = values.name?.replace(/^'(?=[=+\-@])/, "") || undefined;
+        const active = values.active ?? undefined;
+        const deps = at.departments < 0 ? undefined : values.departments ?? [];
         const was = next.users[id];
+        const before = JSON.stringify(changes);
         if (!was) {
-            if (!name) return problems.push({ row: line, message: `${id} is new: give their name.` });
             next.users[id] = { name, active: active ?? true };
             changes.added.push(id);
         } else {
@@ -108,8 +121,9 @@ export function importPeople(org, text) {
             }
             if (moved && was) changes.moved.push(id);
         }
+        if (JSON.stringify(changes) === before) same.push(id);
     });
-    return { next, changes, problems };
+    return { next, changes, problems, same };
 }
 
 // What an import changes, in words, for the confirmation. → string

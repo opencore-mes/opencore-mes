@@ -450,6 +450,8 @@ export function registerReports(juris) {
                 p.fixed ? pinned(p) : { span: {} },
                 p.last_error ? { p: { className: "field-error small", textContent: `Last time (${plant().dateTime(p.last_at)}): ${p.last_error}` } }
                     : p.last_report ? { p: { className: "small", children: [{ span: { className: "muted", textContent: `Last generated ${plant().dateTime(p.last_at)}: ` } }, { Link: { to: `/r/${p.last_report}`, textContent: "open the report" } }] } } : { span: {} },
+                // Made late, or on a later try (§34.7): said beside its last run, and in the report itself.
+                p.last_note && !p.last_error ? { p: { className: "small rep-late", children: [icon("hourglass"), { span: ` ${p.last_note}` }] } } : { span: {} },
                 { div: { className: "rep-prompt-actions", children: [
                     { button: { type: "button", className: "btn small", textContent: "Put it in the box", title: "To ask as it is, or changed first", onclick: () => useIt(p) } },
                     { button: { type: "button", className: "btn small", textContent: "Generate now", disabled: p.running || (asksAi(p) && !api.getState(`${R}.status.configured`, false)), title: p.fixed ? "Its pinned report's queries run again as you now; the report is kept as yours" : "Asked as you now; the report it draws is kept as yours", onclick: () => generate(p) } },

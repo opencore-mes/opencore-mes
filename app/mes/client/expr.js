@@ -17,7 +17,8 @@
 // A transaction run on a traveler of a route (§32) also reads { "node": "lsl" }: a setting of the node
 // the traveler is at (and { "node": "name" }, { "node": "label" }).
 // A transaction's conditions (§25) also read { "input": "qty" } (what was entered; a reference is its
-// record's id) and { "lookup": "machine.capacity" } (a field of the record an input names). A count is
+// record's id) and { "lookup": "machine.capacity" } (a field of the record an input names); a step after one
+// that finds records reads { "found": "<as>.count" } and { "found": "<as>.first.<field>" }. A count is
 // of an object's records in use whose fields equal the values given (a list: any of them); its value
 // comes from the caller, which counts in the database (`countsOf` says what to count) and passes
 // { counts: { [key]: n } } among the scopes.
@@ -33,7 +34,7 @@ const COMPARE = {
     ge: (a, b) => a >= b,
 };
 const SYMBOL = { eq: "=", ne: "≠", lt: "<", le: "≤", gt: ">", ge: "≥" };
-const SCOPES = ["record", "user", "data", "event", "input", "lookup", "param", "row", "node", "context", "person"];
+const SCOPES = ["record", "user", "data", "event", "input", "lookup", "param", "row", "node", "context", "person", "found"];
 
 const isPlain = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
@@ -150,6 +151,30 @@ function readNote(...sides) {
     const read = sides.filter((side) => "read" in side);
     if (!read.length) return "";
     return ` (value: ${read.map((side) => JSON.stringify(side.read ?? null)).join(", ")})`;
+}
+
+// What the language can do, by operator: the design checks name these when an expression uses another.
+export const OPERATORS = [...Object.keys(COMPARE), "in", "contains", "all", "any", "not", "is_null", "add", "sub", "mul", "div", "some", "every", "count"];
+const TWO = new Set([...Object.keys(COMPARE), "in", "contains", "some", "every"]);
+// What is wrong with an expression's shape, in words, without evaluating it: an operator the language does not
+// have (that would fail every time it is read, as "request failed"), or one given the wrong arguments.
+export function shapeProblems(node, out = []) {
+    if (Array.isArray(node)) { for (const item of node) shapeProblems(item, out); return out; }
+    if (!isPlain(node) || referenceOf(node)) return out;
+    const keys = Object.keys(node);
+    if (keys.length !== 1) { out.push(`{ ${keys.join(", ") || ""} } is not an expression: an operator node has one key (${OPERATORS.join(", ")}), a reference one scope (${SCOPES.join(", ")}).`); return out; }
+    const [op] = keys;
+    const arg = node[op];
+    if (!OPERATORS.includes(op)) {
+        const like = { or: "any", and: "all", lte: "le", gte: "ge", neq: "ne", equals: "eq", isNull: "is_null", null: "is_null", sum: "add", minus: "sub", times: "mul" }[op];
+        out.push(`"${op}" is not an operator of the language${like ? `: say "${like}"` : ""} (it has ${OPERATORS.join(", ")}).`);
+        return out;
+    }
+    if (TWO.has(op) && !(Array.isArray(arg) && arg.length === 2)) out.push(`${op} takes two things: { "${op}": [a, b] }.`);
+    else if ((op === "all" || op === "any") && !Array.isArray(arg)) out.push(`${op} takes a list of conditions: { "${op}": [ … ] }.`);
+    else if (op === "count" && !(isPlain(arg) && typeof arg.object === "string")) out.push('count is { "count": { "object": "lot", "where": { … } } }.');
+    if (op === "count") return shapeProblems(Object.values(isPlain(arg?.where) ? arg.where : {}), out);
+    return shapeProblems(arg, out);
 }
 
 // Every reference an expression reads, without evaluating it: for a footprint (§5.6).

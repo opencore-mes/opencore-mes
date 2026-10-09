@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Floor · OpenCore MES</title>
+<meta name="description" content="Operators work from stale screens and paper instructions. OpenCore MES keeps every screen live, shows the line from above, and walks each station through its instruction a step at a time.">
+<meta name="theme-color" content="#2b303a">
+<meta property="og:title" content="Floor · OpenCore MES">
+<meta property="og:description" content="Operators work from stale screens and paper instructions. OpenCore MES keeps every screen live, shows the line from above, and walks each station through its instruction a step at a time.">
+<meta property="og:url" content="https://opencoremes.com/floor">
+<meta property="og:type" content="website">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://opencoremes.com/floor">
+<link rel="stylesheet" href="/site.css">
+<script src="/glow.js" defer></script>
+</head>
+<body>
+<div class="bg-bricks" aria-hidden="true"><div class="bgb k1"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k2"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k3"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k4"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k5"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k6"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k7"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div></div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></symbol>
+    <symbol id="i-dot" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5" fill="currentColor"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></symbol>
+    <symbol id="i-sync" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12a9 9 0 0 1 15.5-6.2"/><path d="M18 2v4h-4"/><path d="M6 22v-4h4"/></symbol>
+    <symbol id="i-steps" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6l6 6-6 6M13 6l6 6-6 6"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-user-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2"/><path d="m16 11 2 2 4-4"/></symbol>
+    <symbol id="i-scan" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8v8M10 8v8M14 8v8M17 8v8"/></symbol>
+    <symbol id="i-branch" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 7v10"/><path d="M18 9c0 4-3 6-7 6H8"/></symbol>
+    <symbol id="i-help" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></symbol>
+    <symbol id="i-zoom" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M11 8v6M8 11h6"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  </defs>
+</svg>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="OpenCore MES home">
+      <svg viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="102" fill="#2b303a"/><path fill="#fff" d="M138 374V138h47l71 101 71-101h47v236h-47V222l-71 100-71-100v152z"/></svg>
+      OpenCore MES
+    </a>
+    <nav class="links" aria-label="Main">
+      <a href="/design">Design</a>
+      <a href="/control">Control</a>
+      <a href="/floor" aria-current="page">Floor</a>
+      <a href="/ai">AI</a>
+      <a href="/connect">Connect</a>
+      <a href="/scale">Scale</a>
+      <a href="/editions">Editions</a>
+    </nav>
+    <a class="btn primary" href="https://demo.opencoremes.com/">Try the demo</a>
+    <details class="menu">
+      <summary aria-label="Every page, and the other sites"><svg class="icon"><use href="#i-menu"/></svg></summary>
+      <nav aria-label="Pages">
+          <a href="/">Home</a>
+          <a href="/design"><b>Design</b><small>Changes wait on a vendor</small></a>
+          <a href="/control"><b>Control</b><small>Changes nobody can trace</small></a>
+          <a href="/floor" aria-current="page"><b>Floor</b><small>Stale screens and paper</small></a>
+          <a href="/ai"><b>AI</b><small>Answers that take a week</small></a>
+          <a href="/connect"><b>Connect</b><small>Glue for every machine</small></a>
+          <a href="/scale"><b>Scale</b><small>Growth means downtime</small></a>
+          <a href="/editions"><b>Editions</b><small>Paying for what you skip</small></a>
+          <a href="/about"><b>About</b><small>Who makes it</small></a>
+          <hr>
+          <a href="https://trainings.opencoremes.com/">Courses</a>
+          <a href="https://suites.opencoremes.com/">Suites store</a>
+          <a href="https://github.com/opencore-mes/opencore-mes" rel="noopener">Source on GitHub</a>
+      </nav>
+    </details>
+  </div>
+</header>
+<main>
+  <section class="page-hero hero">
+    <div class="wrap">
+      <span class="eyebrow problem">The problem</span>
+      <h1>Operators work from stale screens and paper.</h1>
+      <p class="lede">A tool went down an hour ago and the board still says running; the instruction is a binder by the machine.</p>
+    </div>
+  </section>
+
+  <section class="sol live alt" id="live">
+    <div class="wrap">
+      <div>
+        <span class="eyebrow">Solution</span>
+        <h2 style="margin-top:16px">Every screen, live.</h2>
+        <p class="sub">Saved at the press, seen in the quality office the same moment.</p>
+        <ul class="live-points">
+          <li><b>Nothing to refresh</b><span>Lists, boards, counts update themselves.</span></li>
+          <li><b>Who else is here</b><span>See who has the record open before saves collide.</span></li>
+          <li><b>Only what can be done</b><span>A refused action is greyed, with why.</span></li>
+          <li><b>Never silently stale</b><span>Offline is said; what was typed is kept.</span></li>
+        </ul>
+        <p class="in-demo" style="margin-top:20px"><span>In the demo:</span> <a href="https://demo.opencoremes.com/s/semi_line" target="_blank" rel="noopener">The assembly and test line<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></p>
+      </div>
+      <div class="screens" role="img" aria-label="Lot 4712 open on a press tablet and in the quality office: the quantity saved at the press appears in the office at once">
+        <div class="screen">
+          <div class="where"><span>Tablet · Press 1</span><span class="on-air"><svg class="icon"><use href="#i-dot"/></svg>live</span></div>
+          <h4>Lot 4712</h4>
+          <dl class="kv"><dt>State</dt><dd>Processed</dd><dt>Good</dt><dd class="changed">580 kg</dd><dt>Scrap</dt><dd class="changed">20 kg</dd></dl>
+          <div class="who"><svg class="icon"><use href="#i-users"/></svg>Quinn is also viewing</div>
+        </div>
+        <span class="sync-line" aria-hidden="true"><svg class="icon"><use href="#i-sync"/></svg></span>
+        <div class="screen">
+          <div class="where"><span>Quality office</span><span class="on-air"><svg class="icon"><use href="#i-dot"/></svg>live</span></div>
+          <h4>Lot 4712</h4>
+          <dl class="kv"><dt>State</dt><dd>Processed</dd><dt>Good</dt><dd class="changed">580 kg</dd><dt>Scrap</dt><dd class="changed">20 kg</dd></dl>
+          <div class="who"><svg class="icon"><use href="#i-users"/></svg>Olga is also viewing</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sol floor-sec" id="layout">
+    <div class="wrap">
+      <div class="fl-mock" role="img" aria-label="A floor layout: eight tools placed along a line, each with a light in the colour of its state; one wirebonder is down and shown in red">
+        <div class="head"><b>Wirebond line 1</b><span>live</span></div>
+        <div class="fl-floor">
+          <div class="fl-aisle">AISLE</div>
+          <div class="fl-tool" style="left:7%;top:12%"><i class="fl-run"></i><span>WBD-01</span></div>
+          <div class="fl-tool" style="left:30%;top:12%"><i class="fl-run"></i><span>WBD-02</span></div>
+          <div class="fl-tool is-down" style="left:53%;top:12%"><i class="fl-down"></i><span>WBD-03</span></div>
+          <div class="fl-tool" style="left:76%;top:12%"><i class="fl-idle"></i><span>WBD-04</span></div>
+          <div class="fl-tool" style="left:7%;top:66%"><i class="fl-run"></i><span>WBD-05</span></div>
+          <div class="fl-tool" style="left:30%;top:66%"><i class="fl-pm"></i><span>WBD-06</span></div>
+          <div class="fl-tool" style="left:53%;top:66%"><i class="fl-run"></i><span>WBD-07</span></div>
+          <div class="fl-tool" style="left:76%;top:66%"><i class="fl-idle"></i><span>WBD-08</span></div>
+        </div>
+        <div class="fl-legend">
+          <span><i class="fl-run"></i>Running <b>4</b></span>
+          <span><i class="fl-idle"></i>Idle <b>2</b></span>
+          <span><i class="fl-pm"></i>Maintenance <b>1</b></span>
+          <span><i class="fl-down"></i>Down <b>1</b></span>
+        </div>
+      </div>
+      <div>
+        <span class="eyebrow">Solution</span>
+        <h2 style="margin-top:16px">The line, seen from above.</h2>
+        <p class="sub">Your floor plan, each tool lit in the colour of its state.</p>
+        <ul class="live-points">
+          <li><b>Drawn by dragging</b><span>Drop a tool on the plan; no drawing program.</span></li>
+          <li><b>Red everywhere at once</b><span>A tool down shows on every board.</span></li>
+          <li><b>Wall board to phone</b><span>One layout, every screen; tap a tool to open it.</span></li>
+          <li><b>Each person's view</b><span>Only the tools they may read.</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="sol alt" id="instructions">
+    <div class="wrap">
+      <span class="eyebrow">Solution</span>
+      <h2 style="margin-top:16px">The instruction at the station, a step at a time.</h2>
+      <p class="sub">PDFs, videos and drawings kept with the designs, shown for the lot in front of the operator.</p>
+      <div class="grid3">
+        <div class="card">
+          <svg class="icon"><use href="#i-steps"/></svg>
+          <h3>A step at a time</h3>
+          <p>A page or a video step to fit the screen; big buttons for gloved hands.</p>
+        </div>
+        <div class="card">
+          <svg class="icon"><use href="#i-check"/></svg>
+          <h3>Each step recorded</h3>
+          <p>A click, a value, a photo or the machine marks it done, in the audit trail.</p>
+        </div>
+        <div class="card">
+          <svg class="icon"><use href="#i-user-check"/></svg>
+          <h3>Only the certified</h3>
+          <p>Records and transactions kept to those who hold the certification.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sol guides" id="input">
+    <div class="wrap">
+      <div>
+        <span class="eyebrow">Solution</span>
+        <h2 style="margin-top:16px">No mouse at the station.</h2>
+        <p class="sub">Scan, Enter, next lot. Every form works from the keyboard and the scanner.</p>
+        <ul class="points">
+          <li><svg class="icon"><use href="#i-scan"/></svg><div><b>Scanner first</b><span>A label read whole moves to the next input.</span></div></li>
+          <li><svg class="icon"><use href="#i-branch"/></svg><div><b>Input flows</b><span>Which input next, which question for a held lot.</span></div></li>
+          <li><svg class="icon"><use href="#i-help"/></svg><div><b>Panels that explain themselves</b><span>A ? opens each panel's guide, drawn from its design.</span></div></li>
+        </ul>
+      </div>
+      <figure class="shot">
+        <a class="frame zoom" href="#zoom-guide" title="Zoom in"><picture><source srcset="/img/guide-dark.webp" media="(prefers-color-scheme: dark)"><img src="/img/guide.webp" width="1600" height="1000" alt="A metrology equipment screen with its guide open on the left; pointing at Tables in the guide outlines the screen's two tables" loading="lazy"></picture><span class="zoom-hint" aria-hidden="true"><svg class="icon"><use href="#i-zoom"/></svg></span></a>
+        <figcaption><b>A screen's guide</b>: pointing at “Tables” outlines them.</figcaption>
+        <a class="lightbox" id="zoom-guide" href="#_" title="Close" aria-label="Close the large view"><picture><source srcset="/img/guide-dark.webp" media="(prefers-color-scheme: dark)"><img loading="lazy" src="/img/guide.webp" width="1600" height="1000" alt="A metrology equipment screen with its guide open"></picture><span class="lb-cap"><b>A screen's guide</b>: pointing at “Tables” outlines them.</span><span class="lb-close" aria-hidden="true"><svg class="icon"><use href="#i-x"/></svg></span></a>
+      </figure>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 OpenCore MES. "OpenCore MES" is a trademark of its owner.</span>
+    <span><a href="/design">Design</a> · <a href="/control">Control</a> · <a href="/floor">Floor</a> · <a href="/ai">AI</a> · <a href="/connect">Connect</a> · <a href="/scale">Scale</a> · <a href="/editions">Editions</a> · <a href="/about">About</a></span>
+    <span><a href="https://demo.opencoremes.com/">Live demo</a> · <a href="https://trainings.opencoremes.com/">Courses</a> · <a href="https://suites.opencoremes.com/">Suites store</a> · <a href="https://github.com/opencore-mes/opencore-mes" rel="noopener">Source on GitHub</a> · <a href="mailto:contact@opencoremes.com?subject=OpenCore%20MES">Contact</a></span>
+  </div>
+</footer>
+</body>
+</html>

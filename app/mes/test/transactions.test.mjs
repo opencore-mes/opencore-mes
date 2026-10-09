@@ -2,7 +2,7 @@
 // on a transaction's definition, its footprint and its compare. `npm test`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { evaluate, countsOf, referencesOf } from "../client/expr.js";
+import { evaluate, countsOf, referencesOf, shapeProblems } from "../client/expr.js";
 import { decide, actionRefusal, explainDecision } from "../server/policy.js";
 import { validateTransaction, transactionFootprint, validateDefinition, routeOf, derivedOrder } from "../client/definition.js";
 import { transactionChanges, countByTab } from "../client/compare.js";
@@ -194,4 +194,30 @@ test("a service that runs a transaction, and a transaction a service runs: each 
     assert.deepEqual(callableProblems(`export default async function s(ctx) { await ctx.transactions.run("start_batch", {}); return ctx; }`), []);
     assert.match(callableProblems(`export default async function s(ctx) { await ctx.transactions.start("start_batch"); return ctx; }`)[0].message, /ctx.transactions.start does not exist/);
     assert.match(SERVICE_TEMPLATE("s"), /ctx\.transactions\.run\(name, input, \{ key \}\)/);
+});
+
+test("an expression's shape: an operator the language does not have, or the wrong arguments, is named at design, never failing a run", () => {
+    assert.deepEqual(shapeProblems({ any: [{ is_null: { input: "a" } }, { le: [{ input: "a" }, 50] }] }), []);
+    assert.match(shapeProblems({ or: [{ eq: [{ input: "a" }, null] }] }).join(), /"or" is not an operator of the language: say "any"/);
+    assert.match(shapeProblems({ count: { object: "lot", where: { qty: { gte: [1, 2] } } } }).join(), /"gte" is not an operator.*say "ge"/);
+    assert.match(shapeProblems({ eq: [1] }).join(), /eq takes two things/);
+    assert.match(shapeProblems({ all: { eq: [1, 1] } }).join(), /all takes a list of conditions/);
+    const body = { name: "t", label: "T", inputs: { a: { type: "decimal" } }, require: [{ that: { or: [{ eq: [{ input: "a" }, null] }] }, message: "m" }], steps: [], callers: { users: ["sam"], groups: [] }, stewards: ["production"] };
+    assert.match(validateTransaction(body, { objects: {} }).map((p) => p.message).join("\n"), /Check 1: "or" is not an operator of the language/);
+});
+
+test("a policy naming a field read beside \"*\": \"write\" is told it changes nothing (grants add up; deny takes away)", () => {
+    const body = { ...definitions.find((d) => d.object === "lot") };
+    body.policies = [...body.policies, { id: "lot-oops", roles: [body.roles[0]], fields: { "*": "write", qty: "read" } }];
+    assert.match(validateDefinition(body, { objects: definitions.map((d) => d.object) }).map((p) => p.message).join("\n"), /"\*" lets every field be written, so "qty": "read" changes nothing/);
+});
+
+test("a policy's via may name a suite's step kind: checked while its suite is installed, inert when it is not", () => {
+    const body = { ...definitions.find((d) => d.object === "lot") };
+    const withVia = (via) => ({ ...body, policies: [...body.policies, { id: "lot-step", roles: [body.roles[0]], via, fields: { qty: "write" } }] });
+    const words = (via, steps) => validateDefinition(withVia(via), { objects: definitions.map((d) => d.object), transactions: transactions.map((t) => t.name), steps }).filter((p) => p.path.endsWith(".via")).map((p) => p.message).join("\n");
+    assert.equal(words(["hello.note"], ["hello.note", "hello.bell"]), "");
+    assert.match(words(["hello.eat"], ["hello.note"]), /the hello suite has no step "hello.eat" \(hello.note\)/);
+    assert.equal(words(["gone.kind"], ["hello.note"]), "");
+    assert.match(words(["Not a name"], []), /via lists the transactions \(or the suites' step kinds\)/);
 });

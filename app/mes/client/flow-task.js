@@ -11,6 +11,7 @@ import { flowRunMap, useRunMap } from "./flow-picture.js";
 import { plant } from "./format.js";
 import { stateBadgeClass } from "./theme.js";
 import { titleTab } from "./shell.js";
+import { keyFlow, focusFirst, controlsOf } from "./keyboard.js";
 
 const words = (s) => String(s ?? "").replace(/_/g, " ");
 const isPlain = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
@@ -53,7 +54,9 @@ const STATE_TONE = { running: "info", stopped: "danger", ended: "ok" };
 const RUN_WORDS = { running: "in progress", stopped: "stopped", ended: "ended" };
 
 export function registerFlowTask(juris, { args }) {
-    juris.registerComponent("FlowTask", ({ run }, api) => {
+    // `embedded`: only the step it waits at (its form, choices or wait), inside another page (a screen's plan block,
+    // §26.10); `onDone()`: told once the person's act is taken.
+    juris.registerComponent("FlowTask", ({ run, embedded = false, onDone = null }, api) => {
         const as = api.getState("me.id", null, { track: false });
         const P = `flowtask.${run}`;
         const F = `flowform.${run}`;
@@ -62,6 +65,22 @@ export function registerFlowTask(juris, { args }) {
         const [now, setNow] = api.useState("now", Date.now());
         if (!api.isServer) {
             api.onMount(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t); });
+            // Without a mouse (§25.6): its form taken as a transaction's (Enter to the next field, on the last Send;
+            // Esc back), the cursor in its first field once the step is drawn; a choice's first button; a wait's
+            // Acknowledge. A technician at a bench works the step from the keyboard.
+            const doc = globalThis.document;
+            const stopKeys = keyFlow(() => doc.querySelector(".task-form"), { primary: () => doc.querySelector(".task-form .view-actions .btn.primary") });
+            const stopFocus = api.bindState(() => { const t = api.getState(P, null); return t ? `${t.state}:${t.nodeLabel ?? ""}:${t.mayAct}` : ""; }, (at) => {
+                if (!at) return;
+                setTimeout(() => {
+                    const form = doc.querySelector(".task-form");
+                    // A fresh step: its first field (a box to tick among them); one coming back with an error: that one.
+                    if (form) { if (!form.contains(doc.activeElement)) { const first = controlsOf(form)[0]; if (first) first.focus(); else focusFirst(form); } return; }
+                    const button = doc.querySelector(".task-choices .btn, .task-card .view-actions .btn.primary");
+                    if (button && (!doc.activeElement || doc.activeElement === doc.body)) button.focus();
+                }, 80);
+            });
+            api.onCleanup(() => { stopKeys(); stopFocus(); });
         }
         // Its map: the template with its way on it, when the person opens it.
         const map = useRunMap(api, "plan");
@@ -75,6 +94,7 @@ export function registerFlowTask(juris, { args }) {
                 await api.call("flows.act", { run, ...payload, ...(payload.values ? { values } : {}) });
                 chosen.clear();
                 api.batch(() => { api.setValue(`${F}.values`, {}); api.setValue(`${F}.picked`, {}); });
+                onDone?.(api.peek(P)?.nodeLabel ?? null);
             } catch (error) {
                 api.batch(() => { api.setValue(`${F}.error`, error.message); api.setValue(`${F}.fields`, error.fields ?? {}); });
             } finally {
@@ -89,6 +109,18 @@ export function registerFlowTask(juris, { args }) {
             switch (fld.type) {
                 case "boolean": return { label: { className: "check-control checkbox", children: [{ input: { type: "checkbox", checked: () => value() === true, onchange: (e) => set(e.target.checked) } }, { span: " yes" }] } };
                 case "enum": return { select: { onchange: (e) => set(e.target.value || null), children: noDefault([{ option: { value: "", textContent: "—" } }, ...fld.values.map((v) => ({ option: { value: v, textContent: words(v), selected: () => value() === v } }))]) } };
+                // A list from a named query (§32.6): the options the server worked out for this person, as they may
+                // read them; the one chosen is checked again when it is sent.
+                case "query": {
+                    const options = Array.isArray(fld.options) ? fld.options : [];
+                    return { div: { className: "task-query", children: [
+                        { select: { disabled: !options.length, onchange: (e) => { const o = options.find((x) => String(x.value) === e.target.value); set(o ? o.value : null); }, children: noDefault([
+                            { option: { value: "", textContent: options.length ? "—" : "nothing to choose" } },
+                            ...options.map((o) => ({ option: { key: String(o.value), value: String(o.value), textContent: o.label, selected: () => String(value()) === String(o.value) } })),
+                        ]) } },
+                        fld.problem ? { p: { className: "field-error", textContent: fld.problem } } : { span: {} },
+                    ] } };
+                }
                 case "integer": case "decimal": return { input: { type: "number", step: fld.type === "decimal" ? "any" : 1, value, oninput: (e) => set(e.target.value === "" ? null : Number(e.target.value)) } };
                 case "link": return { input: { type: "url", placeholder: "https://…", value, oninput: (e) => set(e.target.value) } };
                 case "file": case "image": return { div: { className: "task-file", children: [
@@ -100,7 +132,7 @@ export function registerFlowTask(juris, { args }) {
                     } } },
                     () => { const v = api.getState(`${F}.picked.${fld.name}`, null); return v?.url ? { img: { className: "task-preview", alt: v.name, src: v.url } } : { span: {} }; },
                 ] } };
-                default: return { input: { type: "text", value, oninput: (e) => set(e.target.value) } };
+                default: return { input: { type: "text", value, oninput: (e) => set(e.target.value), onchange: (e) => { if (e.target.value !== e.target.value.trim()) set(e.target.value.trim()); } } };
             }
         };
         // What it waits for, and the person's part in it.
@@ -139,13 +171,14 @@ export function registerFlowTask(juris, { args }) {
         const valueWords = (v) => (isPlain(v) && v.file ? `${v.name} (${Math.max(1, Math.round(v.size / 1024))} KB)` : isPlain(v) ? Object.entries(v).filter(([k]) => !k.endsWith("label") || k === "label").map(([, x]) => words(x)).join(" · ") : typeof v === "boolean" ? (v ? "yes" : "no") : String(v));
         return {
             div: {
-                className: "view task-page",
+                className: embedded ? "task-embedded" : "view task-page",
                 children: [() => {
                     const t = api.getState(P, null);
                     if (t === null) return { div: { children: [{ h1: "Not found" }, { p: { className: "muted", textContent: "This plan does not exist, or it is not shared with you." } }] } };
                     if (!t) return { p: { className: "muted", textContent: "Loading…" } };
-                    if (!api.isServer) titleTab(api, `/f/${run}`, `${t.label}: ${t.nodeLabel}`);
                     const waits = t.state === "running" && t.waiting;
+                    if (embedded) return waits ? waitingCard(t) : { p: { className: "muted small", textContent: `${t.label}: ${t.state === "ended" ? `ended${t.outcome ? ` (${t.outcome})` : ""}` : "on its way"}.` } };
+                    if (!api.isServer) titleTab(api, `/f/${run}`, `${t.label}: ${t.nodeLabel}`);
                     return { div: { children: [
                         { div: { className: "record-head", children: [{ div: { className: "title", children: [
                             { GuideToggle: { key: `guide-task-${run}`, title: `${t.label}: this plan`, make: () => ({ intro: "A plan (an OCAP) set off by a record: it goes from step to step, waiting where a person decides, fills something in, or acknowledges a wait.", sections: [{ title: "This page", items: [

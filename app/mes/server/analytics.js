@@ -22,8 +22,10 @@
 //
 // Who may see (O50 is open): a person holding a role on the object; a dimension only if they may read
 // that field in every state.
-import { fail } from "../../../src/errors.js";
+import { fail } from "@opencore-mes/juris-kit/errors.js";
+import { accessSql } from "./record-sql.js";
 import { decide, mask } from "./policy.js";
+import { isSensitive } from "../client/definition.js";
 
 const IDENTIFIER = /^[a-z][a-z0-9_]{0,47}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -34,10 +36,12 @@ const num = (v) => (v === null || v === undefined ? null : Number(v));
 
 // ---- writing intervals (inside a record write's transaction) ------------------------------------
 
-// The dimensions an interval copies from the record's data: plain values only.
+// The dimensions an interval copies from the record's data: plain values only, and never a sensitive
+// field's (§6.10; a design cannot name one, and one made sensitive since is no longer copied).
 export function dimsOf(definition, data) {
     const out = {};
     for (const name of definition?.analytics?.dimensions ?? []) {
+        if (isSensitive(definition, name)) continue;
         const v = data?.[name];
         if (v !== undefined && v !== null && typeof v !== "object") out[name] = v;
     }
@@ -143,7 +147,7 @@ export async function rebuildIntervals(db, definitions, { only = null } = {}) {
 
 // ---- the services ---------------------------------------------------------------------------
 
-export function createAnalytics({ store, plantTz = "UTC" }) {
+export function createAnalytics({ store, plantTz = "UTC", certificationsOf = async () => [] }) {
     const { db } = store;
     const read = (sql, params) => store.read(sql, params);
 
@@ -156,7 +160,12 @@ export function createAnalytics({ store, plantTz = "UTC" }) {
         const roles = def ? await store.rolesFor(user.id, object) : [];
         if (!def || !roles.length) fail("Unknown object.", { status: 404 });
         // The actor as the record services know them (their departments too: a policy may read them).
-        return { user, actor: { id: user.id, name: user.name, roles, departments: await store.departmentsOf(user.id) }, def: def.body };
+        const actor = { id: user.id, name: user.name, roles, departments: await store.departmentsOf(user.id), certifications: await certificationsOf(user.id) };
+        // The records the object's access reserves from them (§9.9) are in no figure: a count of them is
+        // not theirs to read either. (Other records count whatever their policies, §22.6, O50.)
+        const reserved = accessSql(def.body, actor, "r");
+        const only = reserved === "true" ? "" : ` AND record_id IN (SELECT r.id FROM mes.records r WHERE r.object = $1 AND ${reserved ?? "false"})`;
+        return { user, actor, def: def.body, only };
     }
     // A dimension the viewer may group by: one the design names, readable to them in every state.
     function dimension(v, by) {
@@ -205,14 +214,14 @@ export function createAnalytics({ store, plantTz = "UTC" }) {
             const done = await read(
                 `SELECT state${dim ? ", dims->>$4 AS value" : ""}, ${STATS} FROM (
                    SELECT state, dims, extract(epoch FROM left_at - entered_at) AS secs FROM mes.state_intervals
-                   WHERE object = $1 AND left_at >= $2 AND left_at < $3) s
+                   WHERE object = $1 AND left_at >= $2 AND left_at < $3${v.only}) s
                  GROUP BY state${group}`,
                 params,
             );
             const now = await read(
                 `SELECT state${dim ? ", dims->>$2 AS value" : ""}, count(*) AS count, avg(extract(epoch FROM clock_timestamp() - entered_at)) AS age,
                         max(extract(epoch FROM clock_timestamp() - entered_at)) AS oldest
-                 FROM mes.state_intervals WHERE object = $1 AND left_at IS NULL GROUP BY state${dim ? ", dims->>$2" : ""}`,
+                 FROM mes.state_intervals WHERE object = $1 AND left_at IS NULL${v.only} GROUP BY state${dim ? ", dims->>$2" : ""}`,
                 dim ? [object, dim] : [object],
             );
             return {
@@ -232,7 +241,7 @@ export function createAnalytics({ store, plantTz = "UTC" }) {
             const title = v.def.titleField;
             const params = [object, fromState, toState, start, end, ...(dim ? [dim] : [])];
             const base = `
-                WITH a AS (SELECT record_id, min(entered_at) AS t0 FROM mes.state_intervals WHERE object = $1 AND state = $2 GROUP BY record_id),
+                WITH a AS (SELECT record_id, min(entered_at) AS t0 FROM mes.state_intervals WHERE object = $1 AND state = $2${v.only} GROUP BY record_id),
                      b AS (SELECT i.record_id, min(i.entered_at) AS t1 FROM mes.state_intervals i JOIN a ON a.record_id = i.record_id
                            WHERE i.object = $1 AND i.state = $3 AND i.entered_at >= a.t0 GROUP BY i.record_id),
                      d AS (SELECT a.record_id, extract(epoch FROM b.t1 - a.t0) AS secs, b.t1,
@@ -271,7 +280,7 @@ export function createAnalytics({ store, plantTz = "UTC" }) {
             const rows = await read(
                 `SELECT to_char(date_trunc($5, entered_at AT TIME ZONE $6), 'YYYY-MM-DD') AS bucket${dim ? ", dims->>$7 AS value" : ""}, count(*) AS count
                  FROM mes.state_intervals WHERE object = $1 AND state = $2 AND entered_at >= $3 AND entered_at < $4
-                   AND enter_action IS DISTINCT FROM 'restore'
+                   AND enter_action IS DISTINCT FROM 'restore'${v.only}
                  GROUP BY 1${dim ? ", 2" : ""} ORDER BY 1`,
                 params,
             );

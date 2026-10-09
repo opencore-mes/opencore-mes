@@ -9,11 +9,11 @@
 //   DATABASE_URL=postgres:///openmes_poc node app/mes/test/analytics.mjs
 import pg from "pg";
 import { randomBytes, randomUUID } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createStore } from "../server/store.js";
 import { createServices } from "../server/services.js";
 import { createAnalytics, rebuildIntervals } from "../server/analytics.js";
-import { CALL_KIND } from "../../../src/live-protocol.js";
+import { CALL_KIND } from "@opencore-mes/juris-kit/live-protocol.js";
 import { sessionKey } from "../server/store.js";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL ?? "postgres:///openmes_poc" });

@@ -1,0 +1,59 @@
+<!-- {"title": "Connect · OpenCore MES", "description": "Every machine and every system around the MES needs custom glue. OpenCore MES connects them through open, versioned contracts: SECS/GEM, GEM300, OPC UA and MQTT for machines; web services, transactions and queries over HTTP for systems."} -->
+<main>
+  <section class="page-hero hero">
+    <div class="wrap">
+      <span class="eyebrow problem">The problem</span>
+      <h1>Every machine and every system needs custom glue.</h1>
+      <p class="lede">Point-to-point code nobody owns, broken by the next upgrade. OpenCore MES connects through open contracts instead.</p>
+    </div>
+  </section>
+
+  <section class="sol alt" id="machines">
+    <div class="wrap">
+      <span class="eyebrow">Solution</span>
+      <h2 style="margin-top:16px">Machines, described as data.</h2>
+      <p class="sub">A tool type your screens read; an interface that maps one vendor's codes onto it, approved like any design.</p>
+      <ul class="checks">
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>SECS/GEM over HSMS.</b> One connection per tool; nothing lost while the MES is busy.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>GEM300.</b> Carriers checked at the load port (E87), control and process jobs at track in (E94, E40).</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Wafers and ports.</b> Each wafer tracked through the tool (E90); load ports handed to the AMHS (E84).</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Cluster tools.</b> Each chamber a machine with its own state and alarms.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>OPC UA and MQTT.</b> Signed and encrypted; same screens, whatever a machine speaks.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Same rules as people.</b> Machine events go through the same checks and audit trail.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="sol" id="systems">
+    <div class="wrap">
+      <span class="eyebrow">Solution</span>
+      <h2 style="margin-top:16px">Systems call it the way people use it.</h2>
+      <p class="sub">ERP, LIMS and label printers reach the same designs, with the same checks.</p>
+      <ul class="checks">
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Web services you design.</b> Revocable tokens, described by OpenAPI.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Transactions over HTTP.</b> The ERP runs a transaction by its name, with every check a person's run has.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Queries over HTTP.</b> A BI tool reads named queries, read only, a page at a time.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Connections out.</b> Each limited to the requests its design allows.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Versioned, with notice.</b> Nothing a caller relies on changes without warning.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Every call counted.</b> Who called, how long, why refused.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="sol alt" id="suites">
+    <div class="wrap">
+      <span class="eyebrow">Solution</span>
+      <h2 style="margin-top:16px">Extended without forking.</h2>
+      <p class="sub">Suites plug into the core's open contracts; a plant's differences are designs, not patches.</p>
+      <div class="open-legend"><span><svg class="icon"><use href="#i-check"/></svg>Available now</span><span class="planned"><svg class="icon"><use href="#i-hourglass"/></svg>Planned</span></div>
+      <ul class="checks">
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Side by side.</b> Several suites, each adding designs, steps and screen blocks.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Removable.</b> Take a suite away and the core runs on; its data waits.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Scripts run apart.</b> Locked down, holding no credentials; walled in on Linux.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Open source core.</b> Apache 2.0, <a href="https://github.com/opencore-mes/opencore-mes" rel="noopener">on GitHub</a>.</span></li>
+        <li class="planned"><svg class="icon"><use href="#i-hourglass"/></svg><span><b>A versioned extension API</b>, with a conformance kit for suites.</span></li>
+      </ul>
+      <div class="cta" style="margin-top:24px"><a class="btn ghost" href="/editions">The suites <svg class="icon"><use href="#i-arrow"/></svg></a></div>
+    </div>
+  </section>
+</main>

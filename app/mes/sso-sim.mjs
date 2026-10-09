@@ -7,10 +7,10 @@
 // It may ask a second factor after the password (--mfa: the code is shown on its own page, it is a
 // simulator), and then says so (amr: pwd, otp).
 //
-//   node app/mes/sso-sim.mjs [--port 9095] [--password sso-sim] [--users people.json] [--mfa] [--client open-mes]
+//   node app/mes/sso-sim.mjs [--port 9095] [--password sso-sim] [--users people.json] [--mfa] [--client opencore-mes]
 //   npm run sso:sim
 //
-// Then start OpenCore MES with OIDC_ISSUER=http://127.0.0.1:9095 OIDC_CLIENT_ID=open-mes (and PICKER=0,
+// Then start OpenCore MES with OIDC_ISSUER=http://127.0.0.1:9095 OIDC_CLIENT_ID=opencore-mes (and PICKER=0,
 // to sign in through it). People are the seed's (their sign-in ids and names), each with the one
 // password; --users names a JSON file of [{ id, name, password? }] instead.
 //
@@ -26,7 +26,7 @@ const formOf = async (req) => { let body = ""; for await (const c of req) { body
 const cookieOf = (req, name) => (req.headers.cookie ?? "").split(";").map((c) => c.trim().split("=")).find(([k]) => k === name)?.[1] ?? null;
 
 // users: [{ id, name, password? }]; password: everyone's, where a person has none of their own.
-export async function startSsoSimulator({ port = 9095, host = "127.0.0.1", users = null, password = "sso-sim", clientId = "open-mes", clientSecret = null, mfa = false, log = () => {} } = {}) {
+export async function startSsoSimulator({ port = 9095, host = "127.0.0.1", users = null, password = "sso-sim", clientId = "opencore-mes", clientSecret = null, mfa = false, log = () => {} } = {}) {
     const people = users ?? (await import("./db/seed.mjs")).users.map((u) => ({ id: u.id, name: u.name }));
     const { publicKey, privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
     const kid = randomBytes(6).toString("hex");
@@ -168,10 +168,10 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     const opt = (name, fallback) => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : fallback; };
     const usersFile = opt("users", null);
     const sim = await startSsoSimulator({
-        port: Number(opt("port", 9095)), password: opt("password", "sso-sim"), clientId: opt("client", "open-mes"), clientSecret: opt("secret", null), mfa: args.includes("--mfa"),
+        port: Number(opt("port", 9095)), password: opt("password", "sso-sim"), clientId: opt("client", "opencore-mes"), clientSecret: opt("secret", null), mfa: args.includes("--mfa"),
         users: usersFile ? JSON.parse(readFileSync(usersFile, "utf8")) : null, log: (line) => console.log(`  ${line}`),
     });
     console.log(`SSO simulator (development and training only): ${sim.issuer}
   ${sim.people.length} people, password "${opt("password", "sso-sim")}"${sim.mfa ? ", a second factor asked" : ""}
-  Start OpenCore MES with: OIDC_ISSUER=${sim.issuer} OIDC_CLIENT_ID=${opt("client", "open-mes")} PICKER=0`);
+  Start OpenCore MES with: OIDC_ISSUER=${sim.issuer} OIDC_CLIENT_ID=${opt("client", "opencore-mes")} PICKER=0`);
 }

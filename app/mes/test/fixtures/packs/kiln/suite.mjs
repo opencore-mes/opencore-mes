@@ -1,11 +1,18 @@
 // A fixture suite for the design-pack e2e (test/packs.mjs, DESIGN.md §29.6): no code, only designs. A
 // kiln and the loads fired in it, which refer to each other (a kiln's first load), a transaction that
-// fires a load, a screen with tabs, the roles it suggests, and sample records.
+// fires a load, a screen with tabs and a guide of its own (a file the pack brings, §35.4), the roles it
+// suggests, and sample records.
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 const t = Date.now() % 100000;
+// The pack's file, named in its screen by its SHA-256 as a file in the store is.
+const GUIDE_PATH = new URL("./firing-guide.pdf", import.meta.url);
+export const GUIDE = createHash("sha256").update(readFileSync(GUIDE_PATH)).digest("hex");
 export const KILN = `kiln_t${t}`;
 export const LOAD = `kiln_load_t${t}`;
 export const FIRE = `kiln_fire_t${t}`;
 export const SCREEN = `kiln_station_t${t}`;
+export const CERT = `kiln_firing_t${t}`;
 
 export default {
     name: "kiln",
@@ -64,9 +71,13 @@ export default function kiln_pieces_t${t}(ctx) {
                 { block: "table", title: "Loads", object: LOAD, where: {}, columns: ["load_no", "state"], rowActions: [FIRE], width: 12 },
                 { block: "transaction", name: FIRE, tab: "Fire", width: 12 },
                 { block: "text", text: "Cool the kiln from its page.", tab: "Cool", width: 12 },
+                { block: "media", title: "Firing guide", file: GUIDE, name: "Firing guide", steps: "1 Check the shelves\n1 Set the programme", tab: "Fire", width: 12 },
             ],
             callers: { users: [], groups: ["production"] }, stewards: ["production"],
         }],
+        files: [{ path: GUIDE_PATH, name: "Firing guide.pdf" }],
+        // A certification its designs may require (§27.9), suggested to the organization like a role.
+        certifications: { [CERT]: { name: "Kiln firing", description: "May fire a kiln." } },
         roles: { [KILN]: { operator: ["group:production", "group:nowhere"] }, [LOAD]: { operator: ["group:production"] } },
         records: [
             { key: "k1", object: KILN, data: { kiln_id: `K1-${t}` } },

@@ -126,3 +126,14 @@ test("who reads every record: people and groups that exist, approved by governan
     assert.deepEqual(gained.find((c) => c.user === "ivan").gained, [{ role: "all records:read", via: "directly" }]);
     assert.deepEqual(gained.find((c) => c.user === "olga").gained, [{ role: "all records:read", via: "through production" }]);
 });
+
+test("emergency changes: allowed and their review's days, checked, and approved by governance (§5.7)", () => {
+    assert.deepEqual(validateOrganization({ ...clone(org), emergency: { allowed: false, reviewDays: 5 } }, known), []);
+    const m = (e) => validateOrganization({ ...clone(org), emergency: e }, known).map((p) => p.message).join("\n");
+    assert.match(m({ reviewDays: 0 }), /1 to 30 days/);
+    assert.match(m({ allowed: "no" }), /true or false/);
+    assert.match(m({ often: 1 }), /not "often"/);
+    assert.match(m([]), /allowed, reviewDays/);
+    const fp = organizationFootprint(clone(org), { ...clone(org), emergency: { allowed: false } }, known);
+    assert.ok(JSON.stringify(fp).includes("emergency"), JSON.stringify(fp));
+});

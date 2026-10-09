@@ -101,7 +101,7 @@ test("approval of record changes (§28): what waits, and for whom", () => {
     const approved = edit((d) => { d.approval = { edit: { fields: ["qty", "disposition"], states: ["in_process", "released"] }, create: true, actions: ["hold"] }; });
     assert.deepEqual(validateDefinition(approved, known), []);
     const m = validateDefinition(edit((d) => { d.approval = { edit: { fields: ["weight"], states: ["lost"] }, create: "yes", actions: ["fly"], also: 1 }; }), known).map((p) => p.message).join("\n");
-    for (const expected of [/"weight" is not a field/, /"lost" is not a state/, /true or false/, /"fly" is not an action/, /"also" is not edit, create or actions/]) assert.match(m, expected);
+    for (const expected of [/"weight" is not a field/, /"lost" is not a state/, /true or false/, /"fly" is not an action/, /"also" is not edit, create, actions, archive or by/]) assert.match(m, expected);
     // What waits.
     assert.equal(needsApproval(approved, { op: "edit", state: "in_process", changed: ["qty"] }), true);
     assert.equal(needsApproval(approved, { op: "edit", state: "in_process", changed: ["uom"] }), false, "another field");

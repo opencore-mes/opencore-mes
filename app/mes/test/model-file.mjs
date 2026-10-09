@@ -21,7 +21,7 @@ import pg from "pg";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 import { loadSuites } from "../suites.mjs";
 import { canonical } from "../server/audit.js";

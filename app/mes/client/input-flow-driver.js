@@ -9,10 +9,15 @@
 //   targets         (input) → { control(): element, filled(): bool, value(), set(v), object: ref's object
 //                   or null, form: the form it belongs to (a key of `forms`), param: true } or null
 //   forms           { key: { primary(): button, confirm(): button, preview: path, done: path, errors: path,
-//                   signs: bool } }; a run names one (its transaction), or the only one
+//                   signs: bool, hidden()?: left out for this person } }; a run names one (its transaction), or
+//                   the only one
 //   scope()         { param, user }
+//   restart(end)    optional: at an end that repeats, the page starts over itself (a screen opened on a record
+//                   goes back to its scan, §26.1); true when it did, so the flow does not go round here
+//   afterStop(end)  optional: where the cursor goes at an end that stops (a one-tab screen: its scan, the record
+//                   left in view); unsaid, nowhere
 // → stop
-import { stepFrom, advances, entryComplete } from "./input-flow.js";
+import { stepFrom, advances, entryComplete, inputScope } from "./input-flow.js";
 import { referencesOf } from "./expr.js";
 import { leaveUnlessError } from "./keyboard.js";
 
@@ -27,7 +32,7 @@ function lookedUp(flow) {
     return [...out];
 }
 
-export function driveInputFlow(api, { flow, state, rootOf, targets, forms, scope = () => ({}) }) {
+export function driveInputFlow(api, { flow, state, rootOf, targets, forms, scope = () => ({}), restart = null, afterStop = null }) {
     const doc = globalThis.document;
     if (!doc || !flow) return () => {};
     const nodes = flow.nodes ?? {};
@@ -48,9 +53,10 @@ export function driveInputFlow(api, { flow, state, rootOf, targets, forms, scope
 
     // What its conditions read, now: the inputs, the records the looked-up ones name, the parameter, the person.
     const scopeNow = async () => {
-        const input = {};
         const lookup = {};
-        for (const n of Object.values(nodes)) for (const name of [n?.input].filter((x) => typeof x === "string")) { const t = targets(name); if (t) input[name] = t.value(); }
+        // A screen's "<transaction>.<input>" nested under its transaction, as a condition reads it.
+        const asked = [...new Set(Object.values(nodes).map((n) => n?.input).filter((x) => typeof x === "string"))];
+        const input = inputScope(asked.map((name) => [name, targets(name)]).filter(([, t]) => t).map(([name, t]) => [name, t.value()]));
         for (const name of lookedUp(flow)) {
             const t = targets(name);
             const id = t?.value();
@@ -87,6 +93,8 @@ export function driveInputFlow(api, { flow, state, rootOf, targets, forms, scope
             if (n.kind === "run") {
                 const form = formOf(n.transaction);
                 if (!form) { say(null, `${n.label ?? at}: no form here to run${n.transaction ? ` (${n.transaction})` : ""}.`); return; }
+                // Its form not for this person here (left out, `hidden()`): the flow ends here, nothing asked of them.
+                if (form.hidden?.()) { history.length = 0; mark(null); at = null; say(null); afterStop?.(n); return; }
                 say(n.label || "Checking…");
                 mark(null);
                 pending = { node: n, id: step.id, form };
@@ -96,7 +104,8 @@ export function driveInputFlow(api, { flow, state, rootOf, targets, forms, scope
             // The end: the next one from the start, or stop here.
             history.length = 0;
             mark(null);
-            if (n.then === "stop") { at = null; say(n.label || "Done."); doc.activeElement?.blur?.(); return; }
+            if (n.then === "stop") { at = null; say(n.label || "Done."); doc.activeElement?.blur?.(); afterStop?.(n); return; }
+            if (restart?.(n)) { at = null; return; }
             busy = false;
             return go(null);
         } finally {

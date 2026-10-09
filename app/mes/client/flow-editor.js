@@ -6,12 +6,17 @@
 // suites add (§32.9). On a phone the canvas is a list of nodes and their wires. Layout is data: where a
 // node sits is part of the design (`layout`), compared and approved with the rest. The boxes and wires
 // are drawn as a run's map draws them (flow-picture.js).
-import { validateFlow, flowFootprint, flowKindOf, flowStartOf, flowSetsOff, flowContextNames, tidyLayout, subFlowsOf, FLOW_ROLES, FLOW_KINDS_OF, FLOW_NODE_WORDS, WAIT_MODES, INPUT_TYPES } from "./definition.js";
+import { validateFlow, flowFootprint, flowKindOf, flowStartOf, flowSetsOff, flowContextNames, tidyLayout, subFlowsOf, renameFlowNode, renameFlowParticipant, FLOW_ROLES, FLOW_KINDS_OF, FLOW_NODE_WORDS, WAIT_MODES, INPUT_TYPES } from "./definition.js";
 import { noDefault } from "./select.js";
 import { changesOf, countByTab } from "./compare.js";
 import { elementOps, jsonOf } from "./integration-editor.js";
 import { transactionKnown } from "./transaction-editor.js";
 import { W, text, labelled } from "./editor-kit.js";
+import { tagsInput } from "./pick.js";
+import { askDialog, confirmRemove } from "./dialog.js";
+import * as history from "./undo.js";
+import { exprField, objectEntries, scope, valueEntry } from "./expr-builder.js";
+import { IDENTIFIER } from "./definition.js";
 import { icon, withIcon } from "./icons.js";
 import { NODE, iconOf, positions, wireWords } from "./flow-picture.js";
 import { canvasZoom } from "./canvas-zoom.js";
@@ -48,7 +53,9 @@ export function flowKnown(api, w) {
     // What each template is and whose records it takes through: a sub flow runs one of its own kind (§32.14).
     const headOf = (b) => Object.values(b?.participants ?? {}).find((p) => p?.as === (b?.kind === "plan" ? "subject" : "traveler"))?.object ?? null;
     const flowInfo = Array.isArray(home.flows) ? Object.fromEntries([...home.flows.map((f) => [f.name, { kind: f.kind, object: f.object ?? null, label: f.label, asSub: f.asSub === true }]), ...Object.entries(api.peek(`${w}.fl`) ?? {}).map(([n, b]) => [n, { kind: b?.kind ?? null, object: headOf(b), label: b?.label ?? n, asSub: b?.asSub === true }])]) : undefined;
-    return { ...base, objects, transactions, screens, scripts, flows, subFlows, flowInfo, flowNodes: home.flowNodes ?? {} };
+    // The named queries there will be (§23.1): a plan's input screen draws a list from one, binding its parameters.
+    const queries = Array.isArray(home.queries) ? Object.fromEntries([...home.queries.map((q) => [q.name, { label: q.label, params: q.params ?? {} }]), ...Object.entries(api.peek(`${w}.qy`) ?? {}).filter(([, b]) => b)]) : undefined;
+    return { ...base, objects, transactions, screens, scripts, flows, subFlows, flowInfo, queries, flowNodes: home.flowNodes ?? {} };
 }
 export function flowProblems(api, id) {
     const w = W(id);
@@ -58,7 +65,7 @@ export function flowProblems(api, id) {
 export function flowElements(api, id, change) {
     const w = W(id);
     const known = flowKnown(api, w);
-    return Object.entries(api.peek(`${w}.fl`) ?? {}).flatMap(([name, body]) => flowFootprint(name, change.live.flows?.[name] ?? undefined, body, { objects: Object.fromEntries(Object.entries(known.objects).map(([k, o]) => [k, { stewards: o.stewards }])), transactions: known.transactions }));
+    return Object.entries(api.peek(`${w}.fl`) ?? {}).flatMap(([name, body]) => flowFootprint(name, change.live.flows?.[name] ?? undefined, body, { objects: Object.fromEntries(Object.entries(known.objects).map(([k, o]) => [k, { stewards: o.stewards, transitions: o.transitions, ...(o.approval ? { approval: o.approval } : {}) }])), transactions: known.transactions }));
 }
 
 function exprInput(ctx, path, stored, apply, placeholder = "") {
@@ -113,6 +120,8 @@ function canvasTab(ctx) {
     // A wire drawn: a manual decision's gets a choice to rename; a retry wait's second one is its way back.
     const clickNode = (id) => {
         const from = connecting();
+        // The node the wire started from, clicked again: no wire.
+        if (from && from === id) { api.setValue(`${S}c`, null); pick({ node: id }); return; }
         if (from && from !== id) {
             api.setValue(`${S}c`, null);
             const source = body.nodes[from];
@@ -169,12 +178,15 @@ function canvasTab(ctx) {
                     { span: { className: "spacer" } },
                     { button: { type: "button", className: "btn small", title: "Arrange the nodes: left to right from the start, branches below", onclick: () => ops.edit((b) => { b.layout = tidyLayout(b); }), children: [icon("refresh"), { span: "Tidy" }] } },
                 ] } },
-                () => (connecting() ? { p: { className: "notice small", textContent: `Click the node it goes to (from ${body.nodes[connecting()]?.label ?? connecting()}). Esc or the same node: none.` } } : { p: { className: "muted small", textContent: ctx.ro() ? "Click a node or a wire to read its settings. Zoom with − and +, or Ctrl or ⌘ and the wheel; zoomed in, drag the empty ground to move about." : "Drag a node to place it; click it for its settings; Wire from here draws where it goes next. Zoom with − and +, or Ctrl or ⌘ and the wheel; zoomed in, drag the empty ground to move about." } }),
+                () => (connecting() ? { p: { className: "notice small wire-hint", children: [
+                    { span: `Click the node it goes to (from ${body.nodes[connecting()]?.label ?? connecting()}). Esc, the same node or Cancel: none. ` },
+                    { button: { type: "button", className: "linkish small", textContent: "Cancel", onclick: () => api.setValue(`${S}c`, null) } },
+                ] } } : { p: { className: "muted small", textContent: ctx.ro() ? "Click a node or a wire to read its settings. Zoom with − and +, or Ctrl or ⌘ and the wheel; zoomed in, drag the empty ground to move about." : "Drag a node to place it; click it for its settings; Wire from here draws where it goes next. Zoom with − and +, or Ctrl or ⌘ and the wheel; zoomed in, drag the empty ground to move about." } }),
                 { div: { className: "flow-board zoom-box", children: [
                     {
                         div: { className: () => `flow-canvas-wrap zoom-wrap${zoom.zoomed() ? " zoomed" : ""}`, ...zoom.wrap, children: [{
                             svg: {
-                                className: "flow-canvas", viewBox: `0 0 ${width} ${height}`, width, height, style: zoom.style, role: "img", "aria-label": `The flow template ${body.label ?? name}`,
+                                className: "flow-canvas", tabindex: "-1", viewBox: `0 0 ${width} ${height}`, width, height, style: zoom.style, role: "img", "aria-label": `The flow template ${body.label ?? name}`,
                                 onpointermove: moveDrag,
                                 onkeydown: (e) => { if (e.key === "Escape") api.setValue(`${S}c`, null); },
                                 children: [
@@ -228,6 +240,20 @@ function canvasTab(ctx) {
                     { button: { type: "button", className: `linkish flow-side-head kind-${flowKindOf(n, kinds) ?? "missing"}`, onclick: () => pick({ node: id }), children: [withIcon(iconOf(flowKindOf(n, kinds) ?? "missing"), `${n.label ?? id} · ${kindWords(n, kinds)}`)] } },
                     { div: { className: "muted small", textContent: (body.edges ?? []).filter((e) => e.from === id).map((e) => `→ ${body.nodes[e.to]?.label ?? e.to}${wireWords(body, e, kinds) ? ` (${wireWords(body, e, kinds)})` : ""}`).join(", ") || "—" } },
                 ] } })) } },
+                // A node's script being written (§32.6): under the canvas, as wide as the tab.
+                () => {
+                    const script = api.getState(`${w}.hookEdit.${name}`, null);
+                    const at = script ? Object.entries(body.nodes ?? {}).find(([, x]) => x?.onEnter === script || x?.onExit === script) : null;
+                    if (!at) return { span: {} };
+                    const [nid, node] = at;
+                    return { div: { className: "flow-hook-editor", children: [
+                        { div: { className: "flow-hook-head", children: [
+                            { strong: `${node.onEnter === script ? "On entering" : "On leaving"} ${node.label ?? nid}` },
+                            { button: { type: "button", className: "btn ghost small", textContent: "Close", onclick: () => api.setValue(`${w}.hookEdit.${name}`, null) } },
+                        ] } },
+                        { ScriptPanel: { key: `hook-${script}`, id: ctx.id, name: script, readOnly: ctx.ro, example: { event: { kind: node.onEnter === script ? "enter" : "exit", node: nid, label: node.label ?? nid, flow: name }, context: {}, writes: [] } } },
+                    ] } };
+                },
             ],
         },
     };
@@ -244,14 +270,107 @@ function inputFields(ctx, id, n) {
         ...fields.map((f, i) => ({ div: { key: `f${i}`, className: "flow-input-row", children: [
             { input: { type: "text", className: "mono", disabled: ctx.ro, value: f.name ?? "", placeholder: "name", title: "Its name in the context", onchange: (e) => at(i, { name: e.target.value.trim() }) } },
             { input: { type: "text", disabled: ctx.ro, value: f.label ?? "", placeholder: "Label", onchange: (e) => at(i, { label: e.target.value }) } },
-            select(ctx, f.type ?? "string", INPUT_TYPES.map((t) => [t, t]), (v) => edit((x) => { x[i] = { ...x[i], type: v }; if (v !== "enum") delete x[i].values; })),
-            f.type === "enum" ? { input: { type: "text", disabled: ctx.ro, value: (f.values ?? []).join(", "), placeholder: "ok, faulty", onchange: (e) => at(i, { values: e.target.value.split(",").map((v) => v.trim()).filter(Boolean) }) } } : { span: {} },
+            select(ctx, f.type ?? "string", INPUT_TYPES.map((t) => [t, t === "query" ? "from a query" : t]), (v) => edit((x) => {
+                x[i] = { ...x[i], type: v };
+                if (v !== "enum") delete x[i].values;
+                if (v !== "query") for (const k of ["query", "value", "display", "separator", "params"]) delete x[i][k];
+                else { x[i].value ??= "id"; x[i].params ??= {}; }
+            })),
+            f.type === "enum" ? tagsInput({ key: `${ctx.w}.fvals.${ctx.name}.${id}.${i}`, readOnly: ctx.ro, placeholder: "Add a choice…", value: f.values ?? [], onChange: (values) => at(i, { values }) }) : { span: {} },
             { label: { className: "small", children: [{ input: { type: "checkbox", disabled: ctx.ro, checked: f.required === true, onchange: (e) => at(i, { required: e.target.checked || undefined }) } }, { span: " required" }] } },
             ctx.ro() || i === 0 ? { span: {} } : { button: { type: "button", className: "linkish small", title: "Earlier on the screen", textContent: "up", onclick: () => edit((x) => { [x[i - 1], x[i]] = [x[i], x[i - 1]]; }) } },
-            ctx.ro() ? { span: {} } : { button: { type: "button", className: "linkish small", textContent: "remove", onclick: () => edit((x) => { x.splice(i, 1); }) } },
+            ctx.ro() ? { span: {} } : { button: { type: "button", className: "linkish small", textContent: "remove", onclick: confirmRemove(ctx.api, "this field", () => edit((x) => { x.splice(i, 1); }) )} },
+            f.type === "query" ? queryField(ctx, id, i, f, at) : { span: {} },
         ] } })),
         ctx.ro() ? { span: {} } : { button: { type: "button", className: "btn small", textContent: "+ a field", onclick: add } },
     ] } }, "What the person enters, kept in the context under each name: a list's choice, a text or number, a file, an image or a link.");
+}
+
+// What a route's or a plan's conditions read (§9.2a): its context, the values it keeps and the fields of
+// each record it takes part (its traveler, its subject, the tool).
+function flowSpec(ctx) {
+    const { body, known } = ctx;
+    const entries = [];
+    for (const [k, v] of Object.entries(body.context ?? {})) entries.push(valueEntry(k, v));
+    for (const n of Object.values(body.nodes ?? {})) for (const f of Array.isArray(n?.fields) ? n.fields : []) if (f?.name && !entries.some((e) => e.path === f.name)) entries.push({ path: f.name, label: f.label ?? f.name, type: f.type === "enum" ? "enum" : f.type === "integer" || f.type === "decimal" || f.type === "boolean" ? f.type : "string", ...(Array.isArray(f.values) ? { values: f.values } : {}) });
+    if (body.kind === "plan") entries.push({ path: "route.step", label: "the route step it was set off at", type: "string" });
+    for (const [key, p] of Object.entries(body.participants ?? {})) {
+        const def = known.objects?.[p?.object];
+        entries.push(...objectEntries(def ? { ...def, states: def.states } : null, { prefix: `${key}.`, label: def?.label ?? key }));
+    }
+    return { scopes: { context: scope("the run", entries) } };
+}
+// A condition of a route or a plan: built (§9.2a); an input flow's keeps its JSON (it reads a form's inputs).
+const condition = (ctx, path, stored, apply, empty, placeholder) => (ctx.body.kind === "input"
+    ? exprInput(ctx, path, stored, apply, placeholder)
+    : exprField({ key: `${ctx.w}.flowexpr.${ctx.name}.${path}`, readOnly: ctx.ro, empty, value: () => stored, onChange: apply, spec: flowSpec(ctx) }));
+
+// A field drawn from a named query (§32.6): which query, the column kept, the columns shown (joined), and
+// each of its parameters bound to an expression over the run's context and the user.
+function queryField(ctx, id, i, f, at) {
+    const queries = ctx.known.queries ?? {};
+    const q = queries[f.query];
+    const declared = Object.entries(q?.params ?? {});
+    return { div: { className: "flow-query-field", children: [
+        labelled("Its list from", select(ctx, f.query ?? "", Object.entries(queries).map(([n, x]) => [n, `${x.label ?? n} (${n})`]), (v) => at(i, { query: v, params: Object.fromEntries(Object.keys(queries[v]?.params ?? {}).map((p) => [p, f.params?.[p] ?? { context: p }])) })), "A named query (Designer, Queries). Each person sees the rows it gives them."),
+        { div: { className: "ed-row", children: [
+            labelled("Value (column)", { input: { type: "text", className: "mono", disabled: ctx.ro, value: f.value ?? "", placeholder: "id", onchange: (e) => at(i, { value: e.target.value.trim() }) } }, "What goes into the context."),
+            labelled("Shown (columns)", tagsInput({ key: `${ctx.w}.fshown.${ctx.name}.${id}.${i}`, readOnly: ctx.ro, placeholder: "Add a column…", value: Array.isArray(f.display) ? f.display : [], onChange: (cols) => at(i, { display: cols.length ? cols : undefined }) }), "Joined, in this order."),
+            labelled("Between them", { input: { type: "text", disabled: ctx.ro, value: f.separator ?? "", placeholder: " · ", onchange: (e) => at(i, { separator: e.target.value === "" ? undefined : e.target.value }) } }),
+        ] } },
+        ...declared.map(([p, spec]) => labelled(`${spec.label ?? p}${spec.required ? " *" : ""}`, exprInput(ctx, `nodes.${id}.fields.${i}.params.${p}`, f.params?.[p] ?? null, (v) => at(i, { params: { ...(f.params ?? {}), [p]: v } }), '{"context": "product.equipment_family"}'), `:${p}, from the run's context ({"context": "lot.product"}), the user ({"user": "id"}) or a value.`)),
+    ] } };
+}
+
+// A node's script (§32.6), written here: the context in, the context out, a variable set for the decisions after.
+const HOOK_TEMPLATE = (name, which, n) => `// ${which === "onEnter" ? "On entering" : "On leaving"} ${n.label ?? "the node"}: sets a context variable the nodes after read.
+export default function ${name}(ctx) {
+  // ctx = { event: { kind: "enter" | "exit", node, label, flow }, context: { …variables, <record>: { …its fields } }, writes: [] }
+  ctx.context.${which === "onEnter" ? "entered" : "left"}_${(n.label ?? "node").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "node"} = true;
+  // ctx.writes.push({ record: "lot", action: "hold" });   // made as the template, through the record's own lifecycle
+  return ctx;
+}`;
+async function newHookScript(ctx, id, n, which) {
+    const { api, w } = ctx;
+    const taken = new Set([...(ctx.known.scripts ?? []), ...Object.keys(api.peek(`${w}.s`) ?? {})]);
+    const suggested = `${ctx.name}_${id}_${which === "onEnter" ? "enter" : "exit"}`.slice(0, 48);
+    const name = await askDialog(api, {
+        title: `New script ${which === "onEnter" ? "on entering" : "on leaving"} ${n.label ?? id}`,
+        message: "It runs with the run's context: what it sets there is kept on the run, for the decisions and lists after. It goes in this change, with one test case to start from.",
+        label: "Its name", value: taken.has(suggested) ? "" : suggested, required: true,
+        check: (v) => (!IDENTIFIER.test(v ?? "") ? "Lower case letters, digits and _, starting with a letter." : taken.has(v) ? `A script "${v}" exists already: pick it in the list.` : null),
+        confirm: "Create it",
+    });
+    if (!name) return;
+    const source = HOOK_TEMPLATE(name, which, n);
+    const variable = /ctx\.context\.([a-z0-9_]+) = true/.exec(source)?.[1];
+    history.before(api, w);
+    api.batch(() => {
+        ctx.ops.setScript(name, source);
+        api.setValue(`${w}.t.${name}`, [{ name: `sets ${variable}`, run: { event: { kind: which === "onEnter" ? "enter" : "exit", node: id, label: n.label ?? id, flow: ctx.name }, context: {}, writes: [] }, expect: { output: { context: { [variable]: true } } } }]);
+        ctx.ops.set(`nodes.${id}.${which}`, name, true);
+        api.setValue(`${w}.hookEdit.${ctx.name}`, name);
+    });
+}
+
+// A node's id, or a participant's name, renamed in the designer (no JSON): asked, checked as typed, and
+// applied with everything of the template that names it (renameFlowNode, renameFlowParticipant).
+async function renameIn(ctx, what, from, rename, onDone) {
+    const { api } = ctx;
+    const body = api.peek(ctx.root);
+    const scripts = what === "node" ? [] : [...new Set(Object.values(body?.nodes ?? {}).flatMap((n) => [n?.onEnter, n?.onExit]).filter((x) => typeof x === "string"))];
+    const to = await askDialog(api, {
+        title: what === "node" ? `Rename node ${from}` : `Rename record ${from}`,
+        message: what === "node"
+            ? "Its id is what a traveler's step holds and what lists show: its wires, its place on the canvas and the scenarios that expect it follow. Runs already started keep the version they began on."
+            : `Its name in the context: the template's conditions, lists and scenarios follow.${scripts.length ? ` Scripts read it by name too, and are not changed: check ${scripts.join(", ")} (ctx.context.${from}).` : ""}`,
+        label: "New name", value: from, required: true,
+        check: (v) => (v === from ? "Type a new name." : rename(api.peek(ctx.root), from, v).problem ?? null),
+        confirm: "Rename",
+    });
+    if (!to || to === from) return;
+    ctx.ops.edit((b) => { const r = rename(b, from, to); if (r.problem) return; for (const k of Object.keys(b)) delete b[k]; Object.assign(b, r.body); });
+    onDone?.(to);
 }
 
 // The settings of what is selected: a node, or a wire.
@@ -265,7 +384,7 @@ function sidePanel(ctx, sel, pick, problemsOf) {
         const source = body.nodes?.[e.from];
         const fromKind = flowKindOf(source, kinds);
         const fields = [];
-        if (fromKind === "auto_decision") fields.push(labelled("Taken when", exprInput(ctx, `edges.${sel.edge}.when`, e.when, (v) => ops.set(`edges.${sel.edge}.when`, v, false), 'otherwise (e.g. {"gt": [{"context": "lot.scrap_qty"}, 5]})'), `Its wires are tried in order: the first that holds is taken; leave the last empty for otherwise. Reads ${valuesHint}.`));
+        if (fromKind === "auto_decision") fields.push(labelled("Taken when", condition(ctx, `edges.${sel.edge}.when`, e.when, (v) => ops.set(`edges.${sel.edge}.when`, v, true), "otherwise", 'otherwise (e.g. {"gt": [{"context": "lot.scrap_qty"}, 5]})'), `Its wires are tried in order: the first that holds is taken; leave the last empty for otherwise. Reads ${valuesHint}.`));
         if (fromKind === "manual_decision") fields.push(labelled("The choice", text(ctx, `edges.${sel.edge}.label`, { placeholder: "Scrap the lot" }), "What the person sees and picks."));
         if (fromKind === "wait" && source.mode === "retry") fields.push({ label: { children: [{ input: { type: "checkbox", disabled: ctx.ro, checked: e.retry === true, onchange: (ev) => ops.edit((b) => { if (ev.target.checked) b.edges[sel.edge].retry = true; else delete b.edges[sel.edge].retry; }) } }, { span: " the way back, behind its Retry button" }] } });
         return { div: { children: [
@@ -274,7 +393,7 @@ function sidePanel(ctx, sel, pick, problemsOf) {
             ...problemsOf(`edges.${sel.edge}`).map((m, k) => ({ p: { key: `p${k}`, className: "error small", textContent: m } })),
             ctx.ro() ? { span: {} } : { div: { className: "view-actions", children: [
                 fromKind === "auto_decision" ? { button: { type: "button", className: "btn small", disabled: !(body.edges ?? []).slice(0, sel.edge).some((x) => x.from === e.from), textContent: "Try earlier", onclick: () => ops.edit((b) => { const before = b.edges.map((x, i) => [x, i]).filter(([x, i]) => x.from === e.from && i < sel.edge).pop()?.[1]; if (before === undefined) return; const [x] = b.edges.splice(sel.edge, 1); b.edges.splice(before, 0, x); pick({ edge: before }); }) } } : { span: {} },
-                { button: { type: "button", className: "btn ghost small", textContent: "Remove the wire", onclick: () => { ops.edit((b) => { b.edges.splice(sel.edge, 1); }); pick(null); } } },
+                { button: { type: "button", className: "btn ghost small", textContent: "Remove the wire", onclick: confirmRemove(ctx.api, "this wire", () => { ops.edit((b) => { b.edges.splice(sel.edge, 1); }); pick(null); } )} },
             ] } },
         ] } };
     }
@@ -288,7 +407,7 @@ function sidePanel(ctx, sel, pick, problemsOf) {
     const travelerTx = Object.entries(known.transactions ?? {}).filter(([, t]) => !traveler || t.appearsOn?.object === traveler.object);
     const fields = [];
     if (kind === "start" && body.kind === "input") fields.push(hint("Where the person begins: the first ask after it gets the cursor, and an end that repeats comes back here."));
-    if (kind === "start" && body.kind !== "input") fields.push(labelled(body.kind === "route" ? "For travelers where" : "For events where", exprInput(ctx, `nodes.${id}.when`, n.when, (v) => set("when", v), `always (e.g. {"eq": [{"context": "product.route_flow"}, "${ctx.name}"]})`), `${body.kind === "route" ? "A traveler made where this holds starts the route (at its step, if it is part-way)." : "Runs start where this holds."} Reads ${valuesHint}.`));
+    if (kind === "start" && body.kind !== "input") fields.push(labelled(body.kind === "route" ? "For travelers where" : "For events where", condition(ctx, `nodes.${id}.when`, n.when, (v) => set("when", v, true), "always", `always (e.g. {"eq": [{"context": "product.route_flow"}, "${ctx.name}"]})`), `${body.kind === "route" ? "A traveler made where this holds starts the route (at its step, if it is part-way)." : "Runs start where this holds."} Reads ${valuesHint}.`));
     // A plan's start (§32.5a): on a date of its subject's, and again after each run.
     if (kind === "start" && body.kind === "plan") {
         const subject = Object.values(body.participants ?? {}).find((p) => p?.as === "subject");
@@ -305,6 +424,8 @@ function sidePanel(ctx, sel, pick, problemsOf) {
         fields.push(labelled("On resources where", exprInput(ctx, `nodes.${id}.resource`, n.resource, (v) => set("resource", v), 'any (e.g. {"process": ["die_saw"]})'), "Fields of the resource it is worked on: another is refused here."));
         fields.push(labelled("Settings", exprInput(ctx, `nodes.${id}.settings`, n.settings, (v) => set("settings", v), '{"lsl": 28, "usl": 36}'), 'Read by its transactions as {"node": "lsl"}.'));
         fields.push(labelled("Its screen", select(ctx, n.screen ?? "", [["", "none"], ...(known.screens ?? []).map((s) => [s, s])], (v) => set("screen", v || undefined, true))));
+        // Where it is in the route's guide (§35.4): a media block following this route shows it as a step there.
+        fields.push(labelled("In the guide at", { input: { type: "text", placeholder: "a page (3) or a time (0:45)", disabled: ctx.ro, value: n.guide ?? "", onchange: (e) => set("guide", e.target.value.trim() || undefined, true) } }, "A screen's media block that follows this route shows this step at that page of its PDF, or that moment of its video, ticked once the traveler has gone on."));
     }
     if (kind === "auto_decision") fields.push(hint("It decides at once, on the context: its wires' conditions are tried in order, the last may have none (otherwise). Click a wire for its condition."));
     if (kind === "manual_decision") {
@@ -366,15 +487,22 @@ function sidePanel(ctx, sel, pick, problemsOf) {
     }
     // Its lifecycle: a rule script run on entering, and on leaving.
     const scripts = [["", "none"], ...[...new Set([...(known.scripts ?? []), n.onEnter, n.onExit].filter(Boolean))].map((s) => [s, s])];
+    const editing = () => api.getState(`${ctx.w}.hookEdit.${ctx.name}`, null);
+    const hookRow = (which, words, hintText) => labelled(words, { div: { className: "ed-row", children: [
+        select(ctx, n[which] ?? "", scripts, (v) => set(which, v || undefined, true)),
+        ctx.ro() ? { span: {} } : { button: { type: "button", className: "linkish small", textContent: "New script…", onclick: () => newHookScript(ctx, id, n, which) } },
+        n[which] ? { button: { type: "button", className: "linkish small", textContent: () => (editing() === n[which] ? "Close" : "Edit"), onclick: () => api.setValue(`${ctx.w}.hookEdit.${ctx.name}`, editing() === n[which] ? null : n[which]) } } : { span: {} },
+    ] } }, hintText);
     const lifecycle = { div: { className: "flow-lifecycle", children: [
         { strong: { className: "small", textContent: "Scripts" } },
-        labelled("On entering", select(ctx, n.onEnter ?? "", scripts, (v) => set("onEnter", v || undefined, true))),
-        labelled("On leaving", select(ctx, n.onExit ?? "", scripts, (v) => set("onExit", v || undefined, true)), "Rule scripts: the context in and out; what they ask to write is written as the template, by the record's own lifecycle."),
+        hookRow("onEnter", "On entering"),
+        hookRow("onExit", "On leaving", "Rule scripts: the context in and out; a variable they set is kept on the run, for the decisions and lists after; what they ask to write is written as the template, by the record's own lifecycle."),
     ] } };
     const out = (body.edges ?? []).map((e, i) => [e, i]).filter(([e]) => e.from === id);
     return { div: { children: [
         { h4: { className: `icon-text flow-side-head kind-${kind ?? "missing"}`, children: [icon(iconOf(kind ?? "missing")), { span: n.label ?? id }, { span: { className: "muted small", textContent: ` ${kindWords(n, kinds)} · ${id}` } }] } },
         labelled("Label", text(ctx, `nodes.${id}.label`, { placeholder: "Die saw" })),
+        ctx.ro() ? { span: {} } : { div: { className: "small flow-node-id", children: [{ span: { className: "muted", textContent: `Its id: ${id} ` } }, { button: { type: "button", className: "linkish small", textContent: "Rename…", title: "The id a traveler's step holds and lists show", onclick: () => renameIn(ctx, "node", id, renameFlowNode, (to) => pick({ node: to })) } }] } },
         kind ? { span: {} } : { p: { className: "error small", textContent: `A "${n.kind}" node needs the ${String(n.kind).split(".")[0]} suite, which is not installed: it stays, and a run that reaches it stops there.` } },
         ...fields,
         // An input flow runs in the browser, as the person types: no scripts.
@@ -382,8 +510,8 @@ function sidePanel(ctx, sel, pick, problemsOf) {
         ...problemsOf(`nodes.${id}`).map((m, k) => ({ p: { key: `p${k}`, className: "error small", textContent: m } })),
         { div: { className: "small", children: [{ strong: "Goes on to" }, { ul: { children: out.length ? out.map(([e, i]) => ({ li: { key: i, children: [{ button: { type: "button", className: "linkish", textContent: `${body.nodes[e.to]?.label ?? e.to}${wireWords(body, e, kinds) ? ` (${wireWords(body, e, kinds)})` : ""}`, onclick: () => pick({ edge: i }) } }] } })) : [{ li: { className: "muted", textContent: kind === "end" ? "nothing: it ends the run" : "nowhere yet" } }] } }] } },
         ctx.ro() ? { span: {} } : { div: { className: "view-actions", children: [
-            kind === "end" ? { span: {} } : { button: { type: "button", className: "btn small", textContent: "Wire from here…", title: "Click the node it goes to", onclick: () => api.setValue(`${S}c`, id) } },
-            { button: { type: "button", className: "btn ghost small", textContent: "Remove the node", onclick: () => { ops.edit((b) => { delete b.nodes[id]; if (b.layout) delete b.layout[id]; b.edges = (b.edges ?? []).filter((e) => e.from !== id && e.to !== id); }); pick(null); } } },
+            kind === "end" ? { span: {} } : { button: { type: "button", className: "btn small", textContent: "Wire from here…", title: "Click the node it goes to", onclick: () => { api.setValue(`${S}c`, id); setTimeout(() => globalThis.document?.querySelector(".flow-canvas")?.focus({ preventScroll: true }), 0); } } },
+            { button: { type: "button", className: "btn ghost small", textContent: "Remove the node", onclick: confirmRemove(ctx.api, `node ${id}`, () => { ops.edit((b) => { delete b.nodes[id]; if (b.layout) delete b.layout[id]; b.edges = (b.edges ?? []).filter((e) => e.from !== id && e.to !== id); }); pick(null); } )} },
         ] } },
     ] } };
 }
@@ -408,7 +536,23 @@ function generalTab(ctx) {
         labelled("Description", text(ctx, "description", { placeholder: "What it is for", multiline: true })),
         // A sub route (§32.14): it takes up no traveler by itself; other routes run it, at a sub flow.
         body.kind === "route" ? labelled("Runs", select(ctx, body.asSub === true ? "sub" : "own", [["own", "on its own: it takes up the travelers its start names"], ["sub", "only inside another route, as its sub flow"]], (v) => ops.edit((b) => { if (v === "sub") b.asSub = true; else delete b.asSub; })), "A sub route is drawn once and run by every route that needs it (a rework loop, a test segment): the traveler goes through its steps and comes back. It needs no scenario of its own: it is tried through the routes that run it.") : { span: {} },
-        body.kind === "input" ? { span: {} } : labelled("Ends early when", exprInput(ctx, "ends.when", body.ends?.when, (v) => ops.set("ends", v === undefined ? undefined : { when: v }, false), 'never (e.g. {"in": [{"context": "lot.state"}, ["merged", "scrapped"]]})'), "Checked after each write to the traveler: a run whose traveler is merged or scrapped ends there."),
+        // What the route does at every step (§32.15): a transaction it runs on its traveler, as itself.
+        body.kind === "route" ? (() => {
+            const known = flowKnown(ctx.api, ctx.w);
+            const traveler = Object.values(body.participants ?? {}).find((p) => p?.as === "traveler")?.object;
+            const fits = Object.entries(known.transactions ?? {}).filter(([, t]) => traveler && t.appearsOn?.object === traveler && t.appearsOn?.fills).map(([n, t]) => [n, t.label ?? n]);
+            const pick = (which, words) => labelled(words, select(ctx, body.everySequence?.[which]?.run ?? "", [["", "nothing"], ...fits], (v) => ops.edit((b) => {
+                const every = { ...(b.everySequence ?? {}) };
+                if (v) every[which] = { run: v }; else delete every[which];
+                if (Object.keys(every).length) b.everySequence = every; else delete b.everySequence;
+            })));
+            return { div: { className: "ed-row", children: [
+                pick("onEnter", "As it enters any step, run"),
+                pick("onExit", "As it leaves any step, run"),
+                hint("A transaction on its traveler, run by the route as itself (with the roles below), every time: a future hold, a check at every step. It appears on the traveler's records, names this route among its callers (Callers: routes), and is signed by nobody."),
+            ] } };
+        })() : { span: {} },
+        body.kind === "input" ? { span: {} } : labelled("Ends early when", condition(ctx, "ends.when", body.ends?.when, (v) => ops.set("ends", v === undefined ? undefined : { when: v }, true), "never", 'never (e.g. {"in": [{"context": "lot.state"}, ["merged", "scrapped"]]})'), "Checked after each write to the traveler: a run whose traveler is merged or scrapped ends there."),
     ] } };
 }
 
@@ -426,7 +570,7 @@ function contextTab(ctx) {
             ...values.map(([k, v]) => ({ tr: { key: `v-${k}`, children: [
                 { td: { children: [{ input: { type: "text", disabled: ctx.ro, value: k, onchange: (e) => rename(k, e.target.value.trim()) } }] } },
                 { td: { children: [{ input: { type: "text", disabled: ctx.ro, value: json(v), onchange: (e) => ops.edit((b) => { b.context[k] = valueOf(e.target.value.replace(/^"(.*)"$/, "$1")); }) } }] } },
-                { td: { children: [ctx.ro() ? { span: {} } : { button: { type: "button", className: "linkish small", textContent: "remove", onclick: () => ops.edit((b) => { delete b.context[k]; }) } }] } },
+                { td: { children: [ctx.ro() ? { span: {} } : { button: { type: "button", className: "linkish small", textContent: "remove", onclick: confirmRemove(ctx.api, `context value ${k}`, () => ops.edit((b) => { delete b.context[k]; }) )} }] } },
             ] } })),
             ...collected.map((k) => ({ tr: { key: `c-${k}`, children: [{ td: { children: [{ code: k }] } }, { td: { className: "muted", textContent: "collected on the way" } }, { td: {} }] } })),
         ] } }] } },
@@ -444,16 +588,28 @@ function participantsTab(ctx) {
         hint("The records a template works with, in its context by these names: the traveler going through it, the resources it is worked on, what it reads. Only objects whose design says they take part (on their General tab) are offered, as what they take part as."),
         opted.length ? { span: {} } : { p: { className: "error small", textContent: "No object takes part in flows yet: open one (a lot) in this change and say how it takes part, on its General tab." } },
         { table: { className: "grid", children: [{ tbody: { children: parts.map(([k, p]) => ({ tr: { key: k, children: [
-            { td: { children: [{ code: k }] } },
+            { td: { children: [{ code: k }, ctx.ro() ? { span: {} } : { button: { type: "button", className: "linkish small", textContent: " rename…", onclick: () => renameIn(ctx, "participant", k, renameFlowParticipant) } }] } },
             { td: { children: [select(ctx, p.object, [["", "—"], ...opted.map(([o, x]) => [o, x.label ?? o])], (v) => ops.edit((b) => { b.participants[k] = { object: v, as: known.objects[v]?.flow?.as?.[0] ?? "traveler" }; }))] } },
             { td: { children: [select(ctx, p.as, (known.objects[p.object]?.flow?.as ?? FLOW_ROLES).map((r) => [r, r]), (v) => ops.edit((b) => { b.participants[k].as = v; }))] } },
             { td: { children: [select(ctx, p.from ?? "", [["", "its own"], ...parts.filter(([o]) => o !== k).flatMap(([o, q]) => Object.entries(known.objects[q.object]?.fields ?? {}).filter(([, f]) => f.type === "ref" && f.to === p.object).map(([f]) => [`${o}.${f}`, `${o}'s ${f}`]))], (v) => ops.edit((b) => { if (v) b.participants[k].from = v; else delete b.participants[k].from; }))] } },
-            { td: { children: [ctx.ro() ? { span: {} } : { button: { type: "button", className: "linkish small", textContent: "remove", onclick: () => ops.edit((b) => { delete b.participants[k]; }) } }] } },
+            { td: { children: [ctx.ro() ? { span: {} } : { button: { type: "button", className: "linkish small", textContent: "remove", onclick: confirmRemove(ctx.api, `participant ${k}`, () => ops.edit((b) => { delete b.participants[k]; }) )} }] } },
         ] } })) } }] } },
         ctx.ro() || !opted.length ? { span: {} } : { button: { type: "button", className: "btn small", textContent: "+ a record", onclick: add } },
         { h4: "What the template itself may do" },
         hint("Marking a traveler's step and state, and its scripts' writes, are done as the template, with only these roles: give it the least it needs."),
-        { div: { children: [...new Set(parts.map(([, p]) => p.object).filter(Boolean))].map((o) => ({ div: { key: o, children: [{ strong: known.objects[o]?.label ?? o }, checks(ctx, (known.objects[o]?.roles ?? []).map((r) => [r, r]), body.roles?.[o], (v, on) => ops.edit((b) => { b.roles = { ...(b.roles ?? {}), [o]: toggleIn(b.roles?.[o], v, on) }; if (!b.roles[o].length) delete b.roles[o]; }))] } })) } },
+        // Its participants' objects, and those its scripts write that take no part (a route's samples, a plan's
+        // report): each added here by the designer, kept while it holds a role.
+        () => {
+            const ui = `ui.flowRoleObjects.${ctx.id}.${ctx.name}`;
+            const own = [...new Set(parts.map(([, p]) => p.object).filter(Boolean))];
+            const extra = [...new Set([...Object.keys(body.roles && typeof body.roles === "object" && !Array.isArray(body.roles) ? body.roles : {}), ...(ctx.api.getState(ui, []) ?? [])])].filter((o) => !own.includes(o));
+            const shown = [...own, ...extra];
+            const others = Object.entries(known.objects ?? {}).filter(([o, x]) => !shown.includes(o) && (x.roles ?? []).length);
+            return { div: { children: [
+                ...shown.map((o) => ({ div: { key: o, children: [{ strong: known.objects[o]?.label ?? o }, own.includes(o) ? { span: {} } : { span: { className: "muted small", textContent: " (written by its scripts)" } }, checks(ctx, (known.objects[o]?.roles ?? []).map((r) => [r, r]), body.roles?.[o], (v, on) => ops.edit((b) => { b.roles = { ...(b.roles ?? {}), [o]: toggleIn(b.roles?.[o], v, on) }; if (!b.roles[o].length) delete b.roles[o]; }))] } })),
+                ctx.ro() || !others.length ? { span: {} } : select(ctx, "", [["", "+ roles on another object (one its scripts write)…"], ...others.map(([o, x]) => [o, x.label ?? o])], (v) => { if (v) ctx.api.setValue(ui, [...(ctx.api.peek(ui) ?? []), v]); }),
+            ] } };
+        },
     ] } };
 }
 
@@ -482,7 +638,7 @@ function scenariosTab(ctx) {
                     last ? { span: { className: `badge ${last.passed ? "tone-ok" : "tone-danger"}`, textContent: last.passed ? "passed" : "failed" } } : { span: { className: "muted small", textContent: " not run yet" } },
                     { span: { className: "spacer" } },
                     view ? { span: {} } : { Link: { to: sandbox(sc), className: "small", textContent: "open in the sandbox" } },
-                    ro() ? { span: {} } : { button: { type: "button", className: "linkish small", textContent: "remove", onclick: () => ops.edit((b) => { b.scenarios = (b.scenarios ?? []).filter((_, k) => k !== i); if (!b.scenarios.length) delete b.scenarios; }) } },
+                    ro() ? { span: {} } : { button: { type: "button", className: "linkish small", textContent: "remove", onclick: confirmRemove(ctx.api, "this scenario", () => ops.edit((b) => { b.scenarios = (b.scenarios ?? []).filter((_, k) => k !== i); if (!b.scenarios.length) delete b.scenarios; }) )} },
                 ] } },
                 { div: { className: "small muted", textContent: `Records: ${Object.entries(sc?.records ?? {}).map(([k, r]) => `@${k} (${r.object}${r.data !== undefined ? ", given" : ""})`).join(", ") || "none: its steps make them"}` } },
                 { ol: { className: "small", children: (sc?.steps ?? []).map((st, j) => ({ li: { key: j, textContent: `${describe(st)}${st.as ? `, as ${st.as}` : ""} → ${st.expect?.ok === false ? "refused" : "runs"}${st.expect?.node ? `; ${Object.entries(st.expect.node).map(([k, n]) => `@${k} at ${nodeLabel(n)}`).join(", ")}` : ""}` } })) } },

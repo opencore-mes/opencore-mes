@@ -6,7 +6,7 @@
 //   BASE=http://127.0.0.1:9090 DATABASE_URL=postgres:///openmes_poc node app/mes/test/ai-agent.mjs
 // It issues itself a token for Dana (the designer) with read and draft scopes, and revokes it at the end.
 import pg from "pg";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createTokens } from "../server/ai-api.js";
 
 const BASE = process.env.BASE ?? "http://127.0.0.1:9090";

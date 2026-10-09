@@ -15,7 +15,7 @@
 //   DATABASE_URL=postgres:///openmes_test node app/mes/test/api-versions.mjs
 import pg from "pg";
 import { randomBytes } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 import { createTokens } from "../server/ai-api.js";
 import { runApiKit } from "../../../docs/contracts/http-apis/kit.mjs";
@@ -89,7 +89,7 @@ export default async function ${name}(ctx) {
     await call("dana", "design.save", { id: made, reason: "A web service ERP calls.", services: { [SVC]: service(SVC, "Echo (API test)"), [QUIET]: service(QUIET, "Quiet (API test)") }, scripts: { [SVC]: script(SVC), [QUIET]: script(QUIET) }, tests: { [SVC]: tests(SVC), [QUIET]: tests(QUIET) } });
     const live = await approve(made);
     const first = await svc(erpToken, SVC, { lot: "L-1", qty: 3 });
-    step("a plant's web service is designed, approved and called by ERP over HTTP, answered with API-Version", live.state === "executed" && first.status === 200 && first.body.output?.lot === "L-1" && first.headers.get("api-version") === "1.0" && !first.headers.get("deprecation"), { live, first: first.body });
+    step("a plant's web service is designed, approved and called by ERP over HTTP, answered with API-Version", live.state === "executed" && first.status === 200 && first.body.output?.lot === "L-1" && first.headers.get("api-version") === "1.3" && !first.headers.get("deprecation"), { live, first: first.body });
 
     // ---- 3. a change that would break ERP ----
     const breaking = { input: { lot: { label: "Lot", type: "string", required: true }, qty: { label: "Quantity", type: "integer", required: true } } };

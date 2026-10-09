@@ -14,7 +14,7 @@ test("/ai/v1 offers exactly what the contract promises", () => {
     const { breaking, unpromised } = compareSurface(promised, surfaceOf(openapi("")));
     assert.deepEqual(breaking, [], "nothing promised is gone or changed (v1 never loses it: that is v2)");
     assert.deepEqual(unpromised, [], "anything new is written into the contract (schema.json) and its changelog first");
-    assert.equal(httpContract()["x-contract"].version, "1.0");
+    assert.equal(httpContract()["x-contract"].version, "1.3");
 });
 
 test("a removal, a changed scope, a field no longer read, and an addition are each told apart", () => {
@@ -70,6 +70,6 @@ test("a web service's notice is checked as designed", () => {
     const messages = (d, extra = {}) => validateService({ ...base, ...extra, deprecated: d }, { scripts: ["echo"] }).filter((p) => p.path.startsWith("deprecated")).map((p) => p.message);
     assert.deepEqual(messages({ since: "2026-10-06", sunset: "2027-04-06", successor: "echo_v2", note: "Quantity becomes required." }), []);
     assert.deepEqual(messages({ since: "2026-10-06", sunset: "2026-10-01" }), ["Sunset comes after since: that time is its callers' notice."]);
-    assert.deepEqual(messages({ since: "soon", sunset: "2027-04-06", successor: "echo" }), ["Since: the date it is deprecated from (YYYY-MM-DD).", "Successor: the web service its callers move to (another service's name)."]);
-    assert.deepEqual(messages({ since: "2026-10-06", sunset: "2027-04-06" }, { http: { enabled: false } }), ["Only a web service is deprecated: its callers are the ones told."]);
+    assert.deepEqual(messages({ since: "soon", sunset: "2027-04-06", successor: "echo" }), ["Since: the date it is deprecated from (YYYY-MM-DD).", "Successor: what its callers move to (another name published over HTTP)."]);
+    assert.deepEqual(messages({ since: "2026-10-06", sunset: "2027-04-06" }, { http: { enabled: false } }), ["Only a web service published over HTTP is deprecated: its callers are the ones told."]);
 });

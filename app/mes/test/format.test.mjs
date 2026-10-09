@@ -46,3 +46,13 @@ test("a setting's mistakes named", () => {
     const m = formatsProblems({ locale: "xx_YY!!", date: "D.M.Y", time: "25h", firstDay: 9, timeZone: "Mars/Olympus", colour: "red" }).join("\n");
     for (const expected of [/not a locale/, /dates are written/, /24h or 12h/, /first day/, /not a time zone/, /"colour"/]) assert.match(m, expected);
 });
+
+test("a label as a noun keeps its abbreviations: New PM record, an AI report, a metrology reading", async () => {
+    const { noun } = await import("../client/format.js");
+    assert.equal(noun("PM record"), "PM record");
+    assert.equal(noun("AI report"), "AI report");
+    assert.equal(noun("Metrology reading"), "metrology reading");
+    assert.equal(noun("Wafer lot"), "wafer lot");
+    assert.equal(noun("Electrical test (WAT)"), "electrical test (WAT)");
+    assert.equal(noun(undefined), "");
+});

@@ -1,0 +1,9 @@
+[Unit]
+Description=OpenCore MES: backups every night (before the demo's reset)
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

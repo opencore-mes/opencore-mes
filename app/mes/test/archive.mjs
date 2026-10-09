@@ -11,7 +11,7 @@
 //   DATABASE_URL=postgres:///openmes_poc node app/mes/test/archive.mjs
 import pg from "pg";
 import { randomBytes } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 import { sessionKey } from "../server/store.js";
 

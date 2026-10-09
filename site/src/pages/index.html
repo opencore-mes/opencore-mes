@@ -1,0 +1,123 @@
+<!-- {"title": "OpenCore MES · the MES your engineers design, your teams can ask, and your auditors can follow", "description": "A low-code MES for advanced manufacturing, from small plants to 300 mm fabs. Engineers design it with an AI that drafts; people approve every change; the floor stays live and traced."} -->
+<main>
+  <section class="hero">
+    <div class="wrap">
+      <div>
+        <span class="eyebrow">Low-code MES · small plants to 300 mm fabs</span>
+        <h1>The MES your engineers design, your teams can ask, and your auditors can follow.</h1>
+        <p class="lede">Semiconductors, electronics, medical devices, aerospace and automotive: your engineers shape the MES themselves, people approve every change, and the floor stays live and traced.</p>
+        <div class="cta">
+          <a class="btn primary" href="https://demo.opencoremes.com/">Try the live demo <svg class="icon"><use href="#i-arrow"/></svg></a>
+          <a class="btn ghost" href="https://trainings.opencoremes.com/">Take the first-hour course</a>
+        </div>
+        <p class="fine">Public demo: no sign-in, every role, reset each night.</p>
+      </div>
+
+      <div class="mock" role="img" aria-label="A change request in OpenCore MES: Change Lot, in approval, Production approved, Quality to sign">
+        <div class="bar">
+          <div><div class="kind">Change request</div><h3>Change Lot: hold on contamination</h3></div>
+          <div class="stages"><span>Design</span><span>Review</span><span class="on">Approval</span><span>Execution</span></div>
+        </div>
+        <div class="why"><b>Why this change</b><br>Quality asked that a lot can be put on hold when contamination is suspected, with the reason recorded.</div>
+        <div class="change-row"><span class="muted">field</span><b>hold_reason</b><span class="chip ok"><svg class="icon"><use href="#i-check"/></svg>added</span><span class="muted when">by Dana</span></div>
+        <div class="change-row"><span class="muted">rule</span><b>lot_hold_needs_reason.js</b><span class="chip ok"><svg class="icon"><use href="#i-check"/></svg>3 tests pass</span><span class="muted when">by Dana</span></div>
+        <div>
+          <div class="kind" style="margin-bottom:6px">Approved by those it affects</div>
+          <div class="route">
+            <span class="chip ok"><svg class="icon"><use href="#i-check"/></svg>Production · Sam</span>
+            <span class="chip wait"><svg class="icon"><use href="#i-hourglass"/></svg>Quality · waiting for Quinn</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="alt" id="problems">
+    <div class="wrap">
+      <h2>The problems it solves.</h2>
+      <p class="sub">Each one has its own page: what goes wrong, and how OpenCore MES fixes it.</p>
+      <div class="problems">
+        <a class="card problem-card" href="/design">
+          <span class="was"><svg class="icon"><use href="#i-x"/></svg>Every field, rule and screen waits on a vendor.</span>
+          <h3>Your engineers design it</h3>
+          <p>Objects, rules, screens, routes, OEE, QMS and SPC are designs, not code. An AI drafts them.</p>
+          <span class="go">Design <svg class="icon"><use href="#i-arrow"/></svg></span>
+        </a>
+        <a class="card problem-card" href="/control">
+          <span class="was"><svg class="icon"><use href="#i-x"/></svg>Changes reach the plant untested and untraced.</span>
+          <h3>Every change approved, every record proved</h3>
+          <p>Design, review, approval, execution; every version kept; database edits found.</p>
+          <span class="go">Control <svg class="icon"><use href="#i-arrow"/></svg></span>
+        </a>
+        <a class="card problem-card" href="/floor">
+          <span class="was"><svg class="icon"><use href="#i-x"/></svg>Operators work from stale screens and paper.</span>
+          <h3>A live floor, a step at a time</h3>
+          <p>Screens that update themselves, the line from above, instructions step by step; scanner and keyboard, no mouse.</p>
+          <span class="go">Floor <svg class="icon"><use href="#i-arrow"/></svg></span>
+        </a>
+        <a class="card problem-card" href="/ai">
+          <span class="was"><svg class="icon"><use href="#i-x"/></svg>An answer about the floor takes a week.</span>
+          <h3>Ask, and get a report</h3>
+          <p>Plain words in, a report out, from live data and only what the asker may read.</p>
+          <span class="go">AI <svg class="icon"><use href="#i-arrow"/></svg></span>
+        </a>
+        <a class="card problem-card" href="/connect">
+          <span class="was"><svg class="icon"><use href="#i-x"/></svg>Every machine and system needs custom glue.</span>
+          <h3>Open contracts at every seam</h3>
+          <p>SECS/GEM, GEM300, OPC UA, MQTT; web services, transactions and queries over HTTP.</p>
+          <span class="go">Connect <svg class="icon"><use href="#i-arrow"/></svg></span>
+        </a>
+        <a class="card problem-card" href="/scale">
+          <span class="was"><svg class="icon"><use href="#i-x"/></svg>Growth means downtime and a bigger server.</span>
+          <h3>No restarts. Scales out.</h3>
+          <p>Changes go live while it runs; add servers, not size. 100 lot moves a second on one.</p>
+          <span class="go">Scale <svg class="icon"><use href="#i-arrow"/></svg></span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="stats">
+        <div class="stat"><b>100 lot moves a second</b><span>on one server, along a wafer fab's CMOS route; p95 under 100 ms</span></div>
+        <div class="stat"><b>1,000,000 lots</b><span>a page of the list in 3 ms, any lot found in 25 ms</span></div>
+        <div class="stat"><b>0 refused</b><span>at 150 moves a second on four servers; memory flat over 3 hours</span></div>
+      </div>
+      <p class="measured">Measured on one laptop. <a href="/scale#numbers">How</a></p>
+    </div>
+  </section>
+
+  <section class="alt">
+    <div class="wrap">
+      <div class="grid3">
+        <a class="card problem-card" href="/editions">
+          <span class="was"><svg class="icon"><use href="#i-x"/></svg>Paying for modules you never use.</span>
+          <h3>Open at the core</h3>
+          <p>The platform is open source. Suites, from tool integration to the load board crib, add what you need.</p>
+          <span class="go">Editions <svg class="icon"><use href="#i-arrow"/></svg></span>
+        </a>
+        <a class="card problem-card" href="/about#learn">
+          <span class="was"><svg class="icon"><use href="#i-x"/></svg>A new system nobody knows how to use.</span>
+          <h3>Learn it by doing it</h3>
+          <p>Courses beside a live training plant; the first hour is free.</p>
+          <span class="go">Courses <svg class="icon"><use href="#i-arrow"/></svg></span>
+        </a>
+        <a class="card problem-card" href="/about">
+          <span class="was"><svg class="icon"><use href="#i-x"/></svg>Software made far from the floor.</span>
+          <h3>Made by fab people</h3>
+          <p>An MES manager, an operation engineer, an EI automation engineer and an architect.</p>
+          <span class="go">About <svg class="icon"><use href="#i-arrow"/></svg></span>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section class="final">
+    <div class="wrap">
+      <h2>See it for yourself.</h2>
+      <p class="sub">Be an operator, a designer or an approver, and follow a change from design to the floor.</p>
+      <div class="cta"><a class="btn primary" href="https://demo.opencoremes.com/">Open the live demo <svg class="icon"><use href="#i-arrow"/></svg></a> <a class="btn ghost" href="https://github.com/opencore-mes/opencore-mes" rel="noopener"><svg class="icon"><use href="#i-code"/></svg>Source on GitHub</a></div>
+    </div>
+  </section>
+</main>

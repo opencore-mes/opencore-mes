@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connect · OpenCore MES</title>
+<meta name="description" content="Every machine and every system around the MES needs custom glue. OpenCore MES connects them through open, versioned contracts: SECS/GEM, GEM300, OPC UA and MQTT for machines; web services, transactions and queries over HTTP for systems.">
+<meta name="theme-color" content="#2b303a">
+<meta property="og:title" content="Connect · OpenCore MES">
+<meta property="og:description" content="Every machine and every system around the MES needs custom glue. OpenCore MES connects them through open, versioned contracts: SECS/GEM, GEM300, OPC UA and MQTT for machines; web services, transactions and queries over HTTP for systems.">
+<meta property="og:url" content="https://opencoremes.com/connect">
+<meta property="og:type" content="website">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://opencoremes.com/connect">
+<link rel="stylesheet" href="/site.css">
+<script src="/glow.js" defer></script>
+</head>
+<body>
+<div class="bg-bricks" aria-hidden="true"><div class="bgb k1"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k2"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k3"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k4"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k5"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k6"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k7"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div></div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-hourglass" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2h14M5 22h14"/><path d="M7 2v4.2a2 2 0 0 0 .6 1.4L12 12l4.4-4.4a2 2 0 0 0 .6-1.4V2"/><path d="M7 22v-4.2a2 2 0 0 1 .6-1.4L12 12l4.4 4.4a2 2 0 0 1 .6 1.4V22"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></symbol>
+  </defs>
+</svg>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="OpenCore MES home">
+      <svg viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="102" fill="#2b303a"/><path fill="#fff" d="M138 374V138h47l71 101 71-101h47v236h-47V222l-71 100-71-100v152z"/></svg>
+      OpenCore MES
+    </a>
+    <nav class="links" aria-label="Main">
+      <a href="/design">Design</a>
+      <a href="/control">Control</a>
+      <a href="/floor">Floor</a>
+      <a href="/ai">AI</a>
+      <a href="/connect" aria-current="page">Connect</a>
+      <a href="/scale">Scale</a>
+      <a href="/editions">Editions</a>
+    </nav>
+    <a class="btn primary" href="https://demo.opencoremes.com/">Try the demo</a>
+    <details class="menu">
+      <summary aria-label="Every page, and the other sites"><svg class="icon"><use href="#i-menu"/></svg></summary>
+      <nav aria-label="Pages">
+          <a href="/">Home</a>
+          <a href="/design"><b>Design</b><small>Changes wait on a vendor</small></a>
+          <a href="/control"><b>Control</b><small>Changes nobody can trace</small></a>
+          <a href="/floor"><b>Floor</b><small>Stale screens and paper</small></a>
+          <a href="/ai"><b>AI</b><small>Answers that take a week</small></a>
+          <a href="/connect" aria-current="page"><b>Connect</b><small>Glue for every machine</small></a>
+          <a href="/scale"><b>Scale</b><small>Growth means downtime</small></a>
+          <a href="/editions"><b>Editions</b><small>Paying for what you skip</small></a>
+          <a href="/about"><b>About</b><small>Who makes it</small></a>
+          <hr>
+          <a href="https://trainings.opencoremes.com/">Courses</a>
+          <a href="https://suites.opencoremes.com/">Suites store</a>
+          <a href="https://github.com/opencore-mes/opencore-mes" rel="noopener">Source on GitHub</a>
+      </nav>
+    </details>
+  </div>
+</header>
+<main>
+  <section class="page-hero hero">
+    <div class="wrap">
+      <span class="eyebrow problem">The problem</span>
+      <h1>Every machine and every system needs custom glue.</h1>
+      <p class="lede">Point-to-point code nobody owns, broken by the next upgrade. OpenCore MES connects through open contracts instead.</p>
+    </div>
+  </section>
+
+  <section class="sol alt" id="machines">
+    <div class="wrap">
+      <span class="eyebrow">Solution</span>
+      <h2 style="margin-top:16px">Machines, described as data.</h2>
+      <p class="sub">A tool type your screens read; an interface that maps one vendor's codes onto it, approved like any design.</p>
+      <ul class="checks">
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>SECS/GEM over HSMS.</b> One connection per tool; nothing lost while the MES is busy.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>GEM300.</b> Carriers checked at the load port (E87), control and process jobs at track in (E94, E40).</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Wafers and ports.</b> Each wafer tracked through the tool (E90); load ports handed to the AMHS (E84).</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Cluster tools.</b> Each chamber a machine with its own state and alarms.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>OPC UA and MQTT.</b> Signed and encrypted; same screens, whatever a machine speaks.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Same rules as people.</b> Machine events go through the same checks and audit trail.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="sol" id="systems">
+    <div class="wrap">
+      <span class="eyebrow">Solution</span>
+      <h2 style="margin-top:16px">Systems call it the way people use it.</h2>
+      <p class="sub">ERP, LIMS and label printers reach the same designs, with the same checks.</p>
+      <ul class="checks">
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Web services you design.</b> Revocable tokens, described by OpenAPI.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Transactions over HTTP.</b> The ERP runs a transaction by its name, with every check a person's run has.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Queries over HTTP.</b> A BI tool reads named queries, read only, a page at a time.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Connections out.</b> Each limited to the requests its design allows.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Versioned, with notice.</b> Nothing a caller relies on changes without warning.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Every call counted.</b> Who called, how long, why refused.</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="sol alt" id="suites">
+    <div class="wrap">
+      <span class="eyebrow">Solution</span>
+      <h2 style="margin-top:16px">Extended without forking.</h2>
+      <p class="sub">Suites plug into the core's open contracts; a plant's differences are designs, not patches.</p>
+      <div class="open-legend"><span><svg class="icon"><use href="#i-check"/></svg>Available now</span><span class="planned"><svg class="icon"><use href="#i-hourglass"/></svg>Planned</span></div>
+      <ul class="checks">
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Side by side.</b> Several suites, each adding designs, steps and screen blocks.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Removable.</b> Take a suite away and the core runs on; its data waits.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Scripts run apart.</b> Locked down, holding no credentials; walled in on Linux.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Open source core.</b> Apache 2.0, <a href="https://github.com/opencore-mes/opencore-mes" rel="noopener">on GitHub</a>.</span></li>
+        <li class="planned"><svg class="icon"><use href="#i-hourglass"/></svg><span><b>A versioned extension API</b>, with a conformance kit for suites.</span></li>
+      </ul>
+      <div class="cta" style="margin-top:24px"><a class="btn ghost" href="/editions">The suites <svg class="icon"><use href="#i-arrow"/></svg></a></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 OpenCore MES. "OpenCore MES" is a trademark of its owner.</span>
+    <span><a href="/design">Design</a> · <a href="/control">Control</a> · <a href="/floor">Floor</a> · <a href="/ai">AI</a> · <a href="/connect">Connect</a> · <a href="/scale">Scale</a> · <a href="/editions">Editions</a> · <a href="/about">About</a></span>
+    <span><a href="https://demo.opencoremes.com/">Live demo</a> · <a href="https://trainings.opencoremes.com/">Courses</a> · <a href="https://suites.opencoremes.com/">Suites store</a> · <a href="https://github.com/opencore-mes/opencore-mes" rel="noopener">Source on GitHub</a> · <a href="mailto:contact@opencoremes.com?subject=OpenCore%20MES">Contact</a></span>
+  </div>
+</footer>
+</body>
+</html>

@@ -10,13 +10,22 @@
 //     may not have committed: that refusal says so (code "db.unknown"). Sending the same request
 //     again with the same idempotency key finds out, and never saves twice.
 //
-//   const gate = gateDb(fromPg(pool), { probeMs, log, onDown(error), onUp({ downForMs, refused }) })
+//   - Never all the connections in transactions (`transactions`: at most that many at once). A write in a
+//     transaction reads through the pool too (who the person is, their roles): with every connection held by
+//     a transaction waiting for one more, none comes free, and all wait out the pool's timeout (a burst of
+//     moves did that). Kept a few short of the pool, there is always one for those reads, which wait on
+//     nothing. A transaction waits its turn, and is refused as busy past `waitMs`, as a pool wait is; one begun
+//     inside another (an audit row in its own transaction) holds its outer one's turn.
+//
+//   const gate = gateDb(fromPg(pool), { probeMs, log, onDown(error), onUp({ downForMs, refused }), transactions, waitMs })
 //   gate.query / gate.transaction   the adapter's own, gated
 //   gate.state()                    { state: "up" | "down", since, refused }
 //   gate.stop()                     stops the probe
 //
 // Only an unreachable database opens the gate. A statement that fails (a constraint, a timeout, a
 // syntax error) is the caller's to handle, and goes through as it came.
+
+import { AsyncLocalStorage } from "node:async_hooks";
 
 const UNREACHABLE_CODES = new Set(["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE", "ENOTFOUND", "EHOSTUNREACH", "ENETUNREACH", "57P01", "57P02", "57P03"]);
 const UNREACHABLE_WORDS = /timeout exceeded when trying to connect|connection terminated|terminating connection|connection error|connection is closed|server closed the connection|the database system is (starting up|shutting down|in recovery mode)/i;
@@ -43,10 +52,23 @@ const refusal = (unknown) => Object.assign(new Error(unknown ? UNKNOWN : UNAVAIL
 // `reaches()` asks the database on a connection of its own, outside the pool (true: it answers). Given
 // it, a call that only waited too long for a pooled connection is refused alone ("db.busy") while the
 // database answers, and the gate stays open: ten slow statements are not an outage.
-export function gateDb(db, { probeMs = 2000, log = console, onDown = null, onUp = null, reaches = null } = {}) {
+export function gateDb(db, { probeMs = 2000, log = console, onDown = null, onUp = null, reaches = null, transactions = Infinity, waitMs = 5000 } = {}) {
     let since = null;   // when it went down; null while up
     let refused = 0;
     let timer = null;
+    // The transactions' turns: how many hold one, who waits (in order), and whether this call is inside one.
+    let holding = 0;
+    const queue = [];
+    const inside = new AsyncLocalStorage();
+    const turn = () => new Promise((resolve, reject) => {
+        if (holding < transactions) { holding++; return resolve(); }
+        const waiter = { resolve, timer: setTimeout(() => { queue.splice(queue.indexOf(waiter), 1); reject(Object.assign(new Error(BUSY), { expose: true, status: 503, code: "db.busy", retry: true })); }, waitMs) };
+        queue.push(waiter);
+    });
+    const done = () => {
+        const next = queue.shift();
+        if (next) { clearTimeout(next.timer); next.resolve(); } else holding--;
+    };
 
     function probe() {
         timer = setTimeout(async () => {
@@ -82,6 +104,25 @@ export function gateDb(db, { probeMs = 2000, log = console, onDown = null, onUp 
     }
     const busy = () => { throw Object.assign(new Error(BUSY), { expose: true, status: 503, code: "db.busy", retry: true }); };
 
+    async function transactionNow(fn) {
+        // Whether the transaction's work is done and only COMMIT remains: a loss past this point
+        // leaves the outcome unknown.
+        let committing = false;
+        try {
+            return await db.transaction(async (tx) => {
+                const out = await fn(tx);
+                committing = true;
+                return out;
+            });
+        } catch (error) {
+            if (!unreachable(error)) throw error;
+            // A pool wait is before the transaction began: nothing was sent, so nothing is unknown.
+            if (!committing && !(await gone(error))) return busy();
+            down(error);
+            return refuse(committing);
+        }
+    }
+
     return {
         async query(sql, params) {
             if (since !== null) refuse();
@@ -96,24 +137,15 @@ export function gateDb(db, { probeMs = 2000, log = console, onDown = null, onUp 
         },
         async transaction(fn) {
             if (since !== null) refuse();
-            // Whether the transaction's work is done and only COMMIT remains: a loss past this point
-            // leaves the outcome unknown.
-            let committing = false;
+            const nested = inside.getStore() === true;
+            if (!nested) await turn();
             try {
-                return await db.transaction(async (tx) => {
-                    const out = await fn(tx);
-                    committing = true;
-                    return out;
-                });
-            } catch (error) {
-                if (!unreachable(error)) throw error;
-                // A pool wait is before the transaction began: nothing was sent, so nothing is unknown.
-                if (!committing && !(await gone(error))) return busy();
-                down(error);
-                return refuse(committing);
+                return await inside.run(true, () => transactionNow(fn));
+            } finally {
+                if (!nested) done();
             }
         },
-        state: () => ({ state: since === null ? "up" : "down", since: since === null ? null : new Date(since).toISOString(), refused }),
+        state: () => ({ state: since === null ? "up" : "down", since: since === null ? null : new Date(since).toISOString(), refused, ...(Number.isFinite(transactions) ? { transactions: { holding, waiting: queue.length, at: transactions } } : {}) }),
         stop() { clearTimeout(timer); timer = null; },
     };
 }

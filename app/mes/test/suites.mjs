@@ -12,14 +12,22 @@
 //      marked as the suite's); approved and live, the lock keeps the field, shown to the designer;
 //      removing it is refused, naming the suite; two suites with one prefix stop the start; with the
 //      suite removed its lock is lifted and the field stays.
+//   7. Its set-up guide (§29.8, integration.json): checked at start, offered on its line under Suites (a page of
+//      its own, the designer's home left to designing),
+//      served and rendered by the server; a broken one stops the start, saying what is wrong.
+//   8. About (§29.9): the platform's version (package.json), the framework's, and the suite installed with its
+//      version and its design pack's, to anyone signed in; nobody else.
 //
 //   DATABASE_URL=postgres:///openmes_test node app/mes/test/suites.mjs   (after a reset)
 import pg from "pg";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
-import { loadSuites } from "../suites.mjs";
+import { loadSuites, guideProblems } from "../suites.mjs";
+import { mkdtemp, cp, writeFile, rm, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { migrate } from "../db/migrate.mjs";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL ?? "postgres:///openmes_poc" });
@@ -32,14 +40,16 @@ try {
     // ---- 1. found, migrated ----
     const suites = await loadSuites({ dir: fileURLToPath(new URL("./fixtures/suites/", import.meta.url)) });
     const hello = suites[0];
-    step("found: the hello suite, its browser module served beside its files", suites.length === 1 && hello.name === "hello" && hello.version === "1.0.0" && hello.clientUrl === "/app/mes/test/fixtures/suites/hello/client/index.js" && hello.nav[0]?.to === "/hello", suites);
+    step("found: the hello suite, its browser module served beside its files", suites.length === 1 && hello.name === "hello" && hello.version === "1.0.0" && hello.clientUrl === "/suites/hello/client/index.js" && hello.nav[0]?.to === "/hello", suites);
+    step("its set-up guide read beside it (§29.8)", hello.guide?.title === "Setting up Hello in your plant" && hello.guide.steps.length === 2, hello.guide);
     await db.query("DROP TABLE IF EXISTS mes.hello_notes; DELETE FROM mes.schema_migrations WHERE name LIKE 'hello:%'");
     const done = await migrate(db, { log: {}, suites });
     step("its migration runs with the platform's, named after it", done.some((d) => d.name === "hello:notes" && d.action === "applied") && (await db.query("SELECT to_regclass('mes.hello_notes') AS t"))[0].t, done);
     step("…once", !(await migrate(db, { log: {}, suites })).some((d) => d.name === "hello:notes"));
 
     // ---- 2. its server part ----
-    app = await createApp({ db, dev: false, build: "test", outboxEveryMs: 0, schedulerEveryMs: 0, suites });
+    // A newer version of hello on the registry, as the server's daily check would find it (suite-install.mjs watchUpdates).
+    app = await createApp({ db, dev: false, build: "test", outboxEveryMs: 0, schedulerEveryMs: 0, suites, suiteUpdates: () => [{ name: "hello", version: "1.0.0", newest: "1.1.0" }] });
     const { url: mes } = await app.listen({ port: 0 });
     const sessions = {};
     for (const user of ["olga", "dana", "vera", "sam", "eli", "quinn", "ivan", "ines", "iris"]) {
@@ -64,17 +74,56 @@ try {
     step("its write and its live query, as the person", added.by_user === "olga" && notes.some((n) => n.text === "First shift started"), { added, notes });
     const [audited] = await db.query("SELECT actor, action FROM mes.audit_log WHERE object = '$hello' ORDER BY seq DESC LIMIT 1");
     step("audited in the platform's audit trail", audited?.actor === "olga" && audited.action === "hello:add", audited);
+    const kept = await call("hello.keepNotes", {});
+    const [blob] = await db.query("SELECT type, created_by, name FROM mes.blobs WHERE sha256 = $1", [kept.blob ?? ""]);
+    step("it keeps a file in the file store by its own name (ctx.files.keep), under an upload's checks", /^[0-9a-f]{64}$/.test(kept.blob ?? "") && blob?.type === "text/csv" && blob.created_by === "suite:hello" && blob.name === "hello notes.csv", { kept, blob });
 
     // ---- 3. its browser part ----
     const page = await (await fetch(`${mes}/hello`, { headers: { cookie: `mes_session=${session}` } })).text();
     step("its page, rendered by the server with its data", page.includes("Hello notes") && page.includes("First shift started (olga)"), page.slice(0, 400));
     const named = JSON.parse(page.match(/<meta name="mes-suites" content="([^"]*)">/)?.[1].replace(/&quot;/g, '"') ?? "[]");
-    step("its module named in the page, for the browser to import first", named.length === 1 && named[0].startsWith("/app/mes/test/fixtures/suites/hello/client/index.js"), named);
+    step("its module named in the page, for the browser to import first", named.length === 1 && named[0].startsWith("/suites/hello/client/index.js"), named);
     step("its stylesheet linked, and its navigator entry in the page's state", /hello\/client\/hello\.css/.test(page) && page.includes("Hello notes") && /"nav":\[\{"group":"Data","label":"Hello notes"/.test(page));
     const served = await fetch(`${mes}${named[0]}`);
     step("its module served", served.ok && (await served.text()).includes("HelloPage"));
     const home = await (await fetch(`${mes}/`, { headers: { cookie: `mes_session=${session}` } })).text();
     step("the platform's own pages are as they were", home.includes("OpenCore MES") && !home.includes("Not found"));
+
+    // ---- 7. its set-up guide ----
+    const guideHome = await callAs("dana", "design.home", { as: "dana" });
+    step("its card in the designer offers its set-up guide", guideHome.packs?.find((p) => p.suite === "hello")?.guide === true && Array.isArray(guideHome.guides) && !guideHome.guides.length, { packs: guideHome.packs?.map((p) => [p.suite, p.guide]), guides: guideHome.guides });
+    const guide = await callAs("dana", "design.suiteGuide", { suite: "hello", as: "dana" });
+    const noGuide = await callAs("dana", "design.suiteGuide", { suite: "nope", as: "dana" });
+    step("served as the suite wrote it, with its label and version; none for a suite not installed", guide?.name === "hello" && guide.version === "1.0.0" && guide.steps[0].commands[0] === "opencore-mes suite install hello" && noGuide === null, { guide, noGuide });
+    const guidePage = await (await fetch(`${mes}/design/suites/hello/guide`, { headers: { cookie: `mes_session=${sessions.dana}` } })).text();
+    step("its page, rendered by the server: the guide's title, steps and commands, as text", guidePage.includes("<title>Setting up Hello in your plant") && guidePage.includes("Take its designs through a change") && guidePage.includes("opencore-mes suite install hello"), guidePage.slice(0, 400));
+    step("…saying it is installed here already, its version, and its install step marked done (its commands kept, for another installation)",
+        /Hello[^<]* 1\.0\.0 is installed here already/.test(guidePage) && /class="suite-guide-done"[^]*Done here: [^<]*1\.0\.0 is installed\.[^]*opencore-mes suite install hello/.test(guidePage), guidePage.slice(0, 1200));
+    step("the top bar: the person's name opens their menu (password, Sign out, anyone else on a picker instance); no Sign out of its own beside it",
+        /class="switch-btn who"/.test(guidePage) && !/<form[^>]*action="\/logout"/.test(guidePage), guidePage.match(/<header[^]*?<\/header>/)?.[0]?.slice(0, 800));
+    step("a guide's shape is checked, in words", guideProblems({ title: "x", steps: [{ title: "a", text: "" , extra: 1 }] }).join("; ") === 'step 1: text is a text of up to 4000 characters; step 1: "extra" is not part of a step' && guideProblems({ title: "x", steps: [] }).join() === "steps is a list of 1 to 40 steps");
+    // The suites have a page of their own (Suites), one line each, the designer's home not crowded by them.
+    const suitesPage = await (await fetch(`${mes}/design/suites`, { headers: { cookie: `mes_session=${sessions.dana}` } })).text();
+    const designPage = await (await fetch(`${mes}/design`, { headers: { cookie: `mes_session=${sessions.dana}` } })).text();
+    step("Suites, its own page: a line for the suite with its version and its guide; the designer's home draws no suite of its own",
+        suitesPage.includes("<title>Suites") && /class="pack-row"[^]*Hello[^]*1\.0\.0[^]*Set-up guide/.test(suitesPage) && !designPage.includes("pack-row"), suitesPage.slice(0, 300));
+    const broken = await mkdtemp(path.join(tmpdir(), "suites-"));
+    await cp(fileURLToPath(new URL("./fixtures/suites/hello", import.meta.url)), path.join(broken, "hello"), { recursive: true });
+    await writeFile(path.join(broken, "hello", "integration.json"), JSON.stringify({ title: "Hello", steps: [{ title: "Install it" }] }));
+    const brokenStart = await loadSuites({ dir: broken }).then(() => null, (e) => e.message);
+    await rm(broken, { recursive: true, force: true });
+    // ---- 8. About ----
+    const about = await callAs("olga", "about.get", {});
+    const own = JSON.parse(await readFile(new URL("../../../package.json", import.meta.url), "utf8")).version;
+    // …and what the AI is told (design.suites, the copilot's get_suites): the newer version and the command.
+    const aiTold = await callAs("dana", "design.suites", { as: "dana" });
+    const anon = await (await fetch(`${mes}/api/about.get`, { method: "POST", headers: { "content-type": "application/json" }, body: "[{}]" })).status;
+    step("About: the platform's version and build, Juris's, and the hello suite with its version and its designs', to anyone signed in; nobody else; a newer version on the registry said there, on its card in the designer, and to the AI with the command that updates it",
+        about.product === "OpenCore MES" && about.version === own && about.build === "test" && /^\d+\.\d+\.\d+/.test(about.framework?.version ?? "") && about.suites?.length === 1 && about.suites[0].name === "hello" && about.suites[0].version === "1.0.0" && typeof about.suites[0].designs?.version === "string" && anon === 401
+        && about.suites[0].newest === "1.1.0" && guideHome.packs?.find((p) => p.suite === "hello")?.newest === "1.1.0"
+        && aiTold.suites?.[0]?.newest === "1.1.0" && aiTold.suites[0].update === "opencore-mes suite update hello",
+        { about, anon });
+    step("a broken guide stops the start, saying what is wrong", /integration\.json: step 1: text is a text/.test(brokenStart ?? ""), brokenStart);
 
     // ---- 5. its part of an object's design ----
     const ch = await callAs("dana", "design.start", { object: "machine" });

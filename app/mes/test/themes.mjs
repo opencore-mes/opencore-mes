@@ -1,15 +1,16 @@
 // Themes (§10.8), end to end, against a server of its own:
 //   1. By default a page follows the device (no data-theme). Olga picks dark: her pages are drawn dark
 //      from the first byte; a scheme that is not light, dark or system is refused.
-//   2. The plant's theme is a change to People & departments: a colour that cannot be read is a
-//      problem, and the change cannot be submitted until it is fixed. Routed to governance.
+//   2. The plant's theme is a change to People & departments, routed to governance. Its colours are the
+//      plant's choice: nothing checks how they read.
 //   3. Approved with the scheme "light": every page is light, Olga's dark choice included, its colours
-//      follow the stylesheet, and the top bar says the plant's name. Put back afterwards, through a change.
+//      follow the stylesheet, and the top bar says the plant's name. A top bar given a background alone takes
+//      the text that reads on it. Put back afterwards, through a change.
 //
 //   DATABASE_URL=postgres:///openmes_test node app/mes/test/themes.mjs   (after a reset)
 import pg from "pg";
 import { randomBytes } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL ?? "postgres:///openmes_test" });
@@ -49,13 +50,12 @@ try {
     const { id } = await call("dana", "design.start", { organization: true });
     const org = (await call("dana", "design.change", { id, as: "dana" })).content.organization;
     const unreadable = await call("dana", "design.save", { id, reason: "Plant 1's look.", organization: { ...org, theme: { scheme: "light", name: "Plant 1", scope: "Lyon", colors: { light: { accent: "#ffff00" } } } } });
-    const refused = await call("dana", "design.submit", { id });
-    step("an accent nobody can read is a problem, and the change is not submitted", (unreadable.problems ?? []).some((p) => /accent text on a panel reads at 1\.\d:1/.test(p.message)) && refused.status >= 400, { problems: unreadable.problems, refused });
+    step("a pale accent is the plant's choice: no problem in the change", Array.isArray(unreadable.problems) && !unreadable.problems.length, unreadable.problems ?? unreadable);
     const fresh = await call("dana", "design.change", { id, as: "dana" });
     await call("dana", "design.save", { id, seen: fresh.draft_rev, organization: { ...org, theme: { scheme: "light", name: "Plant 1", scope: "Lyon", colors: { light: { accent: "#1d4ed8" } } } } });
     const submitted = await call("dana", "design.submit", { id });
     const routed = await call("dana", "design.change", { id, as: "dana" });
-    step("with a readable accent it is submitted, routed to governance (Engineering)", submitted.ok && routed.route.map((r) => r.department).join() === "engineering" && routed.footprint.some((e) => e.element === "theme"), { submitted, problems: routed.problems, route: routed.route, footprint: routed.footprint?.map((e) => e.element) });
+    step("with another accent it is submitted, routed to governance (Engineering)", submitted.ok && routed.route.map((r) => r.department).join() === "engineering" && routed.footprint.some((e) => e.element === "theme"), { submitted, problems: routed.problems, route: routed.route, footprint: routed.footprint?.map((e) => e.element) });
     await call("vera", "design.review", { id, decision: "pass" });
     const live = await call("eli", "design.approve", { id, department: "engineering", decision: "approve", meaning: "Approved" });
 
@@ -65,6 +65,21 @@ try {
     step("its colours follow the stylesheet, and the top bar's state names the plant", /<style>:root\{--accent:#1d4ed8;--accent-soft:#[0-9a-f]{6};\}<\/style>/.test(locked) && /"theme":\{"scheme":"light","name":"Plant 1","scope":"Lyon"\}/.test(locked), locked.match(/<style>[^<]*<\/style>/)?.[0]);
     const vera = await page("vera");
     step("…for everyone", /data-theme="light"/.test(htmlTag(vera)), htmlTag(vera));
+
+    // ---- 4. the top bar's own colours ----
+    const bar = await call("dana", "design.start", { organization: true });
+    const orgNow = (await call("dana", "design.change", { id: bar.id, as: "dana" })).content.organization;
+    const pale = await call("dana", "design.save", { id: bar.id, reason: "The plant's top bar.", organization: { ...orgNow, theme: { ...orgNow.theme, name: "Lyon MES", colors: { light: { accent: "#1d4ed8", header: "#ffffff", headerInk: "#eeeeee" } } } } });
+    step("a pale top bar is no problem either: the plant chooses", Array.isArray(pale.problems) && !pale.problems.length, pale.problems ?? pale);
+    const barFresh = await call("dana", "design.change", { id: bar.id, as: "dana" });
+    await call("dana", "design.save", { id: bar.id, seen: barFresh.draft_rev, organization: { ...orgNow, theme: { ...orgNow.theme, name: "Lyon MES", colors: { light: { accent: "#1d4ed8", header: "#0b3d91" } } } } });
+    await call("dana", "design.submit", { id: bar.id });
+    await call("vera", "design.review", { id: bar.id, decision: "pass" });
+    const barLive = await call("eli", "design.approve", { id: bar.id, department: "engineering", decision: "approve", meaning: "Approved" });
+    const barred = await page("olga");
+    step("approved: the top bar takes its background, and the text that reads on it (white on navy), everything in it drawn from them (what opens from it keeps the page's), and the app's new name",
+        barLive.state === "executed" && /\.topbar\{--panel:#0b3d91;--bg:#0b3d91;--ink:#ffffff;[^}]*background:#0b3d91;color:#ffffff;\}/.test(barred) && /\.topbar \[role=dialog\]\{--panel:var\(--page-panel\);/.test(barred) && /"name":"Lyon MES"/.test(barred),
+        { state: barLive.state, style: barred.match(/<style>[^<]*<\/style>/)?.[0] });
 
     // Put back as it was, through a change, so later suites find the plant as seeded.
     const back = await call("dana", "design.start", { organization: true });

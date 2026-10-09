@@ -5,8 +5,8 @@
 // Kept in an UNLOGGED table on the primary, so every instance sees the same people; a change to it
 // crosses the bus like any other (its `touches`), so a page on another instance hears of it. An
 // unlogged table is not replicated, so it is always read on the primary.
-import { fail } from "../../../src/errors.js";
-import { callKind } from "../../../src/live-protocol.js";
+import { fail } from "@opencore-mes/juris-kit/errors.js";
+import { callKind } from "@opencore-mes/juris-kit/live-protocol.js";
 
 const STALE_S = 40;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;

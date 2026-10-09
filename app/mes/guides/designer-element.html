@@ -1,0 +1,88 @@
+<!-- The design element editor's guide (DESIGN.md §33, §30.11): a design element of a kind an installed
+     suite adds, in a change request, tab by tab. It names no suite: the kind and its suite are shown on
+     General. Drawn through an allowlist: an element with data-highlight="<CSS selector>" outlines what
+     the selector finds in the change's window (suite-element-editor.js). -->
+<article data-title="The design element editor">
+  <p>A <strong>design element</strong> is a design of a kind a suite adds to the platform. What every
+  element has (its name, label, description and stewards) is edited here; what its kind adds is edited on
+  Design, by the suite's own editor. It is reviewed and approved like every other design. If its suite is
+  taken out, the element stays as it is, labelled, and works again once the suite is back. On a live
+  design, or a change you may not edit, every control here is read only.</p>
+
+  <h3>Its tabs</h3>
+  <dl>
+    <dt data-highlight=".editor-head .subtabs">The tabs</dt>
+    <dd>General opens first. Click a tab to see its settings; the open one is highlighted.</dd>
+    <dt data-highlight=".editor-head .tab-diff">A number on a tab</dt>
+    <dd>How many things on that tab differ from the live version. On Changes, the total.</dd>
+    <dt>Undo</dt>
+    <dd>Nothing live changes until the change executes; Undo (<kbd>⌘Z</kbd> or <kbd>Ctrl+Z</kbd>) takes back
+    your last edit.</dd>
+  </dl>
+
+  <h3>Copilot</h3>
+  <dl>
+    <dt data-highlight=".copilot-log">The conversation</dt>
+    <dd>Ask the AI to draft, check or explain the element. It works as you, saves into this draft, and never
+    submits. The conversation is kept with the change: it picks up here any time.</dd>
+    <dt data-highlight=".copilot-input textarea">Ask the copilot…</dt>
+    <dd>Type what you want. <kbd>⌘ Enter</kbd> or <kbd>Ctrl+Enter</kbd> sends; you can paste or drop a file
+    into the box.</dd>
+    <dt data-highlight=".copilot-input .att-btn">Attach</dt>
+    <dd>Adds a picture, a PDF, a CSV file or an Excel workbook (up to 5); × on a file takes it off.</dd>
+    <dt data-highlight=".copilot-buttons .btn.primary">Send</dt>
+    <dd>Saves your unsaved edits first, then sends. Greyed out while it works, or when no AI is set up.</dd>
+    <dt data-highlight=".copilot-buttons .btn.ghost">New conversation</dt>
+    <dd>Asks first, then deletes the conversation kept with this change. The draft stays as it is.</dd>
+  </dl>
+
+  <h3>Changes</h3>
+  <dl>
+    <dt data-highlight=".changes-view">The differences</dt>
+    <dd>What this change does to the element against the live version, grouped by tab, each of its kind's
+    settings on its own: how many changed, were added and removed. Reviewers and approvers see the same.</dd>
+    <dt data-highlight=".changes-head .mini">Open …</dt>
+    <dd>Jumps to the tab where that group is edited.</dd>
+    <dt data-highlight=".change-item summary">A difference</dt>
+    <dd>Marked new, changed or removed; click it to open or close it. Lines marked − are the live version's,
+    lines marked + the draft's.</dd>
+  </dl>
+
+  <h3>General</h3>
+  <dl>
+    <dt data-highlight=".ed-grid > .ed-field:nth-child(1)">Name</dt>
+    <dd>Fixed once created.</dd>
+    <dt data-highlight=".ed-grid > .ed-field:nth-child(2)">Kind</dt>
+    <dd>Fixed: the kind of design it is, and the suite that adds it. If that suite is not installed here, it
+    says so.</dd>
+    <dt data-highlight=".ed-grid > .ed-field:nth-child(3)">Label</dt>
+    <dd>A text field: what people know it by.</dd>
+    <dt data-highlight=".ed-grid > .ed-field:nth-child(4)">Description</dt>
+    <dd>A text box: what it is for.</dd>
+  </dl>
+
+  <h3>Design</h3>
+  <dl>
+    <dt data-highlight=".editor > :not(.editor-head)">Its kind's settings</dt>
+    <dd>Drawn by the suite that adds this kind: its controls, and its checks, are the suite's own. Its
+    problems are listed with the change's others before it can be submitted.</dd>
+    <dt data-highlight=".editor > div > div > .code-editor">As JSON</dt>
+    <dd>When the suite brings no editor for this kind, or is not installed here, the element is edited as
+    JSON instead, applied with Apply JSON. While its suite is away it stays as it is.</dd>
+  </dl>
+
+  <h3>Stewards</h3>
+  <dl>
+    <dt data-highlight=".editor > div > .checks">Departments</dt>
+    <dd>Tick each department that approves every change to it.</dd>
+  </dl>
+
+  <h3>JSON</h3>
+  <dl>
+    <dt data-highlight=".editor > div > .code-editor">The element as JSON</dt>
+    <dd>All of it as data, its kind's settings included. Edit it here, then apply it.</dd>
+    <dt data-highlight=".editor > div > .code-editor + .btn">Apply JSON</dt>
+    <dd>Replaces the draft with it; every check runs as on any other edit, its suite's included. Its name must
+    stay the same; what is wrong is said in red beside the change.</dd>
+  </dl>
+</article>

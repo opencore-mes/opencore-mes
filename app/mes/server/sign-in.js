@@ -20,12 +20,24 @@ import net from "node:net";
 import tls from "node:tls";
 import { promisify } from "node:util";
 import { appendAudit } from "./audit.js";
+import { openSecret } from "./seal.js";
 
 const scrypt = promisify(scryptCb);
 export const LOCK_AFTER = 5;
 export const LOCK_MINUTES = 15;
 export const MIN_PASSWORD = 12;
 export const LINK_HOURS = 72;
+// A password link lasts this many days unless the plant says (PASSWORD_LINK_DAYS), and at most LINK_MAX_DAYS:
+// long enough to reach someone on leave, short enough that a link forgotten in a mailbox dies.
+export const LINK_DAYS = 3;
+export const LINK_MAX_DAYS = 14;
+export function linkDaysOf(env = {}) {
+    const v = env.PASSWORD_LINK_DAYS;
+    if (v === undefined || v === "") return LINK_DAYS;
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 1 || n > LINK_MAX_DAYS) throw new Error(`PASSWORD_LINK_DAYS is a whole number of days, 1 to ${LINK_MAX_DAYS}, not "${v}".`);
+    return n;
+}
 // A sign-in id is what People & departments names a person by: short, plain, safe in an LDAP name.
 export const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
@@ -146,7 +158,7 @@ export const codeHash = (code) => tokenHash(String(code).toLowerCase().replace(/
 export async function checkSecondFactor(db, userId, code) {
     const [m] = await db.query("SELECT secret, last_step FROM mes.mfa WHERE user_id = $1 AND enabled_at IS NOT NULL", [userId]);
     if (!m) return null;
-    const step = totpStep(m.secret, code, m.last_step);
+    const step = totpStep(openSecret(m.secret), code, m.last_step);
     if (step !== null) {
         // Taken by this sign-in: the same code sent twice at once is good for one of them only.
         const [took] = await db.query("UPDATE mes.mfa SET last_step = $2 WHERE user_id = $1 AND last_step < $2 RETURNING user_id", [userId, step]);
@@ -178,11 +190,73 @@ export async function issuePasswordLink(db, userId, { by, hours = LINK_HOURS } =
     const token = randomBytes(32).toString("base64url");
     await db.transaction(async (tx) => {
         // A new link replaces the person's earlier ones.
-        await tx.query("UPDATE mes.password_tokens SET used_at = now() WHERE user_id = $1 AND used_at IS NULL", [userId]);
+        await tx.query("UPDATE mes.password_tokens SET used_at = now() WHERE user_id = $1 AND used_at IS NULL", [userId]); // a code too
         await tx.query("INSERT INTO mes.password_tokens (token_hash, user_id, made_by, expires_at) VALUES ($1, $2, $3, now() + make_interval(hours => $4))", [tokenHash(token), userId, by, hours]);
         await appendAudit(tx, { actor: by, object: "$auth", action: "password link", after: { user: userId, hours } });
     });
     return { token, path: `/password?token=${token}` };
+}
+
+// The sign-in id as typed (§8.2, §27): trimmed, lower case, and, where People & departments names the plant's
+// domains (`signIn.domains`), with one of them dropped: PLANT\jdoe, PLANT/jdoe and jdoe@plant.local are jdoe
+// (a domain it does not name is left, and the id refused as it stands). The rest of the sign-in sees jdoe.
+export function signInIdOf(typed, domains = []) {
+    const text = String(typed ?? "").trim();
+    const ours = new Set((Array.isArray(domains) ? domains : []).map((d) => String(d).toLowerCase()));
+    const slash = text.search(/[\\/]/);
+    if (slash > 0 && ours.has(text.slice(0, slash).toLowerCase())) return text.slice(slash + 1).trim().toLowerCase();
+    const at = text.lastIndexOf("@");
+    if (at > 0 && ours.has(text.slice(at + 1).toLowerCase())) return text.slice(0, at).trim().toLowerCase();
+    return text.toLowerCase();
+}
+// What People & departments says of the sign-in page: { idLabel, idHint, domains } (organization.js).
+export async function signInSettings(db) {
+    const [row] = await db.query("SELECT body->'signIn' AS s FROM mes.organization WHERE status = 'published'");
+    return row?.s && typeof row.s === "object" ? row.s : {};
+}
+
+// Setup codes (§8.2): for people with no mail or computer of their own, a code on a printed slip they type
+// with their sign-in id, at any station, to set their first password. Five capital letters (no I or O, read
+// as 1 and 0 on paper); only a hash kept, bound to the person, so two people may hold the same letters. A
+// code lasts as long as a link and replaces the person's earlier code or link; after CODE_TRIES wrong tries
+// it is spent (a new one from a sign-in administrator), on top of the sign-in id's own lock.
+export const CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+export const CODE_LENGTH = 5;
+export const CODE_TRIES = 5;
+export function newSetupCode() {
+    // Rejection sampling: 24 does not divide 256, so bytes past 240 are drawn again (no letter favoured).
+    let code = "";
+    while (code.length < CODE_LENGTH) for (const b of randomBytes(8)) if (b < 240 && code.length < CODE_LENGTH) code += CODE_LETTERS[b % 24];
+    return code;
+}
+// As typed: spaces and dashes dropped, lower case raised.
+export const setupCodeOf = (typed) => String(typed ?? "").replace(/[\s-]/g, "").toUpperCase();
+export const setupCodeHash = (userId, code) => tokenHash(`code:${userId}:${setupCodeOf(code)}`);
+// Codes for many people at once (a whole department's slips): each a new code, their earlier codes and
+// links spent, one entry in the trail naming who was given one (never the codes). → [{ id, code }]
+export async function issueSetupCodes(db, userIds, { by, hours = LINK_HOURS, about = null } = {}) {
+    const issued = userIds.map((id) => ({ id, code: newSetupCode() }));
+    if (!issued.length) return issued;
+    await db.transaction(async (tx) => {
+        await tx.query("UPDATE mes.password_tokens SET used_at = now() WHERE user_id = ANY($1::text[]) AND used_at IS NULL", [userIds]);
+        await tx.query(
+            "INSERT INTO mes.password_tokens (token_hash, user_id, made_by, expires_at, kind) SELECT h, u, $3, now() + make_interval(hours => $4), 'code' FROM unnest($1::text[], $2::text[]) AS t(h, u)",
+            [issued.map((i) => setupCodeHash(i.id, i.code)), issued.map((i) => i.id), by, hours],
+        );
+        await appendAudit(tx, { actor: by, object: "$auth", action: "setup codes", after: { count: issued.length, hours, ...(about ? { about } : {}), users: userIds } });
+    });
+    return issued;
+}
+// A code typed with a sign-in id: the person's live code if it is that one (→ "ok"), else a wrong try
+// counted against the code ("wrong", or "spent" at the last try); "spent" too when the code they were
+// given is used up or past its time (they ask for a new one), "none" when they were given none lately.
+export async function checkSetupCode(db, userId, typed) {
+    const [live] = await db.query("SELECT token_hash FROM mes.password_tokens WHERE user_id = $1 AND kind = 'code' AND used_at IS NULL AND expires_at > now()", [userId]);
+    if (!live) return (await db.query("SELECT 1 FROM mes.password_tokens WHERE user_id = $1 AND kind = 'code' LIMIT 1", [userId])).length ? "spent" : "none";
+    const given = setupCodeHash(userId, typed);
+    if (given.length === live.token_hash.length && timingSafeEqual(Buffer.from(given), Buffer.from(live.token_hash))) return "ok";
+    const [row] = await db.query("UPDATE mes.password_tokens SET tries = tries + 1, used_at = CASE WHEN tries + 1 >= $2 THEN now() END WHERE token_hash = $1 AND used_at IS NULL RETURNING used_at", [live.token_hash, CODE_TRIES]);
+    return row?.used_at ? "spent" : "wrong";
 }
 
 // ---- the plant's directory: an LDAP simple bind ----

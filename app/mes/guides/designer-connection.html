@@ -1,0 +1,116 @@
+<!-- The connection editor's guide (DESIGN.md §33, §15.2): a connection in a change request, tab by tab.
+     Drawn through an allowlist: an element with data-highlight="<CSS selector>" outlines what the
+     selector finds in the change's window (integration-editor.js). -->
+<article data-title="The connection editor">
+  <p>A <strong>connection</strong> is another system the plant's services may send requests to: its
+  address, how they sign in to it, and the only requests allowed. A service uses it only once it ticks it
+  on its Reaches tab, approved by this connection's stewards. On a live design, or a change you may not
+  edit, every control here is read only.</p>
+
+  <h3>Its tabs</h3>
+  <dl>
+    <dt data-highlight=".editor-head .subtabs">The tabs</dt>
+    <dd>General opens first. Click a tab to see its settings; the open one is highlighted.</dd>
+    <dt data-highlight=".editor-head .tab-diff">A number on a tab</dt>
+    <dd>How many things on that tab differ from the live version. On Changes, the total.</dd>
+    <dt>Remove, and Undo</dt>
+    <dd>Every Remove asks first. What is removed leaves this change only; nothing live changes until the
+    change executes, and Undo (<kbd>⌘Z</kbd> or <kbd>Ctrl+Z</kbd>) brings it back.</dd>
+  </dl>
+
+  <h3>Copilot</h3>
+  <dl>
+    <dt data-highlight=".copilot-log">The conversation</dt>
+    <dd>Ask the AI to draft, check or explain the connection. It works as you, saves into this draft, and
+    never submits. The conversation is kept with the change: it picks up here any time.</dd>
+    <dt data-highlight=".copilot-input textarea">Ask the copilot…</dt>
+    <dd>Type what you want. <kbd>⌘ Enter</kbd> or <kbd>Ctrl+Enter</kbd> sends; you can paste or drop a file
+    into the box.</dd>
+    <dt data-highlight=".copilot-input .att-btn">Attach</dt>
+    <dd>Adds a picture, a PDF, a CSV file or an Excel workbook (up to 5); × on a file takes it off.</dd>
+    <dt data-highlight=".copilot-buttons .btn.primary">Send</dt>
+    <dd>Saves your unsaved edits first, then sends. Greyed out while it works, or when no AI is set up.</dd>
+    <dt data-highlight=".copilot-buttons .btn.ghost">New conversation</dt>
+    <dd>Asks first, then deletes the conversation kept with this change. The draft stays as it is.</dd>
+  </dl>
+
+  <h3>Changes</h3>
+  <dl>
+    <dt data-highlight=".changes-view">The differences</dt>
+    <dd>What this change does to the connection against the live version, grouped by tab: how many changed,
+    were added and removed. Reviewers and approvers see the same.</dd>
+    <dt data-highlight=".changes-head .mini">Open …</dt>
+    <dd>Jumps to the tab where that group is edited.</dd>
+    <dt data-highlight=".change-item summary">A difference</dt>
+    <dd>Marked new, changed or removed; click it to open or close it. Lines marked − are the live version's,
+    lines marked + the draft's.</dd>
+  </dl>
+
+  <h3>General</h3>
+  <dl>
+    <dt data-highlight=".ed-grid > .ed-field:nth-child(1)">Name</dt>
+    <dd>Fixed once created: services name the connection by it.</dd>
+    <dt data-highlight=".ed-grid > .ed-field:nth-child(2)">Label</dt>
+    <dd>A text field: what people know it by. Required.</dd>
+    <dt data-highlight="[placeholder='https://erp.example.com/api']">Base URL</dt>
+    <dd>An <code>http://</code> or <code>https://</code> address, with no user, password, query or fragment.
+    Every request goes here and stays here: redirects are not followed.</dd>
+    <dt data-highlight=".ed-grid input[type=number]">Timeout (ms)</dt>
+    <dd>How long a request may take before it fails: 100 to 30 000 milliseconds (5 000 unless you change
+    it).</dd>
+  </dl>
+
+  <h3>Authentication</h3>
+  <dl>
+    <dt data-highlight=".ed-grid > .ed-field:nth-child(1) select">Kind</dt>
+    <dd>A drop-down: <em>none</em>; <em>bearer</em> (an <code>Authorization: Bearer</code> header);
+    <em>header</em> (a header of your choice); or <em>basic</em> (user and password).</dd>
+    <dt data-highlight="[placeholder='erp_token']">Secret</dt>
+    <dd>For any kind but none: the name of the secret that holds the credential (lower case, digits, _). Its
+    value is set on the server (<code>MES_SECRET_&lt;NAME&gt;</code>) and never appears in a design, a review or the
+    audit.</dd>
+    <dt data-highlight="[placeholder='X-API-Key']">Header</dt>
+    <dd>For the header kind: the header that carries the credential, such as <code>X-API-Key</code>.</dd>
+  </dl>
+
+  <h3>Allowed requests</h3>
+  <dl>
+    <dt data-highlight=".ed-table">The requests</dt>
+    <dd>The only requests a service may send this system, one row each. Anything not listed is refused, and
+    the refusal is logged. At least one is needed.</dd>
+    <dt data-highlight=".ed-table select">Method</dt>
+    <dd>A drop-down: GET, POST, PUT, PATCH or DELETE.</dd>
+    <dt data-highlight=".ed-table input[type=text]">Path</dt>
+    <dd>Starts with <code>/</code>, after the base URL. Ending it with <code>*</code> allows what follows:
+    <code>/orders/*</code>.</dd>
+    <dt data-highlight=".ed-table .btn.ghost">Remove</dt>
+    <dd>Takes the request out, after asking.</dd>
+    <dt data-highlight=".editor > div > .btn">Add request</dt>
+    <dd>Adds a row, <code>POST /</code>, to change.</dd>
+  </dl>
+
+  <h3>Activity</h3>
+  <dl>
+    <dt data-highlight=".editor .pane-bar .btn">Refresh</dt>
+    <dd>Fetches the latest calls again.</dd>
+    <dt data-highlight=".editor table.grid">Calls</dt>
+    <dd>The latest service runs that sent this system a request: when, as whom, the outcome (with the
+    error), how the service was set off, each request and its status, and how long it took.</dd>
+  </dl>
+
+  <h3>Stewards</h3>
+  <dl>
+    <dt data-highlight=".editor > div > .checks">Departments</dt>
+    <dd>Tick each department that approves every change to it: its address, its authentication and the
+    requests it allows. A service that starts using it is approved by them too.</dd>
+  </dl>
+
+  <h3>JSON</h3>
+  <dl>
+    <dt data-highlight=".editor > div > .code-editor">The connection as JSON</dt>
+    <dd>All of it as data, for integrators. Edit it here, then apply it.</dd>
+    <dt data-highlight=".editor > div > .code-editor + .btn">Apply JSON</dt>
+    <dd>Replaces the draft with it; every check runs as on any other edit. Its name must stay the same; what
+    is wrong is said in red beside the change.</dd>
+  </dl>
+</article>

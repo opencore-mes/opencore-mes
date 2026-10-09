@@ -17,7 +17,7 @@ import pg from "pg";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 
 const base = process.env.DATABASE_URL ?? "postgres:///openmes_test";
@@ -56,12 +56,12 @@ try {
     // ---- 1. people only ----
     step("reset --blank: people only", reset.code === 0 && /people only \(blank\)/.test(reset.out) && /0 objects, 0 transactions, 0 screens, 0 records/.test(reset.out), reset.out);
     const home = await call("dana", "design.home", { as: "dana" });
-    step("nothing modelled: no transactions, screens, services or connections, no object but the built-in ones (Person, one record per person; Desktop, none yet)",
-        home.objects.map((o) => o.object).sort().join() === "desktop,person,report" && !(await db.query("SELECT 1 FROM mes.records WHERE object = 'desktop'")).length && !home.transactions.length && !home.screens.length && !home.services.length && !home.connections.length
+    step("nothing modelled: no transactions, screens, services or connections, no object but the built-in ones (Person, one record per person; Desktop and Certification, none yet)",
+        home.objects.map((o) => o.object).sort().join() === "certification,desktop,person,report" && !(await db.query("SELECT 1 FROM mes.records WHERE object = 'certification'")).length && !(await db.query("SELECT 1 FROM mes.records WHERE object = 'desktop'")).length && !home.transactions.length && !home.screens.length && !home.services.length && !home.connections.length
         && (await db.query("SELECT count(*)::int AS n FROM mes.records WHERE object = 'person'"))[0].n === 10, home.objects.map((o) => o.object));
     step("…but the people, departments and approval steps are there", Object.keys(home.organization.departments).sort().join() === "engineering,it,production,quality" && home.organization.departments.it.approval.length === 2 && home.organization.governance === "engineering", home.organization);
-    const [roles] = await db.query("SELECT count(*)::int AS n, count(*) FILTER (WHERE object NOT IN ('design', 'query', 'auth', 'person', 'desktop', 'report'))::int AS other FROM mes.assignments");
-    step("roles only on the designer, the query page, sign-in administration and the built-in objects", roles.n > 0 && roles.other === 0, roles);
+    const [roles] = await db.query("SELECT count(*)::int AS n, count(*) FILTER (WHERE object NOT IN ('design', 'query', 'auth', 'privacy', 'integrity', 'person', 'desktop', 'report', 'certification'))::int AS other FROM mes.assignments");
+    step("roles only on the designer, the query page, sign-in administration, privacy, data integrity and the built-in objects", roles.n > 0 && roles.other === 0, roles);
     const signIn = await attempt(call(null, "auth.users"));
     step("the sign-in list works, with nothing waiting for anyone", signIn.ok && signIn.value.length === 10 && signIn.value.every((u) => !u.waiting.sign.length && !u.waiting.review.length), signIn);
     step("Olga signs in to an empty plant: nothing but the built-in Person, and Report (Production reads what is shared)", (await call("olga", "defs.list", { as: "olga" })).map((d) => d.object).sort().join() === "person,report");

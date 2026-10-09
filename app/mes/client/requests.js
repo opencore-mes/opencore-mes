@@ -2,11 +2,11 @@
 // sent), what waits on a record (a banner on its form), a request's own page, and the section of the
 // approvals list. Which changes wait, and for whom, is each object's design (definition.js
 // needsApproval, recordRoute); the server decides.
-import { needsApproval } from "./definition.js";
+import { needsApproval, recordRoute, isHidden } from "./definition.js";
 import { confirmDialog, askDialog } from "./dialog.js";
 import { signDialog } from "./sign.js";
 import { titleTab } from "./shell.js";
-import { plant } from "./format.js";
+import { plant, noun } from "./format.js";
 import { icon } from "./icons.js";
 
 const ago = (at) => {
@@ -18,6 +18,8 @@ const ago = (at) => {
 const HIDDEN = "hidden from you";
 const shown = (type, value, title) => {
     if (value === undefined || value === null || value === "") return "—";
+    // A sensitive field (§6.10): that it changes, not what it holds; its record shows it to who asks.
+    if (isHidden(value)) return "hidden: sensitive";
     if (type === "ref") return title ?? "(not visible to you)";
     if (Array.isArray(value)) return value.join(", ") || "—";
     if (type === "boolean") return value ? "yes" : "no";
@@ -25,16 +27,18 @@ const shown = (type, value, title) => {
     if (type === "date") return plant().date(value);
     return String(value);
 };
-const whatOf = (r) => (r.op === "create" ? `New ${String(r.label).toLowerCase()}${r.title ? ` ${r.title}` : ""}` : r.op === "action" ? `${r.actionLabel ?? r.action} ${r.label} ${r.title ?? ""}` : `Change to ${r.label} ${r.title ?? ""}`).trim();
+const whatOf = (r) => (r.op === "create" ? `New ${noun(r.label)}${r.title ? ` ${r.title}` : ""}` : r.op === "action" ? `${r.actionLabel ?? r.action} ${r.label} ${r.title ?? ""}` : r.op === "archive" ? `Archive ${r.label} ${r.title ?? ""}` : r.op === "restore" ? `Restore ${r.label} ${r.title ?? ""}` : `Change to ${r.label} ${r.title ?? ""}`).trim();
 const STATE_WORDS = { pending: "Waiting for approval", applied: "Approved and applied", rejected: "Rejected", void: "Void: not applied", withdrawn: "Withdrawn" };
 
 // Before a change is sent: when its object's design says it waits for approval, ask why. → the reason,
 // "" when it does not wait, or null when the person cancelled.
 export async function reasonFor(api, def, spec, what) {
     if (!needsApproval(def, spec)) return "";
+    // Who approves, as the record stands (its value may route it, §28.3a).
+    const who = recordRoute(def, spec).map((r) => r.department).join(", ") || "the stewards";
     const why = await askDialog(api, {
         title: "Send for approval",
-        message: `${what} waits for approval by the stewards before it takes effect; until then the record stays as it is. Say why.`,
+        message: `${what} waits for approval by ${who} before it takes effect; until then the record stays as it is. Say why.`,
         label: "Why", required: true, multiline: true, confirm: "Send for approval",
     });
     return why === null ? null : why.trim();
@@ -44,7 +48,10 @@ export const sentWords = (req) => `Sent for approval by ${req.route.join(", ")}.
 
 // The departments' progress, as chips (the approvals list's).
 function chips(r) {
-    return r.departments.map((d) => {
+    // A department asked because of the record's value (§28.3a): which value it signs for.
+    const forWords = (d) => { const v = (d.because ?? []).filter((b) => b.startsWith("value:")).map((b) => b.slice(b.indexOf("=") + 1)); return v.length ? ` for ${v.join(" and ")}` : ""; };
+    return r.departments.map((d0) => {
+        const d = { ...d0, department: `${d0.department}${forWords(d0)}` };
         if (d.status === "approved") return { span: { key: d.department, className: "appr-chip approved", children: [icon("check"), { span: `${d.department}${d.by ? ` (${d.by})` : ""}` }] } };
         if (d.status === "rejected") return { span: { key: d.department, className: "appr-chip rejected", title: d.note ?? "", children: [icon("x"), { span: `${d.department}${d.by ? ` (${d.by})` : ""}` }] } };
         if (d.status !== "pending") return { span: { key: d.department, className: "appr-chip after", textContent: d.department } };
@@ -139,7 +146,7 @@ export function registerRequests(juris, { args }) {
                     if (r === undefined) return { p: { className: "muted", textContent: "Loading…" } };
                     if (!r) return { p: { className: "muted", textContent: "This change does not exist, or it is not shared with you." } };
                     return { div: { children: [
-                        { div: { className: "view-head", children: [{ h1: whatOf(r) }, r.record_id ? { Link: { to: `/o/${r.object}/${r.record_id}`, className: "btn ghost", textContent: `Open the ${String(r.label).toLowerCase()}` } } : { span: {} }] } },
+                        { div: { className: "view-head", children: [{ h1: whatOf(r) }, r.record_id ? { Link: { to: `/o/${r.object}/${r.record_id}`, className: "btn ghost", textContent: `Open the ${noun(r.label)}` } } : { span: {} }] } },
                         card(api, r, { full: true, busyPath: `rq.busy.${r.id}` }),
                     ] } };
                 }],

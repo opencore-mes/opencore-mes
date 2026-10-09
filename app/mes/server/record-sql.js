@@ -6,8 +6,8 @@
 // semantics are policy.js `decide`: a row they may not read is not there, a field they may not read
 // matches nothing and sorts last. The rows read are still masked by policy.js before they go out.
 import { conditionSql, column, lit, jsonLit } from "./query.js";
-import { readAllRule } from "./policy.js";
-import { READ_ALL_ROLE } from "../client/definition.js";
+import { readAllRule, requirementsOf } from "./policy.js";
+import { READ_ALL_ROLE, isSensitive } from "../client/definition.js";
 
 // A path read from the person, as expr.js reads one (own properties only).
 function readPath(scope, path) {
@@ -17,6 +17,21 @@ function readPath(scope, path) {
         value = value[part];
     }
     return value;
+}
+
+// What the object's access requires (§9.9), as SQL over `r` for `actor`, before any rule: each certification
+// they do not hold rules out the records its condition holds for (all of them, with none), whoever reads.
+// → "true" (nothing reserved from them), "false", SQL, or null when a condition does not compile.
+export function accessSql(definition, actor, r = "r") {
+    if (actor?.unrestricted) return "true";
+    const held = new Set(actor?.certifications ?? []);
+    const env = { alias: r, user: () => "NULL::jsonb" };
+    try {
+        const parts = requirementsOf(definition).filter((q) => !held.has(q.certification)).map((q) => (q.when === undefined ? "false" : `NOT ${conditionSql(q.when, env)}`));
+        return parts.includes("false") ? "false" : parts.length ? `(${parts.join(" AND ")})` : "true";
+    } catch {
+        return null;
+    }
 }
 
 // What `actor` may read of `definition`'s records, as SQL over the alias `r`: { read, field(name) },
@@ -37,8 +52,14 @@ export function rightsSql(definition, actor, r = "r") {
         const parts = rules.map((rule, k) => (pick(rule) ? applies[k] : null)).filter(Boolean);
         return parts.includes("true") ? "true" : parts.length ? `(${parts.join(" OR ")})` : "false";
     };
-    const read = anyOf((rule) => Boolean(rule.record?.read));
+    const reserved = accessSql(definition, actor, r);
+    if (reserved === null) return null;
+    const granted = anyOf((rule) => Boolean(rule.record?.read));
+    const read = reserved === "true" ? granted : reserved === "false" ? "false" : `(${granted} AND ${reserved})`;
+    // A sensitive field (§6.10) is read here by nobody: a list, a screen or a search never matches,
+    // sorts, sums or groups by what it holds (each would tell it without anyone asking).
     const field = (name) => {
+        if (isSensitive(definition, name)) return "false";
         const granted = anyOf((rule) => ["read", "write"].includes(rule.fields?.[name] ?? rule.fields?.["*"]));
         const hidden = anyOf((rule) => (Array.isArray(rule.deny?.read) ? rule.deny.read : []).includes(name));
         if (granted === "false" || hidden === "true") return "false";

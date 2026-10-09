@@ -4,28 +4,61 @@
 // read with the viewer's own rights and re-run whenever a record changes.
 //   /s/<name>          a screen with no parameter, or one asking for it (scan a machine)
 //   /s/<name>/<value>  opened with its parameter
-import { titleTab, deskHome, homeFill } from "./shell.js";
+import { titleTab, retab, deskHome, homeFill } from "./shell.js";
 import { noDefault } from "./select.js";
 import { evaluate } from "./expr.js";
 import { confirmDialog } from "./dialog.js";
 import { plant } from "./format.js";
 import { icon } from "./icons.js";
+import { recordFileUrl } from "./media.js";
+import { richText } from "./rich-text.js";
 import { stateBadgeClass } from "./theme.js";
-import { focusFirst, controlFor } from "./keyboard.js";
+import { focusFirst, controlFor, controlsOf } from "./keyboard.js";
 import { driveInputFlow } from "./input-flow-driver.js";
 import { transactionRootId } from "./transaction.js";
 import { floorView } from "./floor-view.js";
 import { suiteBlocks } from "./suite-registry.js";
+import { isHidden } from "./definition.js";
+import { editorPanel } from "./editor-kit.js";
+import { windowTable } from "./window-rows.js";
+
+// The records holding part of a title (§26.1, a parameter's search), as this person may read them: their count by state
+// and a first page, kept for the screen's ParamMatches. `only`: one state's. → what it found, or null.
+// A screen opened on a record, or back on its scan (value null). One that keeps one tab (oneTab: a desk worked all
+// day) moves the tab it is in to the new path, so no tab opens for each record; the last end's words go once the
+// next record is opened.
+function keepTab(api, screen, value) {
+    if (!api.peek(`scr.${screen}.def.oneTab`)) return;
+    const to = value ? `/s/${screen}/${encodeURIComponent(value)}` : `/s/${screen}`;
+    const here = api.peek("$route.path");
+    if (here && here !== to && here.startsWith(`/s/${screen}`)) retab(api, here, to, api.peek(`scr.${screen}.def.label`));
+    if (value) api.setValue(`scr.${screen}.flowDone`, null);
+}
+function openScreen(api, screen, value) {
+    keepTab(api, screen, value);
+    api.navigate(value ? `/s/${screen}/${encodeURIComponent(value)}` : `/s/${screen}`);
+}
+
+function findMatches(api, screen, spec, q, only) {
+    const show = Array.isArray(spec.search?.show) ? spec.search.show : [];
+    return api.call("records.matching", { object: spec.to, q, state: only, limit: 30, show, where: spec.where ?? null, as: api.peek("me.id") })
+        .then((r) => { const m = { ...r, only, loading: false }; api.setValue(`scr.${screen}.matches`, r.total ? m : null); return m; }, () => null);
+}
 
 const words = (v) => String(v ?? "").replace(/_/g, " ");
 const number = (v) => (typeof v === "number" ? plant().number(v) : "—");
-// One value as text: a reference by its record's title, a state as a badge, a list joined.
-function cell(field, row, name, tones) {
+// One value as text: a reference by its record's title, a state as a badge, a list joined; a sensitive
+// one (§6.10) hidden, with Show (records.js SensitiveValue), when the block says whose (`object`).
+function cell(field, row, name, tones, object = null) {
     if (name === "state") return { span: { className: stateBadgeClass(row.state, tones), textContent: words(row.state) } };
     const v = row?.[name];
     if (v === undefined) return { span: { className: "muted", title: "Not visible to you", textContent: "·" } };
+    if (isHidden(v)) return object && row.id ? { SensitiveValue: { object, id: row.id, field: name, label: field?.label ?? name, type: field?.type ?? "string" } } : { span: { className: "muted", textContent: "Hidden: sensitive" } };
     if (v === null || v === "") return { span: { className: "muted", textContent: "—" } };
     if (field?.type === "ref") return { span: { textContent: row.$titles?.[name] ?? "(not visible)" } };
+    // A picture shown small; a file as a link to open it (§35.4), read through its record when the block says whose.
+    if (field?.type === "image" && typeof v === "string") return { img: { className: "cell-picture", src: object && row.id ? recordFileUrl(object, row.id, name) : `/blob/${v}`, alt: "", loading: "lazy" } };
+    if (field?.type === "file" && typeof v === "string") return { MediaView: { key: `cf-${row.id}-${name}-${v}`, src: object && row.id ? recordFileUrl(object, row.id, name) : `/blob/${v}`, compact: true } };
     if (Array.isArray(v)) return { span: { textContent: v.join(", ") } };
     if (typeof v === "number") return { span: { textContent: number(v) } };
     if (typeof v === "boolean") return { span: { textContent: v ? "yes" : "no" } };
@@ -35,6 +68,7 @@ const labelOf = (fields, name) => (name === "state" ? "State" : fields?.[name]?.
 
 export function registerScreens(juris, { args }) {
     // `dialog`: shown over another page (§26.6): no tab, no Maximize, no pop-ups of its own.
+    // Its tab named after the screen alone where it keeps one tab (oneTab), else after the record it is opened on too.
     juris.registerComponent("ScreenView", ({ name, arg = null, dialog = false }, api) => {
         const as = api.getState("me.id", null, { track: false });
         const S = `scr.${name}`;
@@ -44,7 +78,7 @@ export function registerScreens(juris, { args }) {
         api.live(dataPath, "screens.data", args.screenData(name, arg, as));
         if (!api.isServer && !dialog) {
             const stop = api.bindState(() => [api.getState(`${defPath}.label`), api.getState(`${dataPath}.param.title`)], ([label, title]) => {
-                if (label) titleTab(api, arg ? `/s/${name}/${arg}` : `/s/${name}`, title ? `${label}: ${title}` : label);
+                if (label) titleTab(api, arg ? `/s/${name}/${arg}` : `/s/${name}`, title && !api.peek(`${defPath}.oneTab`) ? `${label}: ${title}` : label);
             });
             api.onCleanup(stop);
         }
@@ -82,6 +116,8 @@ export function registerScreens(juris, { args }) {
                     // Its input flow (§32.13): over its parameter and its transaction forms, from the keyboard;
                     // what it asks for now, under the heading.
                     () => { const v = api.getState(`${defPath}.inputFlow.version`, null); return v && !dialog ? { ScreenInputFlow: { key: `sif-${name}-${arg ?? ""}-${v}`, name, arg, defPath } } : { span: {} }; },
+                    // Part of a title typed where the parameter searches (§26.1): what holds it, counted by state.
+                    () => { const p = Object.entries(api.getState(`${defPath}.params`, {}) ?? {})[0]; return p && p[1]?.search && !dialog ? { ParamMatches: { key: `pm-${name}`, screen: name, spec: p[1] } } : { span: {} }; },
                     { ScreenBody: { name, defPath, dataPath, arg, dialog } },
                     // Pop-ups over this screen (§26.7), read with its parameter.
                     dialog ? { span: {} } : { PopupWatch: { key: `pw-s-${name}-${arg ?? ""}`, target: `screen:${name}`, values: () => { const p = Object.keys(api.getState(`${defPath}.params`, {}) ?? {})[0]; return p ? { [p]: arg } : {}; } } },
@@ -103,12 +139,16 @@ export function registerScreens(juris, { args }) {
                 const tabPath = `ui.screenTab.${name}`;
                 const where = {};
                 const forms = {};
+                // A form left out for this viewer (one they may not send, §26.10): its asks passed over, its run the end.
+                const dataPath = `scr.${name}.data.${String(arg ?? "-").replace(/[^a-zA-Z0-9_-]/g, "_")}`;
                 (d.blocks ?? []).forEach((b, j) => {
                     if (b.block !== "transaction" || where[b.name]) return;
                     const f = `f.tx.${b.name}.scr_${name}_${j}`;
                     const root = () => doc.getElementById(transactionRootId(b.name, `scr_${name}_${j}`));
-                    where[b.name] = { f, tab: b.tab ?? null, root };
+                    const hidden = () => api.peek(`${dataPath}.blocks.${j}.$off`) === "hidden";
+                    where[b.name] = { f, tab: b.tab ?? null, root, hidden };
                     forms[b.name] = {
+                        hidden,
                         primary: () => root()?.querySelector(".form-foot .tx-check, .form-foot .tx-run"),
                         confirm: () => root()?.querySelector(".form-foot .tx-run"),
                         preview: `${f}.preview`, done: `${f}.done`, errors: `${f}.serverErrors`,
@@ -122,7 +162,7 @@ export function registerScreens(juris, { args }) {
                         if (input === "param") return param ? { param: true, control: () => doc.getElementById(`param-${name}`), filled: () => Boolean(arg), value: () => arg, set: () => {}, object: spec?.type === "ref" ? spec.to : null } : null;
                         const [t, field] = String(input).includes(".") ? String(input).split(".") : [names.length === 1 ? names[0] : null, input];
                         const w = where[t];
-                        if (!w) return null;
+                        if (!w || w.hidden()) return null;
                         const ins = api.peek(`tx.${t}.def`)?.inputs?.[field];
                         return {
                             control: () => controlFor(w.root(), `${w.f}.${field}`),
@@ -135,6 +175,17 @@ export function registerScreens(juris, { args }) {
                     },
                     forms,
                     scope: () => ({ param: param ? { [param]: arg } : {}, user: { id: api.peek("me.id") } }),
+                    // A one-tab screen's end that repeats goes back to its scan (no record open, the same tab), its
+                    // words kept above the next prompt: what to do with the one just done.
+                    // …and at an end that stops (the record only shown), the cursor back on its scan, ready for the next.
+                    // (A plan's step shown for the record, its form for this person: the cursor in that instead.)
+                    afterStop: () => { if (d.oneTab) setTimeout(() => { const form = doc.getElementById(`screen-root-${name}`)?.querySelector(".task-form"); const first = form && controlsOf(form)[0]; (first ?? doc.getElementById(`param-${name}`))?.focus(); }, 250); },
+                    restart: (end) => {
+                        if (!d.oneTab || !param || !arg) return false;
+                        api.setValue(`scr.${name}.flowDone`, end.label || null);
+                        setTimeout(() => openScreen(api, name, null), 0);
+                        return true;
+                    },
                 });
                 // Its forms drawn first (they load in the browser).
                 // Opened on its parameter, it goes on past the ask for it.
@@ -146,6 +197,9 @@ export function registerScreens(juris, { args }) {
             div: {
                 className: "screen-flow",
                 children: [() => {
+                    const done = api.getState(`scr.${name}.flowDone`, null);
+                    return done ? { p: { className: "flow-done", role: "status", children: [icon("check"), { span: done }] } } : { span: {} };
+                }, () => {
                     const error = api.getState(`scr.${name}.flow.error`, null);
                     const prompt = api.getState(`scr.${name}.flow.prompt`, null);
                     return error || prompt ? { p: { className: `flow-prompt${error ? " bad" : ""}`, role: "status", "aria-live": "polite", children: [icon(error ? "warning" : "scan"), { span: error ?? prompt }] } } : { span: {} };
@@ -162,7 +216,7 @@ export function registerScreens(juris, { args }) {
         // What it is called: the parameter's label ("equipment"), not the object's name.
         const noun = String(spec.label ?? words(spec.to)).toLowerCase();
         // Chosen, it lets go of the cursor: the form on the screen's tab in view takes it (keyboard.js).
-        const go = (value) => { if (value) globalThis.document?.activeElement?.blur?.(); api.navigate(value ? `/s/${screen}/${encodeURIComponent(value)}` : `/s/${screen}`); };
+        const go = (value) => { if (value) globalThis.document?.activeElement?.blur?.(); openScreen(api, screen, value); };
         if (!api.isServer && spec.type === "ref" && spec.widget === "select") {
             // Only the records it opens with (its where: a die saw's screen lists die saws).
             const fits = (r) => Object.entries(spec.where ?? {}).every(([f, v]) => (Array.isArray(v) ? v : [v]).includes(r[f]));
@@ -174,7 +228,10 @@ export function registerScreens(juris, { args }) {
             if (!wanted) return;
             if (spec.type !== "ref") return go(wanted);
             const hit = await api.call("records.lookup", { object: spec.to, key: wanted }).catch(() => null);
-            if (hit) go(hit.id); else setError(`No ${noun} "${wanted}" that you can see.`);
+            if (hit) { api.setValue(`scr.${screen}.matches`, null); return go(hit.id); }
+            // Not a whole title: where the parameter searches, those that hold it (§26.1); else, not found.
+            if (spec.search) return findMatches(api, screen, spec, wanted, null).then((m) => { if (m && !m.total) setError(`No ${noun} holds "${wanted}" that you can see.`); });
+            setError(`No ${noun} "${wanted}" that you can see.`);
         };
         // Taken from the keyboard (keyboard.js): nothing open yet, the cursor starts here, ready for a scan.
         if (!api.isServer && !current) api.onMount(() => { const el = globalThis.document?.getElementById(`param-${screen}`); const doc = globalThis.document; if (el && (!doc.activeElement || doc.activeElement === doc.body)) el.focus(); });
@@ -187,6 +244,43 @@ export function registerScreens(juris, { args }) {
                     { input: { id: `param-${screen}`, type: spec.type === "date" ? "date" : "text", autocomplete: "off", placeholder: current ? `Another ${words(spec.label ?? param).toLowerCase()}: scan or type` : `Scan or type the ${words(spec.label ?? param).toLowerCase()}`, onkeydown: (e) => { if (e.key === "Enter") { e.preventDefault(); scan(e.target.value); e.target.value = ""; } }, onchange: (e) => { scan(e.target.value); e.target.value = ""; } } },
                 ] } };
         return { div: { className: "param-picker", children: [{ span: { className: "muted small", textContent: spec.label ?? param } }, control, () => (error() ? { span: { className: "field-error", textContent: error() } } : { span: {} })] } };
+    });
+
+    // What part of a title found (§26.1): how many records hold it, by state (each state a filter: pressed again,
+    // all of them), and the rows, a window at a time, more fetched as the list is scrolled to its end; each row a
+    // link that opens the screen on that record.
+    juris.registerComponent("ParamMatches", ({ screen, spec }, api) => () => {
+        const path = `scr.${screen}.matches`;
+        const m = api.getState(path, null);
+        if (!m || !m.total) return { span: {} };
+        const show = Array.isArray(spec.search?.show) ? spec.search.show : [];
+        const more = () => {
+            if (m.loading || !m.more) return;
+            api.setValue(`${path}.loading`, true);
+            api.call("records.matching", { object: spec.to, q: m.q, state: m.only, offset: m.rows.length, limit: 30, show, where: spec.where ?? null, as: api.peek("me.id") })
+                .then((r) => { if (api.peek(path)?.q === m.q) api.batch(() => { api.setValue(`${path}.rows`, [...m.rows, ...r.rows]); api.setValue(`${path}.more`, r.more); api.setValue(`${path}.loading`, false); }); },
+                    () => api.setValue(`${path}.loading`, false));
+        };
+        const noun = String(spec.label ?? words(spec.to)).toLowerCase();
+        return { section: { className: "panel param-matches", "aria-label": `${noun} holding ${m.q}`, children: [
+            { div: { className: "pm-head", children: [
+                { strong: `${plant().number(m.total)} ${noun}${m.total === 1 ? "" : "s"} hold “${m.q}”` },
+                { span: { className: "muted small", textContent: m.only ? ` · ${words(m.only)} only` : " · by state" } },
+                { button: { type: "button", className: "btn ghost small pm-close", "aria-label": "Close the search", onclick: () => api.setValue(path, null), children: [icon("x")] } },
+            ] } },
+            { div: { className: "pm-states", children: m.states.map((x) => ({ button: { key: x.state, type: "button", className: `${stateBadgeClass(x.state, m.tones)} pm-state${m.only === x.state ? " on" : ""}`, "aria-pressed": String(m.only === x.state),
+                onclick: () => findMatches(api, screen, spec, m.q, m.only === x.state ? null : x.state), textContent: `${words(x.state)} ${plant().number(x.n)}` } })) } },
+            windowTable({ key: `pm-${screen}-${m.q}-${m.only ?? ""}`, head: [m.labels?.title ?? spec.label ?? "", "State", ...show.map((f) => m.labels?.[f] ?? words(f))], count: m.rows.length, className: "pm-rows",
+                row: (i) => {
+                    if (i >= m.rows.length - 3) more();
+                    const r = m.rows[i];
+                    return { tr: { key: r.id, children: [
+                        { td: { children: [{ Link: { to: `/s/${screen}/${encodeURIComponent(r.id)}`, textContent: r.title, onclick: () => { api.setValue(path, null); keepTab(api, screen, r.id); } } }] } },
+                        { td: { children: [{ span: { className: stateBadgeClass(r.state, m.tones), textContent: words(r.state) } }] } },
+                        ...show.map((f) => ({ td: { textContent: r[f] === null || r[f] === undefined || r[f] === "" ? "—" : String(r[f]) } })),
+                    ] } };
+                } }),
+        ] } };
     });
 
     // The blocks, on a 12-column grid (a narrow screen stacks them). `preview`: the designer's draft,
@@ -217,7 +311,7 @@ export function registerScreens(juris, { args }) {
                     disabled(i) ? { p: { className: "block-why icon-text", children: [icon("lock"), { span: offs[i].why ?? "Not available now." }] } } : { span: {} },
                     // Not enabled: everything in it is out of reach of the pointer and the keyboard alike.
                     { fieldset: { className: "block-body", disabled: disabled(i), children: [
-                        blockView(api, { name, b, i, data: data.blocks?.[i] ?? {}, scope, preview, dialog, shown, blocks, offs, tabPath: blocks.some((x) => x.tab) ? tabPath : null }),
+                        blockView(api, { name, b, i, data: data.blocks?.[i] ?? {}, live: `${dataPath}.blocks.${i}`, scope, preview, dialog, shown, blocks, offs, tabPath: blocks.some((x) => x.tab) ? tabPath : null }),
                     ] } },
                 ],
             },
@@ -270,7 +364,7 @@ export function registerScreens(juris, { args }) {
         return { span: { hidden: true } };
     });
 
-    function blockView(api, { name, b, i, data, scope, preview, dialog, shown = null, blocks = [], tabPath = null, offs = [] }) {
+    function blockView(api, { name, b, i, data, live = null, scope, preview, dialog, shown = null, blocks = [], tabPath = null, offs = [] }) {
         if (data.error) return { p: { className: "error small", textContent: data.error } };
         // A block of a kind a suite adds (§30.11): its own component, given the block and what the
         // suite read for it. With the suite gone it says what it needs; the other blocks are drawn.
@@ -280,8 +374,41 @@ export function registerScreens(juris, { args }) {
             return { [kind.component]: { key: `suite-block-${name}-${i}`, b, data, preview: Boolean(preview) } };
         }
         switch (b.block) {
+            // Words: paragraphs, lists, **bold**, headings and links (rich-text.js), drawn as text.
             case "text":
-                return { p: { className: "screen-text", textContent: b.text ?? "" } };
+                return { div: { className: "screen-text rich", children: richText(b.text ?? "") } };
+            // The step a record's plan waits at (§26.10): its form for those it is for (the cursor in it), whom it waits
+            // for to anyone else. Sent on a one-tab screen, back to the scan, saying so.
+            case "plan":
+                if (!data.run) return { p: { className: "muted small", textContent: "No plan waits on it now." } };
+                return { FlowTask: { key: `plan-${data.run}`, run: data.run, embedded: true, onDone: (step) => {
+                    if (preview || !api.peek(`scr.${name}.def.oneTab`)) return;
+                    api.setValue(`scr.${name}.flowDone`, `${step ?? b.title ?? "Its step"}: sent`);
+                    setTimeout(() => openScreen(api, name, null), 0);
+                } } };
+            // What was done lately with its transactions (§26.10): newest first, a window at a time; each run when, by
+            // whom, which, and for each record it moved its state's way and what it set.
+            case "runs": {
+                const rows = data.rows ?? [];
+                if (!rows.length) return { p: { className: "muted small", textContent: "Nothing done here yet." } };
+                const badge = (st, tones) => (st ? { span: { className: stateBadgeClass(st, tones), textContent: words(st) } } : { span: {} });
+                return windowTable({ key: `runs-${name}-${i}-${rows[0]?.seq ?? 0}`, head: ["When", "Who", "What", "Record", "Status", "Set"], count: rows.length, className: "runs-rows",
+                    row: (k) => {
+                        const r = rows[k];
+                        return { tr: { key: String(r.seq), children: [
+                            { td: { className: "nowrap", textContent: plant().dateTime(r.at) } },
+                            { td: { textContent: r.who } },
+                            { td: { textContent: r.transaction } },
+                            { td: { className: "nowrap", children: r.records.map((x) => ({ div: { key: x.id, children: [preview ? { span: { textContent: x.title ?? "" } } : { Link: { to: `/o/${x.object}/${x.id}`, textContent: x.title ?? x.label } }] } })) } },
+                            { td: { children: r.records.map((x) => ({ div: { key: x.id, className: "runs-way", children: x.to ? [badge(x.from, x.tones), x.from ? { span: { className: "muted", textContent: " → " } } : { span: {} }, badge(x.to, x.tones)] : [{ span: { className: "muted", textContent: "—" } }] } })) } },
+                            { td: { className: "small", textContent: r.records.flatMap((x) => x.fields.map((f) => `${f.label}: ${f.to ?? "—"}`)).join(" · ") || "—" } },
+                        ] } };
+                    } });
+            }
+            // A file shown (§35.4): a record's, read as the viewer, or the screen's own (its guide).
+            case "media":
+                if (!data.src) return { p: { className: "muted small", textContent: data.none ? "This record has no file here yet." : "Nothing to show." } };
+                return { MediaView: { key: `scr-md-${name}-${i}-${data.src}-${(data.steps ?? []).length}`, src: data.src, type: data.type ?? null, name: data.name ?? null, size: data.size ?? null, height: b.height ?? 480, steps: data.steps ?? [], pauseAtSteps: b.pauseAtSteps !== false, live: live ?? null, arg: scope.param ? Object.values(scope.param)[0] ?? null : null } };
             // A chart (§34.9): its query's rows, drawn by the chart view as its spec says.
             case "chart": {
                 if (!(data.rows ?? []).length) return { p: { className: "muted small", textContent: "Nothing to draw: its query answered no rows." } };
@@ -307,12 +434,20 @@ export function registerScreens(juris, { args }) {
                 if (!r) return { p: { className: "muted small", textContent: "Nothing to show." } };
                 return { div: { children: [
                     preview ? { strong: r.$title ?? "" } : { Link: { to: `/o/${data.object}/${r.id}`, className: "record-link", textContent: r.$title ?? data.label } },
-                    { dl: { className: "record-fields", children: (b.show ?? []).flatMap((f) => [{ dt: { key: `t-${f}`, textContent: labelOf(data.fields, f) } }, { dd: { key: `d-${f}`, children: [cell(data.fields?.[f], r, f, data.tones)] } }]) } },
+                    { dl: { className: "record-fields", children: (b.show ?? []).flatMap((f) => [{ dt: { key: `t-${f}`, textContent: labelOf(data.fields, f) } }, { dd: { key: `d-${f}`, children: [cell(data.fields?.[f], r, f, data.tones, preview ? null : data.object)] } }]) } },
                 ] } };
             }
             case "table": {
+                // A named query's rows (§23.1): its columns as they come, each said in words; a date or a moment in
+                // the plant's formats; a row its record (`object`) when the query gives the record's id.
+                const fromQuery = b.query !== undefined;
+                const asText = (v) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v) ? plant().dateTime(v) : typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? plant().date(v) : v);
+                if (fromQuery) data = {
+                    ...data, fields: Object.fromEntries((data.columns ?? []).map((c) => [c, { label: words(c).replace(/^./, (x) => x.toUpperCase()) }])),
+                    rows: (data.rows ?? []).map((r, k) => ({ id: r.id ?? `row-${k}`, $real: r.id !== null && r.id !== undefined, ...(r.state ? { state: r.state } : {}), ...Object.fromEntries((data.columns ?? []).map((c, j) => [c, asText(r.cells[j])])), $title: r.cells[0] })),
+                };
                 const all = data.rows ?? [];
-                const columns = b.columns ?? [];
+                const columns = fromQuery ? data.columns ?? [] : b.columns ?? [];
                 const open = api.getState(`scr.${name}.open.${i}`, null);
                 // Drawn as scrolled: `pageSize` rows (25) at first, as many more each time the bottom comes
                 // into view, over the rows the block holds (its `limit`).
@@ -325,6 +460,7 @@ export function registerScreens(juris, { args }) {
                     api.setValue(`scr.${name}.open.${i}`, null);
                     api.setValue(`scr.${name}.notice.${i}`, `${result.label}: ${result.changes.map((c) => `${c.label} ${c.title}${c.state ? ` → ${words(c.state.to)}` : ""}`).join("; ")}`);
                 });
+                const txLabel = (tx) => (api.getState("nav.transactions", []) ?? []).find((t) => t.name === tx)?.label ?? tx;
                 // The row's actions: the transactions this person may run that appear on it in its state.
                 const actionsFor = (row) => (b.rowActions ?? []).map((t) => (api.getState("nav.transactions", []) ?? []).find((x) => x.name === t)).filter((t) => t && (!t.appearsOn?.states?.length || t.appearsOn.states.includes(row.state)) && (t.appearsOn?.when === undefined || evaluate(t.appearsOn.when, { record: row, user: { id: api.peek("me.id") } }) === true));
                 // Remove: the record archived as the viewer (its policy and rule pipe decide), after asking.
@@ -381,10 +517,10 @@ export function registerScreens(juris, { args }) {
                         div: { className: "grid-scroll", children: [{ table: { className: "grid", children: [
                             { thead: { children: [{ tr: { children: [...columns.map((c) => ({ th: labelOf(data.fields, c) })), ...(hasActions ? [{ th: "" }] : [])] } }] } },
                             { tbody: { children: rows.map((row) => ({ tr: { key: row.id, classList: { selected: open?.id === row.id || picked === row.id }, children: [
-                                ...columns.map((c, k) => ({ td: { key: c, children: [k === 0 && !preview ? { Link: { to: `/o/${data.object}/${row.id}`, children: [cell(data.fields?.[c], row, c, data.tones)] } } : cell(data.fields?.[c], row, c, data.tones)] } })),
+                                ...columns.map((c, k) => ({ td: { key: c, children: [k === 0 && !preview && !isHidden(row[c]) && data.object && (!fromQuery || row.$real) ? { Link: { to: `/o/${data.object}/${row.id}`, children: [cell(data.fields?.[c], row, c, data.tones)] } } : cell(data.fields?.[c], row, c, data.tones, preview ? null : data.object)] } })),
                                 ...(hasActions ? [{ td: { className: "row-actions", children: [
                                     // A row's transaction whose form on this screen is not shown or not enabled now (§26.9) is not offered here either.
-                                    ...actionsFor(row).map((t) => { const off = formOff(t); return { button: { key: t.name, type: "button", className: "btn tx-btn", disabled: preview || Boolean(off), title: off ? off.why ?? "Not available here now." : undefined, textContent: t.label, onclick: () => run(t, row) } }; }),
+                                    ...actionsFor(row).map((t) => { const off = formOff(t); return { button: { key: t.name, type: "button", className: "btn tx-btn", "data-row-tx": `${row.id}:${t.name}`, disabled: preview || Boolean(off), title: off ? off.why ?? "Not available here now." : undefined, textContent: t.label, onclick: () => run(t, row) } }; }),
                                     ...(b.archive && row.$archive ? [{ button: { key: "rm", type: "button", className: "btn ghost", disabled: preview, textContent: "Remove", onclick: () => remove(row) } }] : []),
                                 ] } }] : []),
                             ] } })) } },
@@ -396,11 +532,19 @@ export function registerScreens(juris, { args }) {
                         { span: { className: "muted small", textContent: `${shown} of ${all.length}${all.length >= (b.limit ?? 200) ? "+ (it holds the first " + (b.limit ?? 200) + ")" : ""}` } },
                         shown < all.length && !preview ? { AutoMore: { key: `more-${i}-${shown}`, id: `more-${name}-${i}`, label: "Show more", onMore: () => api.setValue(`scr.${name}.shown.${i}`, shown + size) } } : { span: {} },
                     ] } } : { span: {} },
-                    // A row's transaction, right here: the record filled in; the row moves on when it is done.
-                    open && !preview ? { div: { key: `open-${open.tx}-${open.id}`, className: "screen-inline", children: [
-                        { div: { className: "screen-inline-head", children: [{ strong: (api.getState("nav.transactions", []) ?? []).find((t) => t.name === open.tx)?.label ?? open.tx }, { button: { type: "button", className: "btn ghost", textContent: "Close", onclick: () => api.setValue(`scr.${name}.open.${i}`, null) } }] } },
+                    // A row's transaction, right here: the record filled in; the row moves on when it is done. Under the
+                    // table, or (rowActionsIn: "panel") in a panel over the screen, the list kept in sight behind it.
+                    open && !preview && b.rowActionsIn !== "panel" ? { div: { key: `open-${open.tx}-${open.id}`, className: "screen-inline", children: [
+                        { div: { className: "screen-inline-head", children: [{ strong: txLabel(open.tx) }, { button: { type: "button", className: "btn ghost", textContent: "Close", onclick: () => api.setValue(`scr.${name}.open.${i}`, null) } }] } },
                         { TransactionScreen: { key: `inl-${open.tx}-${open.id}`, name: open.tx, from: open.id, embedded: true, slot: `scr_${name}_${i}_${open.id}`, onDone: done, prefill: Object.fromEntries(Object.entries(b.fills ?? {}).map(([k, e]) => [k, evaluate(e, scope) ?? null]).filter(([, v]) => v !== null)) } },
                     ] } } : { span: {} },
+                    open && !preview && b.rowActionsIn === "panel" ? editorPanel(api, {
+                        id: `scr-${name}-panel-${i}`, title: txLabel(open.tx),
+                        subtitle: [{ span: (all.find((r) => r.id === open.id)?.$title) ?? "" }],
+                        close: () => api.setValue(`scr.${name}.open.${i}`, null),
+                        returnTo: `[data-row-tx="${open.id}:${open.tx}"]`,
+                        children: [{ div: { key: `open-${open.tx}-${open.id}`, className: "screen-panel-form", children: [{ TransactionScreen: { key: `inl-${open.tx}-${open.id}`, name: open.tx, from: open.id, embedded: true, slot: `scr_${name}_${i}_${open.id}`, onDone: done, prefill: Object.fromEntries(Object.entries(b.fills ?? {}).map(([k, e]) => [k, evaluate(e, scope) ?? null]).filter(([, v]) => v !== null)) } }] } }],
+                    }) : { span: {} },
                 ] } };
             }
             case "transaction": {

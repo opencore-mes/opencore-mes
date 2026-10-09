@@ -2,6 +2,7 @@
 // left, a workspace of tabs on the right. Everyone uses it; what each person sees is their rights.
 import { usePlantFormats, plant } from "./format.js";
 import { icon } from "./icons.js";
+import { infoDialog } from "./dialog.js";
 import { PICKER_SHOWN, MIN_SEARCH, searchWords } from "./people-file.js";
 import { windowRows } from "./window-rows.js";
 import { schemeOf, PERSONAL, stateBadgeClass } from "./theme.js";
@@ -55,6 +56,9 @@ export function retab(api, from, to, text) {
 }
 
 const MAX_TABS = 12;
+// What an emergency change asks of the person in the inbox (§5.7): its one signature, or its review
+// or a department's confirmation afterwards, the change being live already.
+const emergencyWhat = (i) => `${i.emergency === "approve" ? `Emergency: sign for ${i.department}, and it goes live at once` : i.emergency === "review" ? "Emergency, already live: review it afterwards" : `Emergency, already live: confirm or flag it for ${i.department}`}${i.overdue ? " (overdue)" : ""}`;
 const guessTitle = (path) => {
     const parts = path.split("/").filter(Boolean);
     if (parts[0] === "o" && parts[2] === "new") return "New";
@@ -120,11 +124,18 @@ export function registerShell(juris, { args }) {
         return api.getState("$route.name") === "login" || (api.getState("$route.name") === "password" && !api.getState("me.id", null)) ? { div: { className: "login-page", children: [{ RouterView: {} }] } } : { Shell: {} };
     });
 
+    // What the plant calls the sign-in id, and the hint in its empty box (People & departments → Sign-in, §8.2):
+    // "Username" unless it says otherwise, the word people know.
+    const idLabel = (api) => api.getState("signing.idLabel", null) || "Username";
+    // The label inside a sentence: "your username", but a plant's own words as it wrote them.
+    const idWords = (api) => (api.getState("signing.idLabel", null) ? idLabel(api) : "username");
+    const idHint = (api) => api.getState("signing.idHint", null) || "";
     // Why a sign-in went back to this page (auth.js `back`), in words.
     const REFUSED = {
         wrong: () => "The sign-in id or password is wrong.",
         locked: () => "Too many wrong passwords: this sign-in id is locked for 15 minutes. If you have forgotten your password, ask IT for a link to set a new one.",
         unknown: (u) => `${u ? `${u} is` : "You are"} not in People & departments, or no longer active there: ask whoever keeps People & departments to add you.`,
+        empty: () => "Nobody has been added to this installation yet. IT names its first administrator on the server: opencore-mes admin <sign-in id> \"<Full name>\".",
         directory: () => "The plant's directory did not answer: try again in a moment, or ask IT if it goes on.",
         provider: () => "Single sign-on did not complete: try again, or ask IT if it goes on.",
         expired: () => "That single sign-on took too long or was started elsewhere: start it again.",
@@ -209,10 +220,12 @@ export function registerShell(juris, { args }) {
                                     // Where they were going before signing in (app.js sends them here with `to`).
                                     { input: { type: "hidden", name: "to", value: query().to ?? "" } },
                                     m.sso ? { p: { className: "muted small login-or", textContent: "or" } } : { span: {} },
-                                    { label: { children: [{ span: "Sign-in id" }, { input: { name: "user", autocomplete: "username", autocapitalize: "none", spellcheck: false, required: true, value: query().u ?? "" } }] } },
+                                    { label: { children: [{ span: idLabel(api) }, { input: { name: "user", autocomplete: "username", autocapitalize: "none", spellcheck: false, required: true, placeholder: idHint(api), value: query().u ?? "" } }] } },
                                     { label: { children: [{ span: "Password" }, { input: { name: "password", type: "password", autocomplete: "current-password", required: true } }] } },
                                     { button: { type: "submit", className: `btn${m.sso ? "" : " primary"}`, textContent: "Sign in" } },
                                     m.directory ? { p: { className: "muted small", textContent: `Your password is ${m.directory}'s, unless IT gave you one of your own here.` } } : { span: {} },
+                                    // First time here, with a code on a slip: choose a password with it.
+                                    m.codes ? { p: { className: "small login-setup", children: [{ a: { href: query().u ? `/password?setup=1&u=${encodeURIComponent(query().u)}` : "/password?setup=1", textContent: "I have a setup code" } }] } } : { span: {} },
                                 ],
                             },
                         };
@@ -254,6 +267,8 @@ export function registerShell(juris, { args }) {
         locked: "Too many wrong passwords: try again in 15 minutes.",
         none: "You sign in through the plant's directory or single sign-on: your password is changed there.",
         reused: "Choose a password you have not used before.",
+        code: "The sign-in id or setup code is wrong. Check your slip: five letters (there is no I or O).",
+        spent: "That setup code has been used, has expired, or was typed wrong too often: ask a sign-in administrator for a new one.",
     };
     juris.registerComponent("SigningPassword", ({ has }, api) => {
         const [said, setSaid] = api.useState("said", null);
@@ -322,17 +337,48 @@ export function registerShell(juris, { args }) {
             },
         ] } };
     });
+    // From a password of one's own to the plant's directory (§8.2): the directory password typed once and
+    // tried there; if it is accepted, the password here is taken off and they sign in with the directory's.
+    juris.registerComponent("UseDirectory", ({ directory, done }, api) => {
+        const [said, setSaid] = api.useState("said", null);
+        const [busy, setBusy] = api.useState("busy", false);
+        const go = async (e) => {
+            e.preventDefault();
+            const el = e.target.elements.directoryPassword;
+            const password = el.value;
+            el.value = "";
+            setBusy(true);
+            try {
+                await api.call("auth.useDirectory", { password });
+                done?.();
+            } catch (error) { setSaid({ ok: false, words: error.message }); }
+            setBusy(false);
+        };
+        return { section: { className: "use-directory", children: [
+            { h2: `Sign in with ${directory}` },
+            { p: { className: "muted", textContent: `This plant also signs people in through ${directory}. If you have an account there, type your password in it: it is tried there now. If it is accepted, your password here is taken off and you sign in with ${directory}'s from then on; if not, nothing changes.` } },
+            () => (said() ? { p: { className: `login-note${said().ok ? "" : " refused"}`, role: said().ok ? "status" : "alert", children: [icon(said().ok ? "check" : "warning"), { span: said().words }] } } : { span: {} }),
+            () => (said()?.ok ? { span: {} } : { form: { className: "login-password", onsubmit: go, children: [
+                { label: { children: [{ span: `Your password in ${directory}` }, { input: { name: "directoryPassword", type: "password", autocomplete: "off", required: true } }] } },
+                { button: { type: "submit", className: "btn", disabled: () => busy(), textContent: () => (busy() ? "Trying…" : `Switch to ${directory}`) } },
+            ] } }),
+        ] } };
+    });
     juris.registerComponent("Password", (props, api) => {
         const [account, setAccount] = api.useState("account", null);
         const q = () => api.getState("$route.query", {}) ?? {};
         const token = q().token ?? null;
-        if (!token && !api.isServer) api.onMount(() => { api.call("auth.account").then(setAccount, () => setAccount(null)); });
+        // A first password with a setup code from a printed slip (§8.2): the sign-in id and the code, then the password.
+        const setup = !token && q().setup === "1";
+        const [switched, setSwitched] = api.useState("switched", false);
+        if (!token && !setup && !api.isServer) api.onMount(() => { api.call("auth.account").then(setAccount, () => setAccount(null)); });
         const field = (name, label, auto) => ({ label: { children: [{ span: label }, { input: { name, type: "password", autocomplete: auto, required: true, ...(name === "current" ? {} : { minlength: 12 }) } }] } });
         return {
             div: {
-                className: token ? "login" : "view narrow",
+                className: token || setup ? "login" : "view narrow",
                 children: [
-                    { h1: token ? "Set your password" : "Your password" },
+                    { h1: token || setup ? "Set your password" : "Your password" },
+                    setup ? { p: { className: "muted", textContent: `Type your ${idWords(api)} and the five letters on the slip you were given, then choose your password. The code works once.` } } : { span: {} },
                     () => {
                         const said = PASSWORD_SAID[q().e] ?? (q().m === "changed" ? "Your password is changed. Anywhere else you were signed in, you are signed out." : null);
                         return said ? { p: { className: `login-note${q().e ? " refused" : ""}`, role: q().e ? "alert" : "status", children: [icon(q().e ? "warning" : "check"), { span: said }] } } : { span: {} };
@@ -350,23 +396,32 @@ export function registerShell(juris, { args }) {
                     // verified by two people, or signing in beside someone, asks for it.
                     () => (!token && account() && !account().password && account().sso ? { SigningPassword: { has: account().signing } } : { span: {} }),
                     () => {
-                        if (!token && account() && !account().password) return { p: { className: "muted", textContent: PASSWORD_SAID.none } };
-                        if (!token && !account()) return { span: {} };
+                        if (!token && !setup && account() && !account().password) return { p: { className: "muted", textContent: account().directory ? `You sign in with ${account().directory}'s password: it is changed there.` : PASSWORD_SAID.none } };
+                        if (!token && !setup && !account()) return { span: {} };
                         return {
                             form: {
                                 className: "login-password", method: "post", action: "/password",
                                 children: [
-                                    token ? { input: { type: "hidden", name: "token", value: token } } : field("current", "Current password", "current-password"),
+                                    token ? { input: { type: "hidden", name: "token", value: token } }
+                                        : setup ? { div: { className: "setup-fields", children: [
+                                            { label: { children: [{ span: idLabel(api) }, { input: { name: "user", autocomplete: "username", autocapitalize: "none", spellcheck: false, required: true, placeholder: idHint(api), value: q().u ?? "" } }] } },
+                                            { label: { children: [{ span: "Setup code" }, { input: { name: "code", className: "setup-code", autocomplete: "one-time-code", autocapitalize: "characters", spellcheck: false, required: true, maxlength: 9, placeholder: "5 letters" } }] } },
+                                        ] } }
+                                        : field("current", "Current password", "current-password"),
                                     field("next", "New password", "new-password"),
                                     field("again", "The new password again", "new-password"),
                                     { p: { className: "muted small", textContent: "At least 12 characters; a few words you will remember are better than a short scramble." } },
-                                    { button: { type: "submit", className: "btn primary", textContent: token ? "Set password" : "Change password" } },
+                                    { button: { type: "submit", className: "btn primary", textContent: token || setup ? "Set password" : "Change password" } },
                                 ],
                             },
                         };
                     },
                     // Their second factor, where the plant uses one and they sign in with a password.
-                    () => (!token && account()?.mfa?.applies ? { SecondFactor: { key: `mfa-${account().mfa.enabled}`, mfa: account().mfa } } : { span: {} }),
+                    setup ? { p: { className: "muted small", children: [{ a: { href: "/login", textContent: "Back to sign in" } }] } } : { span: {} },
+                    // From their own password to the plant's directory, where it has one.
+                    () => (!token && !setup && account()?.password && account().directory ? { UseDirectory: { directory: account().directory, done: () => api.call("auth.account").then((a) => { setSwitched(true); setAccount(a); }, () => {}) } } : { span: {} }),
+                    () => (switched() ? { p: { className: "login-note", role: "status", children: [icon("check"), { span: `Done: from now on you sign in with ${account()?.directory ?? "the directory"}'s password. Your password here is taken off, and anywhere else you were signed in, you are signed out.` }] } } : { span: {} }),
+                    () => (!token && !setup && account()?.mfa?.applies ? { SecondFactor: { key: `mfa-${account().mfa.enabled}`, mfa: account().mfa } } : { span: {} }),
                 ],
             },
         };
@@ -447,6 +502,8 @@ export function registerShell(juris, { args }) {
                     { CopyCell: {} },
                     // A panel's guide, docked over the navigator (§33).
                     { GuideDock: {} },
+                    // Shown in a frame by a site the plant names (§37): its outlines, and what it hears.
+                    { EmbedBridge: {} },
                     // A screen shown as a dialog (§26.6), and the pop-ups meant for every page (§26.7).
                     { ScreenDialogHost: {} },
                     { PopupWatch: { target: "*" } },
@@ -457,9 +514,10 @@ export function registerShell(juris, { args }) {
 
     // Beside the person's name: how many things wait for them (changes to review, steps of changes and
     // of record changes to sign), live; clicked, the list of them, each a link to where it is signed.
-    // Who you are, and (on a picker instance: development, the demo) anyone else in one click: those picked
-    // lately, whoever has something waiting, everyone who reviews or approves, and a search. The switch stays
-    // on the page it was made from. The demo has no sign-in page: this is how a visitor is someone else.
+    // Who you are, a click on your name: your password and Sign out; and (on a picker instance: development, the
+    // demo) anyone else in one click: those picked lately, whoever has something waiting, everyone who reviews or
+    // approves, and a search. The switch stays on the page it was made from. The demo has no sign-in page, so no
+    // Sign out: being someone else is how a visitor moves on.
     juris.registerComponent("PersonSwitch", (props, api) => {
         const [open, setOpen] = api.useState("open", false);
         const [users, setUsers] = api.useState("users", null);
@@ -471,7 +529,9 @@ export function registerShell(juris, { args }) {
         // A demo visitor's own guest ("Guest 7F3K") is kept among this browser's picks, so it is there to come
         // back to after being someone else; other visitors' guests are not listed (app.mjs auth.users).
         if (!api.isServer) api.onMount(() => { const me = api.getState("me.id", null, { track: false }); if (api.getState("demo", false, { track: false }) && /^guest_[a-z2-9]{4,8}$/.test(String(me ?? "")) && !recentPicks().includes(me)) rememberPick(me); });
-        const toggle = () => { const next = !open(); setOpen(next); if (next) { setFind(""); ask(""); setTimeout(() => globalThis.document?.querySelector(".switch-panel input[type=search]")?.focus(), 0); } };
+        const picker = () => api.getState("picker", false);
+        const demo = () => api.getState("demo", false);
+        const toggle = () => { const next = !open(); setOpen(next); if (next) { if (picker()) { setFind(""); ask(""); } setTimeout(() => globalThis.document?.querySelector(".switch-panel input[type=search], .switch-panel .switch-out button")?.focus(), 0); } };
         if (!api.isServer) {
             api.onMount(() => {
                 const away = (e) => { if (open() && !e.target.closest?.(".switch")) setOpen(false); };
@@ -485,20 +545,38 @@ export function registerShell(juris, { args }) {
             div: {
                 className: "switch",
                 children: [
-                    { button: { type: "button", className: "switch-btn who", "aria-haspopup": "true", "aria-expanded": () => String(open()), title: "Be someone else", onclick: toggle, children: [{ span: { textContent: () => api.getState("me.name", "") } }, icon("chevronDown")] } },
+                    { button: { type: "button", className: "switch-btn who", "aria-haspopup": "true", "aria-expanded": () => String(open()), title: () => (picker() ? "You, and anyone else to be" : "You: your password, sign out"), onclick: toggle, children: [{ span: { textContent: () => api.getState("me.name", "") } }, icon("chevronDown")] } },
                     () => {
                         if (!open()) return { span: {} };
                         const list = (users() ?? []).slice(0, PICKER_SHOWN);
                         return {
-                            form: {
-                                className: "switch-panel win-scroll", method: "post", action: "/login", role: "dialog", "aria-label": "Be someone else",
+                            div: {
+                                className: "switch-panel win-scroll", role: "dialog", "aria-label": picker() ? "You, and anyone else to be" : "You",
                                 children: [
-                                    { input: { type: "hidden", name: "to", value: api.getState("$route.path", "/") } },
-                                    api.getState("demo", false) ? { p: { className: "demo-note small", children: [icon("info"), { span: "A public demo: you arrive as a guest of your own, who holds every role, and may be anyone else here (to review or approve a change you made, be someone else; your guest stays first in this list). What you do is seen by other visitors and erased every night at 03:00 UTC." }] } } : { span: {} },
-                                    { input: { type: "search", className: "login-find", placeholder: "Find anyone: a name or sign-in id", "aria-label": "Find anyone", autocomplete: "off", value: () => find(), oninput: (e) => typed(e.target.value), onkeydown: (e) => { if (e.key === "Enter") e.preventDefault(); } } },
-                                    () => { const words = pickerWords(api, find(), users()); return words ? { p: { className: "muted small", textContent: words } } : { span: {} }; },
-                                    users() === null ? { p: { className: "muted small", textContent: "Loading…" } } : windowRows({ key: `switch-${find().trim()}-${list.length}-${list[0]?.id ?? ""}`, tag: "div", className: "login-users", count: list.length, row: (i) => personButton(list[i]) }),
-                                    api.getState("demo", false) ? { span: {} } : { Link: { to: "/password", className: "small", onclick: () => setOpen(false), textContent: "Your password" } },
+                                    { div: { className: "switch-me", children: [{ strong: { textContent: () => api.getState("me.name", "") } }, { span: { className: "muted small", textContent: () => api.getState("me.id", "") } }] } },
+                                    // Your password and Sign out first, in view however long the list below.
+                                    demo() ? { span: {} } : {
+                                        div: {
+                                            className: "switch-foot",
+                                            children: [
+                                                { Link: { to: "/password", className: "small", onclick: () => setOpen(false), textContent: "Your password" } },
+                                                { form: { method: "post", action: "/logout", className: "logout switch-out", children: [{ button: { type: "submit", className: "btn small", children: [icon("logout"), { span: "Sign out" }] } }] } },
+                                            ],
+                                        },
+                                    },
+                                    // Anyone else, on a picker instance: signed in as them in one click.
+                                    picker() ? {
+                                        form: {
+                                            className: "switch-pick", method: "post", action: "/login",
+                                            children: [
+                                                { input: { type: "hidden", name: "to", value: api.getState("$route.path", "/") } },
+                                                demo() ? { p: { className: "demo-note small", children: [icon("info"), { span: "A public demo: you arrive as a guest of your own, who holds every role, and may be anyone else here (to review or approve a change you made, be someone else; your guest stays first in this list). What you do is seen by other visitors and erased every night at 03:00 UTC." }] } } : { span: {} },
+                                                { input: { type: "search", className: "login-find", placeholder: "Be someone else: a name or sign-in id", "aria-label": "Find anyone", autocomplete: "off", value: () => find(), oninput: (e) => typed(e.target.value), onkeydown: (e) => { if (e.key === "Enter") e.preventDefault(); } } },
+                                                () => { const words = pickerWords(api, find(), users()); return words ? { p: { className: "muted small", textContent: words } } : { span: {} }; },
+                                                users() === null ? { p: { className: "muted small", textContent: "Loading…" } } : windowRows({ key: `switch-${find().trim()}-${list.length}-${list[0]?.id ?? ""}`, tag: "div", className: "login-users", count: list.length, row: (i) => personButton(list[i]) }),
+                                            ],
+                                        },
+                                    } : { span: {} },
                                 ],
                             },
                         };
@@ -540,7 +618,7 @@ export function registerShell(juris, { args }) {
                 children: [
                     () => {
                         const second = api.getState("me.second", null);
-                        if (second) return { span: { className: "second-who", children: [{ span: { className: "who", title: "Signed in beside you: verifies what needs a second person", textContent: `+ ${second.name}` } }, { button: { type: "button", className: "btn ghost small second-out", title: `Sign ${second.name} out (you stay signed in)`, "aria-label": `Sign ${second.name} out`, onclick: leave, children: [icon("x"), { span: { className: "second-out-words", textContent: `Sign ${second.name.split(" ")[0]} out` } }] } }] } };
+                        if (second) return { span: { className: "second-who", children: [{ span: { className: "who", title: "Signed in beside you: verifies what needs a second person", textContent: `+ ${second.name}` } }, { button: { type: "button", className: "btn ghost small second-out", title: `Sign ${second.name} out (you stay signed in)`, "aria-label": `Sign ${second.name} out`, onclick: leave, children: [icon("x")] } }] } };
                         return { button: { type: "button", className: "second-btn", "aria-haspopup": "true", "aria-expanded": () => String(open()), title: "Add a second person: one who verifies what needs two signatures", "aria-label": "Add a second person", onclick: () => { api.setValue("ui.second.said", null); setOpen(!open()); if (open()) setTimeout(() => document.querySelector(".second-panel input")?.focus(), 0); }, children: [icon("users"), { span: { className: "second-plus", textContent: "+" } }] } };
                     },
                     () => {
@@ -552,7 +630,7 @@ export function registerShell(juris, { args }) {
                                 children: [
                                     { strong: "A second person" },
                                     { p: { className: "muted small", textContent: "Signs in beside you to verify what needs two signatures; each of you re-enters your password when you sign. Two at most, until one of you signs out." } },
-                                    { label: { children: [{ span: "Their sign-in id" }, { input: { name: "id", type: "text", autocomplete: "off", autocapitalize: "none", spellcheck: false, required: true } }] } },
+                                    { label: { children: [{ span: `Their ${idWords(api)}` }, { input: { name: "id", type: "text", placeholder: idHint(api), autocomplete: "off", autocapitalize: "none", spellcheck: false, required: true } }] } },
                                     noPasswords ? { p: { className: "muted small", textContent: "No password on a development or demo instance." } } : { label: { children: [{ span: "Their password" }, { input: { name: "password", type: "password", autocomplete: "off", required: true } }] } },
                                     () => (said() ? { p: { className: "login-note refused small", role: "alert", children: [icon("warning"), { span: said() }] } } : { span: {} }),
                                     { button: { type: "submit", className: "btn primary", textContent: "Sign in beside me" } },
@@ -587,7 +665,7 @@ export function registerShell(juris, { args }) {
                         to: i.link, className: "inbox-item", onclick: () => setOpen(false),
                         children: [
                             { span: { className: "inbox-title", textContent: i.title } },
-                            { span: { className: "inbox-what muted small", textContent: i.kind === "alert" ? i.what ?? "An alert" : i.kind === "task" ? "A plan: decide, fill in, or acknowledge" : i.kind === "review" ? "Review the change" : `Sign for ${i.department}${i.step ? ` as ${i.step}` : ""}${i.record ? " · a change to a record" : ""}` } },
+                            { span: { className: "inbox-what muted small", textContent: i.kind === "alert" ? i.what ?? "An alert" : i.kind === "task" ? "A plan: decide, fill in, or acknowledge" : i.emergency ? emergencyWhat(i) : i.kind === "review" ? "Review the change" : `Sign for ${i.department}${i.step ? ` as ${i.step}` : ""}${i.record ? " · a change to a record" : ""}` } },
                         ],
                     },
                 }],
@@ -734,7 +812,7 @@ export function registerShell(juris, { args }) {
     // is forgotten, so the page opens filled at each sign-in and stays as the person leaves it until
     // they sign out.
     juris.registerComponent("MaximizeToggle", ({ path, mode, remember, fresh = null }, api) => {
-        const key = `open-mes.maximize.${remember}`;
+        const key = `opencore-mes.maximize.${remember}`;
         const kept = () => {
             try {
                 const was = localStorage.getItem(key);
@@ -801,19 +879,17 @@ export function registerShell(juris, { args }) {
                 // The test sandbox (§5.13) says so on every page: nothing done here reaches the plant.
                 api.getState("me.test", false) ? { span: { className: "instance-tag test-tag", title: "The test sandbox: a copy for testing changes that are not approved yet. Nothing done here reaches the plant", textContent: "TEST SANDBOX" } } : { span: {} },
                 // The plant's name and label, from its theme (§10.8).
-                { Link: { to: "/", className: "brand", textContent: () => api.getState("theme.name", null) || "OpenCore MES" } },
+                { Link: { to: "/", className: "brand", title: () => api.getState("theme.name", null) || "OpenCore MES", textContent: () => api.getState("theme.name", null) || "OpenCore MES" } },
                 { span: { className: "scope", textContent: () => api.getState("theme.scope", null) || "PLT1 · POC" } },
                 api.getState("instance", null) === "training" ? { span: { className: "instance-tag", title: "A training instance: its own database, separate from the plant's", textContent: "TRAINING" } } : { span: {} },
                 api.getState("demo", false) ? { span: { className: "instance-tag demo-tag", title: "A public demo: you arrive as a guest of your own, who holds every role, and may be anyone else; everything here is seen by other visitors, and it is all erased every night", textContent: "PUBLIC DEMO" } } : { span: {} },
                 { span: { className: "spacer" } },
                 liveIndicator(api),
                 { SchemePick: {} },
-                // On a picker instance, who you are switches to anyone else; elsewhere, your name opens your password.
-                api.getState("picker", false) ? { PersonSwitch: {} } : { Link: { to: "/password", className: "who", title: "Your password", textContent: () => api.getState("me.name", "") } },
+                // Your name: your password and Sign out; on a picker instance, anyone else to be too.
+                { PersonSwitch: {} },
                 { SecondPerson: {} },
                 { Inbox: {} },
-                // The demo has no sign-in page, so nothing to sign out to: be someone else instead.
-                api.getState("demo", false) ? { span: {} } : { form: { method: "post", action: "/logout", className: "logout", children: [{ button: { type: "submit", className: "btn ghost", textContent: "Sign out" } }] } },
             ],
         },
     }));
@@ -972,11 +1048,18 @@ export function registerShell(juris, { args }) {
                             ...(designs ? [
                                 { key: "d", to: "/design", label: "Designer", words: "designer design change requests objects services connections transactions screens" },
                                 { key: "a", to: "/design/approvals", label: "Approvals", words: "approvals approve pending sign signature review waiting inbox" },
+                                { key: "su", to: "/design/suites", label: "Suites", words: "suites suite packs pack installed designs samples sample records set-up guide setup update version extensions" },
                                 { key: "p", to: "/design/people", label: "People & departments", words: "people departments roles users employees approvers approval steps governance standing organization groups" },
                                 { key: "m", to: "/design/integration", label: "Integration monitor", words: "integration monitor schedules nodes outbox triggers" },
                             ] : []),
                             // Sign-in administration (§8.2): for its administrators, designers or not.
                             ...(api.getState("me.signInAdmin", false) ? [{ key: "s", to: "/design/sign-in", label: "Sign-in administration", words: "sign-in password link reset second factor authenticator lock unlock sessions security" }] : []),
+                            // The Database area (§38): for its administrators.
+                            ...(api.getState("me.databaseAdmin", false) ? [{ key: "db", to: "/design/database", label: "Database", words: "database sql statements queries slow performance index indexes plans explain tables tuning" }] : []),
+                            // Data retention (§27.8): for privacy officers.
+                            ...(api.getState("me.privacy", false) ? [{ key: "r", to: "/design/retention", label: "Data retention", words: "data retention purge erase erasure privacy personal gdpr delete keep period" }] : []),
+                            // The data integrity review (§7.7): for integrity reviewers.
+                            ...(api.getState("me.integrity", false) ? [{ key: "i", to: "/design/integrity", label: "Data integrity", words: "data integrity tamper seal database changed findings non-conformance ncr review audit alcoa" }] : []),
                             ...(designs ? suiteNav.filter((n) => n.group === "Design").map((n) => ({ key: n.key, to: n.to, label: n.label, words: n.words ?? "" })) : []),
                         ].filter((x) => !q || `${x.label} ${x.words}`.toLowerCase().includes(q));
                         if (designPages.length) {
@@ -985,6 +1068,10 @@ export function registerShell(juris, { args }) {
                             const own = designPages.filter((x) => x.to !== "/design").map((x) => x.to);
                             const designerOnly = () => api.isActive("/design") && !own.some((to) => api.isActive(to));
                             sections.push({ section: { key: "design", className: "nav-group", children: [{ h3: "Design" }, { ul: { children: designPages.map((x) => ({ li: { key: x.key, className: "nav-item", children: [{ Link: x.to === "/design" ? { to: x.to, className: "nav-link", activeClass: "nav-prefix", classList: { active: designerOnly }, textContent: x.label } : { to: x.to, className: "nav-link", textContent: x.label } }] } })) } }] } });
+                        }
+                        // About (§29.9): what this installation runs, the suites installed among it, last.
+                        if (!q || "about version build suites installed licence license edition help".includes(q)) {
+                            sections.push({ section: { key: "about", className: "nav-group nav-about", children: [{ button: { type: "button", className: "nav-link icon-text", children: [icon("info"), { span: "About OpenCore MES" }], onclick: () => about(api) } }] } });
                         }
                         if (!sections.length && !recordHits) sections.push({ p: { key: "none", className: "muted small", textContent: q ? "Nothing matches." : "Nothing is shared with you yet." } });
                         return { div: { className: "nav-sections", children: sections } };
@@ -1059,4 +1146,20 @@ export function registerShell(juris, { args }) {
     });
 
     juris.registerComponent("NotFound", () => ({ div: { className: "view", children: [{ h1: "Not found" }, { p: "Nothing lives at this address." }] } }));
+}
+
+// About (DESIGN.md §29.9): the platform's version and build, the framework it runs on, and every suite installed
+// with its version (and its design pack's), as the server knows them (about.get).
+async function about(api) {
+    let a;
+    try { a = await api.call("about.get", {}); } catch (error) { return infoDialog(api, { title: "About OpenCore MES", message: error.message }); }
+    const suites = [...(a.suites ?? [])].sort((x, y) => x.label.localeCompare(y.label));
+    return infoDialog(api, {
+        title: `About ${a.product}`,
+        message: `${a.product} ${a.version}, ${a.edition} (${a.licence}).`,
+        sections: [
+            { title: "This installation", rows: [["Version", a.version], ["Build", a.build], ...(a.instance ? [["Instance", a.instance]] : []), [a.framework.name, a.framework.version], ["Node.js", a.node]] },
+            { title: suites.length ? `Suites installed (${suites.length})` : "Suites installed", empty: "None: the community edition alone.", rows: suites.map((x) => [x.label, `${x.designs ? `${x.version} · designs ${x.designs.version}` : x.version}${x.newest ? ` · ${x.newest} available (opencore-mes suite update ${x.name})` : ""}`]) },
+        ],
+    });
 }

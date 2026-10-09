@@ -78,6 +78,8 @@ export const assignments = [
     ["user", "iris", "query", "analyst"],
     // IT administers sign-in (§8.2): password links, a lost phone's second factor, a lock lifted.
     ["user", "iris", "auth", "administrator"],
+    // IT's manager answers for personal data (§27.8): the retention report, the purge run now, erasure.
+    ["user", "ines", "privacy", "officer"],
     // Queries (§23): the analysts. What each sees is still what their roles on each object allow.
     ["user", "sam", "query", "analyst"],
     ["user", "quinn", "query", "analyst"],
@@ -409,7 +411,7 @@ export default function lot_qty_positive(ctx) {
     lot_default_expiry: `// A new lot without an expiry expires 180 days from today.
 export default function lot_default_expiry(ctx) {
   if (ctx.event.kind !== "save" || ctx.record.id || ctx.data.expiry) return ctx;
-  const expiry = new Date(Date.now() + 180 * 24 * 3600 * 1000);
+  const expiry = new Date(Date.parse(ctx.now) + 180 * 24 * 3600 * 1000);
   ctx.data.expiry = expiry.toISOString().slice(0, 10);
   return ctx;
 }`,
@@ -457,6 +459,47 @@ export default function dev_close_needs_cause(ctx) {
   }
   return ctx;
 }`,
+};
+
+// Their test cases (fitness.js: { name, run: { event, data, record }, expect }): the evidence each script
+// carries, and what a copy of its object carries with it (a copy of Lot passes the fitness test as it is).
+const save = (data, record = {}) => ({ event: { kind: "save" }, data, record });
+export const tests = {
+    lot_round_qty: [
+        { name: "a quantity is rounded to three decimals", run: save({ qty: 1.23456 }), expect: { changed: ["qty"] } },
+        { name: "another field changed: the quantity is left alone", run: { event: { kind: "change", changed: ["note"] }, data: { qty: 1.23456 } }, expect: { changed: [] } },
+    ],
+    lot_qty_positive: [
+        { name: "more than zero passes", run: save({ qty: 5 }), expect: { changed: [] } },
+        { name: "zero or less is refused on the quantity", run: save({ qty: -5 }), expect: { throws: { field: "qty" } } },
+    ],
+    lot_default_expiry: [
+        { name: "a new lot without an expiry gets one", run: save({ qty: 1 }), expect: { changed: ["expiry"] } },
+        { name: "an expiry given is kept", run: save({ expiry: "2027-01-31" }), expect: { changed: [] } },
+        { name: "a lot saved again is left alone", run: save({ qty: 1 }, { id: "a-lot" }), expect: { changed: [] } },
+    ],
+    lot_check_qty: [
+        { name: "no work order: nothing to compare", run: save({ qty: 5 }), expect: { changed: [] } },
+        { name: "only on save", run: { event: { kind: "change", changed: ["qty"] }, data: { qty: 5, work_order: "x" } }, expect: { changed: [] } },
+        { name: "a work order nobody can see is refused", run: save({ qty: 5, work_order: "00000000-0000-0000-0000-000000000000" }), expect: { throws: { field: "work_order" } } },
+    ],
+    lot_release_checks: [
+        { name: "release with an accepted disposition", run: { event: { kind: "action", action: "release" }, data: { disposition: "accept" }, record: { state: "in_process" } }, expect: { changed: [] } },
+        { name: "release without one is refused", run: { event: { kind: "action", action: "release" }, data: { disposition: "hold" }, record: { state: "in_process" } }, expect: { throws: { field: "disposition" } } },
+        { name: "a released lot is never rejected", run: { event: { kind: "change", changed: ["disposition"] }, data: { disposition: "reject" }, record: { state: "released" } }, expect: { throws: { field: "disposition" } } },
+    ],
+    lot_archive_checks: [
+        { name: "a decided lot is archived", run: { event: { kind: "archive" }, data: { disposition: "accept" } }, expect: { changed: [] } },
+        { name: "an undecided one is refused", run: { event: { kind: "archive" }, data: { disposition: "hold" } }, expect: { throws: { field: "disposition" } } },
+    ],
+    wo_qty_positive: [
+        { name: "more than zero passes", run: save({ qty: 100 }), expect: { changed: [] } },
+        { name: "zero or less is refused on the quantity", run: save({ qty: 0 }), expect: { throws: { field: "qty" } } },
+    ],
+    dev_close_needs_cause: [
+        { name: "closed with a root cause", run: { event: { kind: "action", action: "close" }, data: { root_cause: "Worn die" } }, expect: { changed: [] } },
+        { name: "closed without one is refused", run: { event: { kind: "action", action: "close" }, data: { root_cause: " " } }, expect: { throws: { field: "root_cause" } } },
+    ],
 };
 
 // Records: { object, state, data } with refs given as keys resolved at seed time.

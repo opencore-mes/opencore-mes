@@ -3,21 +3,41 @@
 // change whose every required department has approved the exact content that was reviewed.
 import { inputFlowSummary } from "../client/input-flow.js";
 import { validateReportLayout, reportLayoutFootprint, LAYOUT_TEMPLATE } from "../client/report.js";
+import { validateQuery, queryFootprint, QUERY_TEMPLATE, namesIn } from "../client/query-def.js";
+import { webNames } from "../client/web-publish.js";
+import { queryUses, queryUseProblems } from "../client/definition.js";
+import { sealDesigns, platformWrites, resealRecords, ACCESS } from "./integrity.js";
+import { derivedProblems, derivedCycles, changedDerived, recomputeAll } from "./derived.js";
 import { validateSuiteElement, suiteElementFootprint, SUITE_KIND } from "../client/definition.js";
-import { fail } from "../../../src/errors.js";
-import { callKind } from "../../../src/live-protocol.js";
+import { fail } from "@opencore-mes/juris-kit/errors.js";
+import { callKind } from "@opencore-mes/juris-kit/live-protocol.js";
 import { validateDefinition, validateScript, validateService, validateConnection, validateTransaction, validateScreen, validateOrganization, organizationFootprint, applyStanding, retireProblems, retireFootprint, RETIRE_KINDS, footprint, scriptFootprint, integrationFootprint, transactionFootprint, screenFootprint, routeOf, IDENTIFIER, SERVICE_TEMPLATE, validateFlow, flowFootprint, FLOW_TEMPLATE, subFlowsOf, COPYABLE, copyDesign, copyScript, copiedScriptName } from "../client/definition.js";
 import { isSuiteSchedule, suiteSettings } from "../client/schedule.js";
 import { checkScript } from "./rules.js";
 import { appendAudit, canonical, sha256 } from "./audit.js";
-import { organizationSettings, organizationSnapshot, applyOrganization, stepsOf, draftOf } from "./organization.js";
-import { packElements, packStatus, missingRoles } from "./packs.js";
+import { organizationSettings, organizationSnapshot, applyOrganization, stepsOf, draftOf, setupOpen, approvalLevel } from "./organization.js";
+import { packElements, packStatus, missingRoles, missingCertifications, missingGroups, keepPackFiles } from "./packs.js";
 import { CORE_LOCKS, mergeLocks, suiteLocks, liveLocks } from "../client/builtins.js";
+import { emergencyPolicy, emergencyDue, stageAfter, confirmersOf, OPEN_STAGES } from "../client/emergency.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const OPEN = ["design", "review", "approval"];
 // What may be viewed without a change (design.view): the kind in the URL → where it is published.
-const VIEW_KINDS = { object: "definitions", transaction: "transactions", screen: "screens", service: "services", connection: "connections", flow: "flows", layout: "layouts", element: "elements" };
+// The settings a route's steps give the transactions they offer (§32.4: { node: "parameter" } reads them):
+// per transaction, each setting's name and whether it is a number, for the designer's expression builder.
+function txSettingsOf(body) {
+    const out = {};
+    for (const n of Object.values(body?.nodes ?? {})) {
+        if (!n || typeof n !== "object" || !n.settings || typeof n.settings !== "object" || Array.isArray(n.settings)) continue;
+        for (const t of Array.isArray(n.offers) ? n.offers : []) {
+            const kept = (out[t] ??= {});
+            for (const [k, v] of Object.entries(n.settings)) kept[k] = kept[k] === "string" || typeof v !== "number" ? "string" : "number";
+        }
+    }
+    return out;
+}
+
+const VIEW_KINDS = { object: "definitions", transaction: "transactions", screen: "screens", service: "services", connection: "connections", flow: "flows", layout: "layouts", query: "queries", element: "elements" };
 // The objects a design relies on, by name, in the order met: an object's references, a transaction's
 // inputs, created records and where it appears, a screen's parameter and blocks, a service's objects.
 function reliesOn(K, body) {
@@ -52,9 +72,11 @@ const iso = (value) => (value instanceof Date ? value.toISOString() : value);
 // each script's test cases, which the fitness test runs and which are published with it, (§25)
 // transactions, and (§26) screens.
 // (`elements`: design elements of a kind an installed suite adds, §30.11: one table for all of them.)
-const KINDS = ["definitions", "scripts", "services", "connections", "tests", "transactions", "screens", "flows", "layouts", "elements"];
+const KINDS = ["definitions", "scripts", "services", "connections", "tests", "transactions", "screens", "flows", "layouts", "queries", "elements"];
 // The named design elements besides objects and scripts, as a change carries them and as published.
-const ELEMENTS = ["connections", "services", "transactions", "screens", "flows", "layouts", "elements"];
+const ELEMENTS = ["connections", "services", "transactions", "screens", "flows", "layouts", "queries", "elements"];
+// A kind as one of it is named in words: "queries" → "query", "services" → "service".
+const one = (kind) => (kind === "queries" ? "query" : kind.slice(0, -1));
 // The organization (§5.6) is one document, not a map of named elements: carried when a change has it.
 // So is what a change retires (§5.10): { kind: [names] }.
 const withKinds = (value) => ({ ...Object.fromEntries(KINDS.map((k) => [k, { ...(value?.[k] ?? {}) }])), ...(value?.organization ? { organization: value.organization } : {}), ...(value?.retire ? { retire: value.retire } : {}), ...(value?.keeps ? { keeps: value.keeps } : {}) });
@@ -85,10 +107,21 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
     const { db } = store;
     // The fitness test (fitness.js), bound once what it runs on exists: (change row, user) → report.
     let fitness = null;
+    // A named query's columns, without running it (query.js describeNamed), bound once the views exist.
+    let describeQuery = null;
     // The installed suites' checks of their parts of a design (§29.4): suite → check(body, part, known).
     let suiteDesigns = {};
     // The installed suites' design packs (§29.6): suite → { suite (its label), label, version, … }.
     let suitePacks = {};
+    // The installed suites' set-up guides (§29.8): suite → { suite (its label), version, title, intro, steps }.
+    let suiteGuides = {};
+    // Newer versions of installed suites on the registry (§29.7): () → [{ name, version, newest }].
+    let suiteUpdates = () => [];
+    // The suites installed (§29.1): [{ name, label, version }], for what the AI and the designer are told of them.
+    let suitesInstalled = [];
+    // Every suite version this installation has run, and what each gave (§29.5): { read() → rows, kept() → { name:
+    // [versions kept on disk, which opencore-mes suite use brings back] } }.
+    let suiteHistory = { read: async () => [], kept: () => ({}) };
     // The installed suites' flow node kinds (§32.9): "<suite>.<kind>" → { label, extends, config, validate }.
     let suiteFlowNodes = {};
     // What else the installed suites add (§30.11), by name, for the checks and the designer:
@@ -103,6 +136,10 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
     // What the platform and the installed suites lock (builtins.js): object → [lock], worked out from them, never stored.
     let allLocks = mergeLocks(CORE_LOCKS);
     let onFlows = null;
+    // Told after any change is executed, with its outcome (the demo's guests take up a new object's roles, app.mjs).
+    let onExecuted = null;
+    // The event log (event-log.js), where every emergency change is said, and an overdue review (§5.7).
+    let events = null;
 
     async function viewerOf(self, as) {
         const kind = callKind(self);
@@ -120,8 +157,8 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
             for (const e of footprint(before.definitions?.[object] ?? null, body)) elements.push(`${object}: ${e.element}`);
         }
         for (const [name, source] of Object.entries(after.scripts ?? {})) if (before.scripts?.[name] !== source) elements.push(`script: ${name}`);
-        for (const kind of ["services", "connections", "tests", "transactions", "screens", "flows", "layouts", "elements"]) {
-            for (const [name, body] of Object.entries(after[kind] ?? {})) if (JSON.stringify(before[kind]?.[name] ?? null) !== JSON.stringify(body)) elements.push(`${kind === "tests" ? "tests" : kind.slice(0, -1)}: ${name}`);
+        for (const kind of ["services", "connections", "tests", "transactions", "screens", "flows", "layouts", "queries", "elements"]) {
+            for (const [name, body] of Object.entries(after[kind] ?? {})) if (JSON.stringify(before[kind]?.[name] ?? null) !== JSON.stringify(body)) elements.push(`${kind === "tests" ? "tests" : one(kind)}: ${name}`);
         }
         return elements.length ? { at: new Date().toISOString(), via: self.via, elements } : null;
     }
@@ -131,8 +168,13 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
     async function designRolesOf(userId) {
         const roles = await store.rolesFor(userId, "design");
         const [rep] = await db.query("SELECT 1 FROM mes.department_reps r JOIN mes.users u ON u.id = r.user_id AND u.active WHERE r.user_id = $1 LIMIT 1", [userId]);
-        return rep && !roles.includes("approver") ? [...roles, "approver"] : roles;
+        // A member of a group an object's approval by value names approves designs that write what it controls (§28.3b).
+        const [member] = rep ? [rep] : await db.query(GROUP_APPROVER, [userId]);
+        return member && !roles.includes("approver") ? [...roles, "approver"] : roles;
     }
+    const GROUP_APPROVER = `SELECT m.group_id FROM mes.group_members m JOIN mes.groups g ON g.id = m.group_id AND g.kind = 'group' JOIN mes.users u ON u.id = m.user_id AND u.active
+        WHERE m.user_id = $1 AND EXISTS (SELECT 1 FROM mes.definitions d, jsonb_each(CASE WHEN jsonb_typeof(d.body->'approval'->'by'->'values') = 'object' THEN d.body->'approval'->'by'->'values' ELSE '{}'::jsonb END) v
+                                         WHERE d.status = 'published' AND jsonb_typeof(v.value) = 'array' AND v.value ? m.group_id)`;
     async function designUser(self, as) {
         const user = await viewerOf(self, as);
         if (!user) fail("Sign in first.", { status: 401 });
@@ -140,7 +182,11 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
         if (!roles.length) fail("The designer is not shared with you.", { status: 403 });
         return { ...user, designRoles: roles, departments: await store.departmentsOf(user.id), reps: await repsOf(user.id) };
     }
-    const repsOf = async (userId) => (await db.query("SELECT group_id FROM mes.department_reps WHERE user_id = $1 ORDER BY group_id", [userId])).map((r) => r.group_id);
+    // The departments a person signs for, and the groups (§28.3b): any member signs for a group.
+    const repsOf = async (userId) => [...new Set([
+        ...(await db.query("SELECT group_id FROM mes.department_reps WHERE user_id = $1", [userId])).map((r) => r.group_id),
+        ...(await db.query("SELECT m.group_id FROM mes.group_members m JOIN mes.groups g ON g.id = m.group_id AND g.kind = 'group' WHERE m.user_id = $1", [userId])).map((r) => r.group_id),
+    ])].sort();
     const governance = async (q = db) => (await organizationSettings(q)).governance ?? "engineering";
     // A change's authors (§5.3): who started it, and the co-designers they named. Each may edit it while
     // it is in design; none of them reviews or approves it.
@@ -215,8 +261,14 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
             const approvals = await db.query("SELECT department, step, user_id, decision FROM mes.approvals WHERE change_id = $1", [row.id]);
             for (const r of row.route ?? []) {
                 const p = await progressOf(db, row, r.department, approvals, settings);
-                for (const u of p.current?.eligible ?? []) of(u).sign.push({ id: row.id, title: row.title, department: r.department, step: p.steps.length > 1 ? p.current.label : null });
+                for (const u of p.current?.eligible ?? []) of(u).sign.push({ id: row.id, title: row.title, department: r.department, step: p.steps.length > 1 ? p.current.label : null, ...(row.emergency ? { emergency: "approve" } : {}) });
             }
+        }
+        // Emergencies executed and not yet reviewed afterwards (§5.7): to review, then to confirm or flag.
+        for (const row of await db.query("SELECT * FROM mes.change_requests WHERE state = 'executed' AND emergency IS NOT NULL AND emergency->>'stage' = ANY($1) ORDER BY executed_at", [OPEN_STAGES])) {
+            const em = await emergencyView(db, row, null);
+            for (const u of em.reviewableBy ?? []) of(u).review.push({ id: row.id, title: row.title, emergency: "review", overdue: em.overdue });
+            for (const [department, users] of Object.entries(em.confirmers ?? {})) for (const u of users) of(u).sign.push({ id: row.id, title: row.title, department, step: null, emergency: "confirm", overdue: em.overdue });
         }
         return out;
     }
@@ -230,6 +282,64 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
             for (const st of steps) if (!st.approvers.some((u) => !authors.includes(u) && u !== reviewer)) out.push({ where: steps.length > 1 ? `${r.department} (${st.label})` : r.department, department: r.department, none: false });
         }
         return out;
+    }
+
+    // ---- emergency changes (§5.7): reviewed afterwards ----
+    // Who may confirm or flag an executed emergency for a department: its approvers at any step, never
+    // one of the change's authors nor its reviewer afterwards (emergency.js confirmersOf).
+    async function confirmersFor(q, row, department, reviewer = row.emergency?.review?.reviewer ?? null) {
+        const approvers = (await stepsOf(q, department)).flatMap((st) => st.approvers);
+        return confirmersOf(approvers, { authors: authorsOf(row), reviewer });
+    }
+    // Who may review it afterwards: a reviewer or a designer, none of its authors nor its emergency
+    // signer, whose review leaves each department on its route someone to confirm it (as §5.6 keeps a
+    // change signable). → { fine, empty: [departments nobody could confirm for, whoever reviews] }
+    async function afterReviewers(q, row) {
+        const not = [...authorsOf(row), row.emergency?.approved?.user].filter(Boolean);
+        const candidates = (await q.query("SELECT DISTINCT a.subject_id FROM mes.assignments a JOIN mes.users u ON u.id = a.subject_id AND u.active WHERE a.object = 'design' AND a.subject_kind = 'user' AND a.role IN ('reviewer', 'designer') AND NOT (a.subject_id = ANY($1)) ORDER BY a.subject_id", [not])).map((r) => r.subject_id);
+        const fine = [];
+        for (const u of candidates) {
+            let ok = true;
+            for (const r of row.route ?? []) if (!(await confirmersFor(q, row, r.department, u)).length) { ok = false; break; }
+            if (ok) fine.push(u);
+        }
+        const empty = [];
+        for (const r of row.route ?? []) if (!(await confirmersFor(q, row, r.department, null)).length) empty.push(r.department);
+        return { fine, empty };
+    }
+    // An emergency still to be reviewed afterwards, as the approvals list and the change show it.
+    async function emergencyView(q, row, userId) {
+        const em = row.emergency;
+        const open = row.state === "executed" && OPEN_STAGES.includes(em.stage);
+        const out = { ...em, open, overdue: open && Boolean(em.overdue) };
+        if (row.state === "executed" && em.stage === "review") out.reviewableBy = (await afterReviewers(q, row)).fine;
+        if (row.state === "executed" && em.stage === "confirm") {
+            out.confirmers = {};
+            for (const r of row.route ?? []) if (!em.departments?.[r.department]) out.confirmers[r.department] = await confirmersFor(q, row, r.department);
+        }
+        out.mine = Boolean(userId) && ((out.reviewableBy ?? []).includes(userId) || Object.values(out.confirmers ?? {}).some((l) => l.includes(userId)));
+        return out;
+    }
+    // Overdue reviews afterwards (§5.7), flagged once each: the change says so, the audit trail and the
+    // event log too. Run by the instance that schedules (app.mjs). → [ids flagged now]
+    async function emergencyTick(at = new Date()) {
+        const due = await db.query("SELECT id FROM mes.change_requests WHERE state = 'executed' AND emergency IS NOT NULL AND emergency->>'stage' = ANY($1) AND emergency->>'overdue' IS NULL AND (emergency->>'due')::timestamptz < $2", [OPEN_STAGES, at]);
+        const flagged = [];
+        for (const { id } of due) {
+            const row = await db.transaction(async (tx) => {
+                const r = await loadChange(tx, id, true);
+                if (r.state !== "executed" || !OPEN_STAGES.includes(r.emergency?.stage) || r.emergency.overdue) return null;
+                const em = { ...r.emergency, overdue: at.toISOString() };
+                await tx.query("UPDATE mes.change_requests SET emergency = $2, updated_at = now() WHERE id = $1", [id, JSON.stringify(em)]);
+                await audit(tx, "platform", id, "change:emergency:overdue", { due: em.due, stage: em.stage });
+                return { ...r, emergency: em };
+            });
+            if (!row) continue;
+            flagged.push(id);
+            const waiting = row.emergency.stage === "review" ? "its review" : `confirmation by ${(row.route ?? []).map((r) => r.department).filter((d) => !row.emergency.departments?.[d]).join(", ")}`;
+            events?.emit?.("change.emergency.overdue", { severity: "warning", message: `The emergency change "${row.title}" (by ${row.author}) was due to be reviewed afterwards by ${row.emergency.due}, and still waits for ${waiting}. Review it, or roll it back.`, details: { change: id, due: row.emergency.due, stage: row.emergency.stage } });
+        }
+        return flagged;
     }
 
     async function departments() {
@@ -253,10 +363,48 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
             screens: await named("screens"),
             flows: await named("flows"),
             layouts: await named("layouts"),
+            queries: await named("queries"),
             elements: await named("elements"),
             organization: await organizationSnapshot(db),
         };
     }
+    // What the live designs need from suites (§29.10), each need against what the installed suites give now:
+    // [{ design: "<kind>:<name>", suite, needs, what, given }]. A need is `given` when the suite is installed and
+    // gives it; else it says why not (the suite is not installed, or its version does not give it), so a removed
+    // suite, or a version that dropped something, is found before a person meets it at a station.
+    function suiteNeedsOf(live) {
+        const out = [];
+        const installed = new Map(suitesInstalled.map((x) => [x.name, x]));
+        const SUITE = /^([a-z][a-z0-9-]{0,39})\.([a-z][a-z0-9_]*)$/;
+        const need = (design, kindName, what, givenSet) => {
+            const m = SUITE.exec(String(kindName ?? ""));
+            if (!m) return;
+            const suite = m[1];
+            const there = installed.get(suite);
+            const given = Boolean(there) && givenSet.has(kindName);
+            out.push({ design, suite, needs: kindName, what, given, ...(given ? {} : { why: there ? `${there.label} ${there.version} gives no ${what} "${kindName}"` : `the ${suite} suite is not installed` }) });
+        };
+        const steps = new Set(Object.keys(suiteExtensions.steps ?? {})), blocks = new Set(Object.keys(suiteExtensions.blocks ?? {}));
+        const schedules = new Set(Object.keys(suiteExtensions.schedules ?? {})), elements = new Set(Object.keys(suiteExtensions.elements ?? {}));
+        const nodes = new Set(Object.keys(suiteFlowNodes ?? {}));
+        for (const [name, t] of Object.entries(live.transactions)) for (const st of t.body.steps ?? []) if (st?.step) need(`transaction:${name}`, st.step, "step kind", steps);
+        for (const [name, sv] of Object.entries(live.services)) {
+            for (const [suite, names] of Object.entries(sv.body.uses?.suites ?? {})) for (const n of names ?? []) need(`service:${name}`, `${suite}.${n}`, "capability", new Set(Object.entries(suiteExtensions.capabilities ?? {}).flatMap(([s, list]) => list.map((c) => `${s}.${c}`))));
+            for (const on of sv.body.on ?? []) if (on?.schedule?.from) need(`service:${name}`, on.schedule.from, "kind of schedule", schedules);
+        }
+        for (const [name, sc] of Object.entries(live.screens)) for (const b of sc.body.blocks ?? []) if (String(b?.block ?? "").includes(".")) need(`screen:${name}`, b.block, "block kind", blocks);
+        for (const [name, f] of Object.entries(live.flows)) for (const n of Object.values(f.body.nodes ?? {})) if (String(n?.kind ?? "").includes(".")) need(`flow:${name}`, n.kind, "flow node kind", nodes);
+        for (const [name, e] of Object.entries(live.elements)) if (e.body?.kind) need(`element:${name}`, e.body.kind, "kind of design element", elements);
+        for (const [object, d] of Object.entries(live.definitions)) {
+            for (const suite of Object.keys(d.body.suites ?? {})) {
+                const there = installed.get(suite);
+                out.push({ design: `object:${object}`, suite, needs: `${suite} part of the design`, what: "part of an object's design", given: Boolean(there && suiteDesigns[suite]), ...(there && suiteDesigns[suite] ? {} : { why: there ? `${there.label} ${there.version} checks no part of an object's design` : `the ${suite} suite is not installed` }) });
+            }
+            for (const pol of d.body.policies ?? []) for (const via of pol.via ?? []) if (String(via).includes(".")) need(`object:${object}`, via, "step kind (a policy's via)", steps);
+        }
+        return out;
+    }
+
     async function loadChange(q, id, lock = false) {
         if (typeof id !== "string" || !UUID.test(id)) fail("Not found.", { status: 404 });
         const [row] = await q.query(`SELECT * FROM mes.change_requests WHERE id = $1${lock ? " FOR UPDATE" : ""}`, [id]);
@@ -265,19 +413,67 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
     }
 
     // Everything a change's content must pass, against what is live plus the change itself.
+    // The named queries there will be, and the columns each gives (§23.1): what a design naming a query's columns
+    // is checked against. A query that cannot be described (a draft that does not run yet) has none known.
+    async function queryKnownOf(live, content) {
+        const queries = Object.fromEntries(Object.entries({ ...Object.fromEntries(Object.entries(live.queries ?? {}).map(([k, v]) => [k, v.body])), ...(content.queries ?? {}) }).filter(([, b]) => b));
+        const queryColumns = {};
+        if (describeQuery) for (const [name, body] of Object.entries(queries)) {
+            const d = await describeQuery(body).catch(() => null);
+            if (Array.isArray(d?.columns)) queryColumns[name] = d.columns;
+        }
+        return { queries, queryColumns };
+    }
+    // What a change would break of designs it does not hold (§23.1): every design, live, that uses a query this
+    // change alters, checked against the query as it leaves it; and every query that reads a field this change
+    // takes from an object. → { uses: [{ ...use, problems }], queries: [{ name, label, reads: ["object.field"] }] }
+    const KIND_KEY = { object: "definitions", transaction: "transactions", screen: "screens", flow: "flows" };
+    function designsOf(live, content) {
+        const merged = (k) => Object.fromEntries(Object.entries({ ...Object.fromEntries(Object.entries(live[k] ?? {}).map(([n, v]) => [n, v.body])), ...(content[k] ?? {}) }).filter(([, b]) => b));
+        return { definitions: merged("definitions"), transactions: merged("transactions"), screens: merged("screens"), flows: merged("flows") };
+    }
+    function alignTargets(live, content, known) {
+        const altered = new Set(Object.keys(content.queries ?? {}));
+        const uses = queryUses(designsOf(live, content))
+            .filter((u) => altered.has(u.query) && content[KIND_KEY[u.kind]]?.[u.name] === undefined)
+            .map((u) => ({ ...u, problems: queryUseProblems(u, known) }))
+            .filter((u) => u.problems.length);
+        const removed = [];
+        for (const [o, body] of Object.entries(content.definitions ?? {})) {
+            const was = live.definitions[o]?.body?.fields ?? {};
+            for (const f of Object.keys(was)) if (!body || !Object.hasOwn(body.fields ?? {}, f)) removed.push([o, f]);
+        }
+        const queries = [];
+        if (removed.length) for (const [name, body] of Object.entries(known.queries)) {
+            const names = namesIn(body.sql);
+            const reads = removed.filter(([o, f]) => names.has(o) && names.has(f)).map(([o, f]) => `${o}.${f}`);
+            if (reads.length) queries.push({ name, label: body.label ?? name, reads, inChange: Object.hasOwn(content.queries ?? {}, name) });
+        }
+        return { uses, queries };
+    }
+
     async function problemsOf(content) {
         const live = await published();
+        const queryKnown = await queryKnownOf(live, content);
         // The locks that hold now: on what is live (builtins.js).
         const locks = liveLocks(allLocks, Object.fromEntries(Object.entries(live.definitions).map(([k, v]) => [k, v.body])));
         const objects = [...new Set([...Object.keys(live.definitions), ...Object.keys(content.definitions ?? {})])];
         const scripts = [...new Set([...Object.keys(live.scripts), ...Object.keys(content.scripts ?? {})])];
         // A change to the organization names the departments there will be.
         const depts = content.organization ? Object.keys(content.organization.departments ?? {}) : (await departments()).map((d) => d.id);
+        // …and its groups, which an object's approval by value may name too (§28.3a).
+        const grps = content.organization ? Object.keys(content.organization.groups ?? {}) : (await db.query("SELECT id FROM mes.groups WHERE kind = 'group'")).map((g) => g.id);
         const transactions = [...new Set([...Object.keys(live.transactions), ...Object.keys(content.transactions ?? {})])];
         const problems = [];
+        if (Object.keys(content.definitions ?? {}).length) {
+            const bodies = new Map([...Object.entries(live.definitions).map(([o, d]) => [o, d.body]), ...Object.entries(content.definitions)]);
+            for (const c of derivedCycles(bodies)) problems.push({ path: `${c.object}.fields.${c.field}.from`, message: `"${c.field}" reads, through ${c.cycle.slice(1, -1).join(", ") || "itself"}, what is derived from it: it would never settle. Break the loop.` });
+        }
         for (const [object, body] of Object.entries(content.definitions ?? {})) {
             if (body?.object !== object) problems.push({ path: `${object}.object`, message: `The definition's name must stay "${object}".` });
-            for (const p of validateDefinition(body, { objects, scripts, departments: depts, transactions, suiteDesigns, locks, live: live.definitions[object]?.body ?? null })) problems.push({ ...p, path: `${object}.${p.path}` });
+            for (const p of validateDefinition(body, { ...queryKnown, objects, scripts, departments: depts, groups: grps, transactions, steps: Object.keys(suiteExtensions.steps ?? {}), suiteDesigns, locks, live: live.definitions[object]?.body ?? null, certifications: (content.organization ?? live.organization)?.certifications ?? {} })) problems.push({ ...p, path: `${object}.${p.path}` });
+            // A derived field's paths (§6.11), against the objects as they will be.
+            for (const p of derivedProblems(body, (o) => content.definitions?.[o] ?? live.definitions[o]?.body ?? null)) problems.push({ ...p, path: `${object}.${p.path}` });
             // §6.4: a field removed or retyped while records hold it needs a migration, which the POC has not.
             const before = live.definitions[object]?.body;
             if (before) {
@@ -321,7 +517,10 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
         // The organization (§5.6, §8): its people, departments, steps and roles, against the objects there will be.
         if (content.organization) {
             const defs = { ...Object.fromEntries(Object.entries(live.definitions).map(([k, v]) => [k, v.body])), ...(content.definitions ?? {}) };
-            for (const p of validateOrganization(content.organization, { objects: Object.fromEntries(Object.entries(defs).map(([k, d]) => [k, { roles: d?.roles ?? [] }])), liveDepartments: Object.keys(live.organization.departments), liveRoles: live.organization.roles })) problems.push({ ...p, path: `organization.${p.path}`, message: `Organization: ${p.message}` });
+            // A certification taken off the list while an object's access still requires it (§9.9).
+            const listed = content.organization.certifications ?? {};
+            for (const [o, d] of Object.entries(defs)) for (const r of d?.access?.requires ?? []) if (r?.certification && !Object.hasOwn(listed, r.certification)) problems.push({ path: `organization.certifications`, message: `Organization: "${r.certification}" is required by ${d.label ?? o}'s access: keep it, or change that first.` });
+            for (const p of validateOrganization(content.organization, { objects: Object.fromEntries(Object.entries(defs).map(([k, d]) => [k, { roles: d?.roles ?? [], label: d?.label, approvers: Object.values(d?.approval?.by?.values ?? {}).flat() }])), liveDepartments: Object.keys(live.organization.departments), liveGroups: Object.keys(live.organization.groups ?? {}), liveRoles: live.organization.roles, liveSetup: live.organization.setup?.open === true })) problems.push({ ...p, path: `organization.${p.path}`, message: `Organization: ${p.message}` });
         }
         // Retiring (§5.10): nothing still in use; an object only once none of its records is.
         if (content.retire) {
@@ -339,7 +538,7 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
             const subFlows = Object.fromEntries([...Object.entries(live.flows ?? {}).map(([n, f]) => [n, subFlowsOf(f.body)]), ...Object.entries(content.flows ?? {}).map(([n, b]) => [n, subFlowsOf(b)])]);
             const known = { ...(await integrationKnown(live, content)), flowNodes: suiteFlowNodes, flows: [...new Set([...Object.keys(live.flows ?? {}), ...Object.keys(content.flows ?? {})])], subFlows,
                 // What each template is and whose records it takes through (a sub flow runs one of its own kind, §32.14).
-                flowInfo: Object.fromEntries(Object.entries({ ...Object.fromEntries(Object.entries(live.flows ?? {}).map(([n, f]) => [n, f.body])), ...(content.flows ?? {}) }).map(([n, b]) => [n, { kind: b?.kind ?? null, object: Object.values(b?.participants ?? {}).find((p) => p?.as === (b?.kind === "plan" ? "subject" : "traveler"))?.object ?? null }])) };
+                flowInfo: flowInfoOf(live, content) };
             for (const [name, body] of Object.entries(content.flows ?? {})) {
                 if (body?.name !== name) problems.push({ path: `flows.${name}.name`, message: `The flow template's name must stay "${name}".` });
                 for (const p of validateFlow(body, known)) problems.push({ ...p, path: `flows.${name}.${p.path}`, message: `${name}: ${p.message}` });
@@ -350,9 +549,9 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
                 }
             }
         }
-        // Screens (§26), against the objects and transactions there will be.
+        // Screens (§26), against the objects and transactions there will be (and the routes a guide follows, §35.4).
         if (Object.keys(content.screens ?? {}).length) {
-            const known = await integrationKnown(live, content);
+            const known = { ...(await integrationKnown(live, content)), flowInfo: flowInfoOf(live, content) };
             for (const [name, body] of Object.entries(content.screens ?? {})) {
                 if (body?.name !== name) problems.push({ path: `screens.${name}.name`, message: `The screen's name must stay "${name}".` });
                 for (const p of validateScreen(body, known)) problems.push({ ...p, path: `screens.${name}.${p.path}`, message: `${name}: ${p.message}` });
@@ -387,6 +586,13 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
             const objects = Object.fromEntries(Object.entries({ ...Object.fromEntries(Object.entries(live.definitions).map(([k, v]) => [k, v.body])), ...(content.definitions ?? {}) }).filter(([o, d]) => d && !(content.retire?.definitions ?? []).includes(o)).map(([o, d]) => [o, { titleField: d.titleField ?? null, fields: d.fields ?? {} }]));
             for (const p of validateReportLayout(body, { departments: Object.keys(live.organization.departments ?? {}), objects })) problems.push({ ...p, path: `layouts.${name}.${p.path}`, message: `${name}: ${p.message}` });
         }
+        // Named queries (§23.1): what they are, and departments that exist. Whether one runs is the fitness
+        // test's (it reads the views, as the submitter).
+        for (const [name, body] of Object.entries(content.queries ?? {})) {
+            if (body === null) continue;
+            if (body?.name !== name) problems.push({ path: `queries.${name}.name`, message: `The query's name must stay "${name}".` });
+            for (const p of validateQuery(body, { departments: Object.keys(live.organization.departments ?? {}), ...(body?.http ? await webKnown(live, content) : {}) })) problems.push({ ...p, path: `queries.${name}.${p.path}`, message: `${name}: ${p.message}` });
+        }
         // Transactions (§25), against the objects (their fields, states and transitions) there will be.
         if (Object.keys(content.transactions ?? {}).length) {
             const known = await integrationKnown(live, content);
@@ -399,6 +605,12 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
                     if (check) for (const m of check(st, known) ?? []) problems.push({ path: `transactions.${name}.steps.${i}`, message: `${name}: step ${i + 1}: ${m}` });
                 }
             }
+        }
+        // Designs this change does not hold, that it would break (§23.1): each named, with how, for Align to bring in.
+        if (Object.keys(content.queries ?? {}).length || Object.keys(content.definitions ?? {}).length) {
+            const targets = alignTargets(live, content, queryKnown);
+            for (const u of targets.uses) for (const m of u.problems) problems.push({ path: `align.${u.kind}.${u.name}`, align: { kind: u.kind, name: u.name }, message: `${u.label} (not in this change), ${u.at}: ${m} Align brings it into this change.` });
+            for (const q of targets.queries) problems.push({ path: q.inChange ? `queries.${q.name}.sql` : `align.query.${q.name}`, ...(q.inChange ? {} : { align: { kind: "query", name: q.name } }), message: `Query ${q.label}${q.inChange ? "" : " (not in this change)"} reads ${q.reads.join(", ")}, which this change takes away: change its text${q.inChange ? "" : " (Align brings it into this change)"}.` });
         }
         return problems;
     }
@@ -415,22 +627,36 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
             return [`the ${spec.suite} suite could not check it (${error?.message ?? "error"}): ask IT.`];
         }
     }
+    // Each flow template there will be: its kind, whose records it takes through, and its steps placed in a
+    // guide (a sequence's `guide`, §35.4).
+    function flowInfoOf(live, content) {
+        return Object.fromEntries(Object.entries({ ...Object.fromEntries(Object.entries(live.flows ?? {}).map(([n, f]) => [n, f.body])), ...(content.flows ?? {}) }).map(([n, b]) => [n, {
+            kind: b?.kind ?? null, object: Object.values(b?.participants ?? {}).find((p) => p?.as === (b?.kind === "plan" ? "subject" : "traveler"))?.object ?? null,
+            guided: Object.values(b?.nodes ?? {}).filter((x) => x?.guide !== undefined).length,
+        }]));
+    }
+    // The names published over HTTP as they will be (web-publish.js): services, transactions and queries share them.
+    const webNamesOf = (live, content) => webNames(Object.fromEntries([["service", "services"], ["transaction", "transactions"], ["query", "queries"]].map(([kind, key]) => [kind, { ...Object.fromEntries(Object.entries(live[key] ?? {}).map(([k, v]) => [k, v.body])), ...(content[key] ?? {}) }])));
+    // What a query published over HTTP is checked against: who may be its callers, and the names taken.
+    const webKnown = async (live, content) => { const k = await integrationKnown(live, content); return { users: k.users, groups: k.groups, web: k.web }; };
     async function integrationKnown(live, content) {
         const defs = { ...Object.fromEntries(Object.entries(live.definitions).map(([k, v]) => [k, v.body])), ...(content.definitions ?? {}) };
         return {
             objects: Object.fromEntries(Object.entries(defs).map(([k, d]) => [k, { actions: (d?.states?.transitions ?? []).map((t) => t.action), roles: d?.roles ?? [], fields: d?.fields ?? {}, states: d?.states?.list ?? [], transitions: d?.states?.transitions ?? [], titleField: d?.titleField ?? null, stewards: d?.stewards ?? {}, ...(d?.flow ? { flow: d.flow } : {}) }])),
             scripts: [...new Set([...Object.keys(live.scripts), ...Object.keys(content.scripts ?? {})])],
             connections: [...new Set([...Object.keys(live.connections), ...Object.keys(content.connections ?? {})])],
+            certifications: (content.organization ?? live.organization)?.certifications ?? {},
             // People, groups and departments as they will be: a change to the organization's draft, or now.
             users: content.organization ? Object.entries(content.organization.users ?? {}).filter(([, u]) => u.active !== false).map(([id]) => id) : (await db.query("SELECT id FROM mes.users WHERE active")).map((u) => u.id),
             groups: content.organization ? [...Object.keys(content.organization.departments ?? {}), ...Object.keys(content.organization.groups ?? {})] : (await db.query("SELECT id FROM mes.groups")).map((g) => g.id),
             departments: content.organization ? Object.keys(content.organization.departments ?? {}) : (await departments()).map((d) => d.id),
             // What a screen may show and start (§26): each transaction's inputs and where it appears.
             // Which services may run each, and whether a person signs it (§15.2): a service's check reads them.
-            transactions: Object.fromEntries(Object.entries({ ...Object.fromEntries(Object.entries(live.transactions ?? {}).map(([k, v]) => [k, v.body])), ...(content.transactions ?? {}) }).map(([k, t]) => [k, { label: t?.label ?? k, inputs: t?.inputs ?? {}, appearsOn: t?.appearsOn ?? null, callers: { services: t?.callers?.services ?? [] }, signed: Boolean(t?.signature) }])),
+            transactions: Object.fromEntries(Object.entries({ ...Object.fromEntries(Object.entries(live.transactions ?? {}).map(([k, v]) => [k, v.body])), ...(content.transactions ?? {}) }).map(([k, t]) => [k, { label: t?.label ?? k, inputs: t?.inputs ?? {}, appearsOn: t?.appearsOn ?? null, callers: { services: t?.callers?.services ?? [], flows: t?.callers?.flows ?? [] }, signed: Boolean(t?.signature) }])),
             // The services there will be: a transaction's callers may name them; and which of them, as their
             // own service role, run each transaction (its callers must keep naming them).
             services: [...new Set([...Object.keys(live.services ?? {}), ...Object.keys(content.services ?? {})])],
+            flows: [...new Set([...Object.keys(live.flows ?? {}), ...Object.keys(content.flows ?? {})])],
             runBy: Object.entries({ ...Object.fromEntries(Object.entries(live.services ?? {}).map(([k, v]) => [k, v.body])), ...(content.services ?? {}) }).reduce((out, [sv, b]) => {
                 if (b && (b.runAs ?? "service") === "service") for (const t of Array.isArray(b.uses?.transactions) ? b.uses.transactions : []) (out[t] ??= []).push(sv);
                 return out;
@@ -441,12 +667,28 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
             elements: { ...Object.fromEntries(Object.entries(live.elements ?? {}).map(([k, v]) => [k, v.body])), ...(content.elements ?? {}) },
             // The screens a button may open and a pop-up may open over (§26.6, §26.7).
             screens: [...new Set([...Object.keys(live.screens ?? {}), ...Object.keys(content.screens ?? {})])],
+            // The named queries there will be (§23.1), as they will read, and the columns each gives: a reference's
+            // choices, a screen's table and a plan screen's list name them.
+            queryColumns: (await queryKnownOf(live, content)).queryColumns,
+            queries: Object.fromEntries(Object.entries({ ...Object.fromEntries(Object.entries(live.queries ?? {}).map(([k, v]) => [k, v.body])), ...(content.queries ?? {}) }).filter(([, b]) => b)),
+            // What answers at /svc/v1 as it will be (docs/contracts/http-apis): each name published over HTTP, by kind.
+            web: webNamesOf(live, content),
             // The input flows a transaction or a screen may name (§32.13): what each asks for, fills and runs.
             inputFlows: Object.fromEntries(Object.entries({ ...Object.fromEntries(Object.entries(live.flows ?? {}).map(([k, v]) => [k, v.body])), ...(content.flows ?? {}) }).filter(([, b]) => b?.kind === "input").map(([k, b]) => [k, inputFlowSummary(b)])),
         };
     }
 
     // The footprint and route of a change's content (§5.6).
+    // Why a change would change nothing, in words: what it holds is live already exactly as drafted (another change,
+    // a suite's pack or a model file put it there meanwhile), or it holds no design at all.
+    function nothingToDo(content) {
+        const held = Object.entries(content ?? {}).filter(([k, v]) => k !== "tests" && v && typeof v === "object")
+            .flatMap(([k, v]) => (k === "organization" ? ["People & departments"] : Object.entries(v).map(([n, b]) => (b && typeof b === "object" ? b.label ?? n : n))));
+        if (!held.length) return "This change changes nothing: it holds no design yet. Add one, or withdraw it.";
+        const one = held.length === 1;
+        return `This change changes nothing: ${held.slice(0, 5).join(", ")}${held.length > 5 ? ` and ${held.length - 5} more` : ""} ${one ? "is" : "are"} live already, exactly as drafted here (another change put ${one ? "it" : "them"} there since this one started). Withdraw it, or change something in it first.`;
+    }
+
     async function routeFor(content) {
         const live = await published();
         const elements = [];
@@ -466,6 +708,7 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
         for (const [name, body] of Object.entries(content.screens ?? {})) elements.push(...screenFootprint(name, live.screens[name]?.body, body));
         for (const [name, body] of Object.entries(content.flows ?? {})) elements.push(...flowFootprint(name, live.flows[name]?.body, body, { ...context, transactions: bodies("transactions") }));
         for (const [name, body] of Object.entries(content.layouts ?? {})) elements.push(...reportLayoutFootprint(name, live.layouts[name]?.body, body));
+        for (const [name, body] of Object.entries(content.queries ?? {})) elements.push(...queryFootprint(name, live.queries[name]?.body, body));
         for (const [name, body] of Object.entries(content.elements ?? {})) elements.push(...suiteElementFootprint(name, live.elements[name]?.body, body));
         if (content.organization) elements.push(...organizationFootprint(draftOf(live.organization), content.organization, context));
         if (content.retire) elements.push(...retireFootprint(content.retire, Object.fromEntries(RETIRE_KINDS.map((k) => [k, Object.fromEntries(Object.entries(live[k] ?? {}).map(([n, v]) => [n, v.body ?? v]))]))));
@@ -484,7 +727,7 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
     // before the one it published), while that version is still the one live; one it created is
     // retired; one it retired is published again. A design changed again since is left alone, unless
     // asked for (`includeChanged`): putting it back undoes the later change too.
-    const NOUNS = { definitions: "object", scripts: "script", services: "service", connections: "connection", transactions: "transaction", screens: "screen", flows: "flow template", layouts: "report layout", elements: "design element" };
+    const NOUNS = { definitions: "object", scripts: "script", services: "service", connections: "connection", transactions: "transaction", screens: "screen", flows: "flow template", layouts: "report layout", queries: "query", elements: "design element" };
     async function rollbackOf(orig, { includeChanged = false } = {}) {
         if (orig.state !== "executed") fail("Only a change that has executed is rolled back: one still open is withdrawn or sent back to design.", { status: 409 });
         const live = await published();
@@ -556,21 +799,27 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
             if (e.kind === "scripts" && pack.tests?.[e.name]) content.tests[e.name] = pack.tests[e.name];
         }
         const roles = missingRoles(pack, live.organization);
-        if (!status.some((e) => e.status !== "same") && !roles.length) fail(`Everything in ${title} is live already.`, { status: 409, code: "design.same" });
+        // …and the certifications its designs require that the organization does not list yet (§27.9).
+        const certifications = missingCertifications(pack, live.organization);
+        // …and the groups its designs name that the plant has not made yet, empty for it to fill.
+        const groups = missingGroups(pack, live.organization);
+        if (!status.some((e) => e.status !== "same") && !roles.length && !certifications.length && !groups.length) fail(`Everything in ${title} is live already.`, { status: 409, code: "design.same" });
         // One open change per element: a pack that would take one from another change is refused, naming it.
         const kinds = Object.keys(elements);
-        const [busy] = await db.query(`SELECT id, title FROM mes.change_requests WHERE state = ANY($1) AND (${kinds.map((k, i) => `content->'${k}' ?| $${i + 2}`).join(" OR ")}${roles.length ? " OR content ? 'organization'" : ""}) LIMIT 1`, [OPEN, ...kinds.map((k) => Object.keys(content[k]))]);
+        const [busy] = await db.query(`SELECT id, title FROM mes.change_requests WHERE state = ANY($1) AND (${kinds.map((k, i) => `content->'${k}' ?| $${i + 2}`).join(" OR ")}${roles.length || certifications.length || groups.length ? " OR content ? 'organization'" : ""}) LIMIT 1`, [OPEN, ...kinds.map((k) => Object.keys(content[k]))]);
         if (busy) fail(`"${busy.title}" is open and holds part of this (or people & departments): finish or withdraw it first.`, { status: 409, code: "design.busy" });
-        if (roles.length) {
+        if (roles.length || certifications.length || groups.length) {
             const org = draftOf(live.organization);
+            for (const [id, g] of groups) (org.groups ??= {})[id] = { name: g.name, members: [] };
             for (const [object, role, subject] of roles) ((org.roles[object] ??= {})[role] ??= []).push(subject);
+            for (const [id, c] of certifications) (org.certifications ??= {})[id] = { name: c.name, ...(c.description ? { description: c.description } : {}) };
             content.organization = org;
             base.organization = live.organization.version;
         }
         return db.transaction(async (tx) => {
             const [row] = await tx.query("INSERT INTO mes.change_requests (title, state, author, content, base, reason) VALUES ($1, 'design', $2, $3, $4, $5) RETURNING id",
                 [String(title).slice(0, 200), user.id, JSON.stringify(content), JSON.stringify(base), String(reason).slice(0, 2000)]);
-            await audit(tx, user.id, row.id, "change:start", { ...from, elements: status.filter((e) => e.status !== "same").map((e) => `${e.kind}:${e.name}`), roles: roles.length, ...(self?.via ? { via: self.via } : {}) });
+            await audit(tx, user.id, row.id, "change:start", { ...from, elements: status.filter((e) => e.status !== "same").map((e) => `${e.kind}:${e.name}`), roles: roles.length, certifications: certifications.map(([id]) => id), groups: groups.map(([id]) => id), ...(self?.via ? { via: self.via } : {}) });
             return { id: row.id, existing: false };
         });
     }
@@ -586,18 +835,24 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
             if (e.kind === "scripts" && pack.tests?.[e.name]) content.tests[e.name] = pack.tests[e.name];
         }
         const problems = status.some((e) => e.status !== "same") ? await problemsOf(content) : [];
-        return { elements: status, roles: missingRoles(pack, live.organization).map(([object, role, subject]) => ({ object, role, subject })), problems };
+        return { elements: status, roles: missingRoles(pack, live.organization).map(([object, role, subject]) => ({ object, role, subject })), certifications: missingCertifications(pack, live.organization).map(([id, c]) => ({ id, name: c.name })), groups: missingGroups(pack, live.organization).map(([id, g]) => ({ id, name: g.name })), problems };
     }
 
     const summary = (row) => ({
         id: row.id, title: row.title, state: row.state, author: row.author, co_designers: row.co_designers ?? [], contributors: row.contributors ?? [], updated_by: row.updated_by ?? null, draft_rev: Number(row.draft_rev ?? 0),
         objects: Object.keys(row.content?.definitions ?? {}), scripts: Object.keys(row.content?.scripts ?? {}),
-        services: Object.keys(row.content?.services ?? {}), connections: Object.keys(row.content?.connections ?? {}), transactions: Object.keys(row.content?.transactions ?? {}), screens: Object.keys(row.content?.screens ?? {}), flows: Object.keys(row.content?.flows ?? {}), layouts: Object.keys(row.content?.layouts ?? {}), elements: Object.keys(row.content?.elements ?? {}), organization: Boolean(row.content?.organization), retire: row.content?.retire ?? null,
+        services: Object.keys(row.content?.services ?? {}), connections: Object.keys(row.content?.connections ?? {}), transactions: Object.keys(row.content?.transactions ?? {}), screens: Object.keys(row.content?.screens ?? {}), flows: Object.keys(row.content?.flows ?? {}), layouts: Object.keys(row.content?.layouts ?? {}), queries: Object.keys(row.content?.queries ?? {}), elements: Object.keys(row.content?.elements ?? {}), organization: Boolean(row.content?.organization), retire: row.content?.retire ?? null,
         updated_at: iso(row.updated_at), submitted_at: iso(row.submitted_at), executed_at: iso(row.executed_at),
         // Under test in the test sandbox (§5.13): its place in the order; and how its last build there went.
         test: row.test ?? null, lastTest: (row.tested ?? []).at(-1) ?? null,
         // A change that rolls another back (§5.14).
         rollbackOf: row.rollback?.of ?? null,
+        // An emergency change (§5.7): its stage, and by when it is to be reviewed afterwards.
+        // (Overdue once the job has said so, emergencyTick: live views read what is stored, not the clock.)
+        emergency: row.emergency ? { stage: row.emergency.stage, due: row.emergency.due ?? null, overdue: OPEN_STAGES.includes(row.emergency.stage) && Boolean(row.emergency.overdue) } : null,
+        // Executed during setup (§5.15), on its designer's signature alone.
+        setup: row.setup ? { by: row.setup.by, at: row.setup.at, because: row.setup.because ?? "setup" } : null,
+        approvalLevel: row.approval_level ?? null,
     });
     // A rollback as the platform drafted it: what was live before, unchanged since (§5.14). Edited, it
     // is a change like any other, reviewed and approved in full.
@@ -608,18 +863,38 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
     async function audit(q, actor, id, action, after) {
         await appendAudit(q, { actor, object: "$change", recordId: id, action, after });
     }
+    // Once a change has executed and committed, however it got there (approved, an emergency, setup).
+    async function afterExecuted(outcome) {
+        store.forget();
+        // Travelers already there when a route is published take it up, at the step their step field names (§32.5);
+        // one brought in as it was (not published again, §5.12) is still taken up, as a republish was.
+        const routes = [...Object.keys(outcome?.flows ?? {}), ...(outcome?.unchanged?.flows ?? [])];
+        if (routes.length) await onFlows?.(routes).catch((e) => log.error?.("flows: adopt", e));
+        // Setup ended or opened again (§5.15): rare, and never unseen.
+        if (outcome?.setup) events?.emit?.(`setup.${outcome.setup}`, { severity: "warning", message: outcome.setup === "ended" ? "Setup ended: from now on every change is reviewed and approved before it executes." : "Setup is open again (approved by governance): a designer's change executes on their own signature, without review or approval, until People & departments ends it.", details: { version: outcome.organization } });
+        await onExecuted?.(outcome)?.catch?.((e) => log.error?.("after execution", e));
+    }
 
     // Execution (§5.3): by the platform, in one transaction, only for the approved content, and only
     // if nothing it was drafted against has moved since.
     async function execute(tx, row) {
         if (sha256(canonical(row.content)) !== row.content_hash) throw new Error("the content does not match what was approved");
-        const outcome = { definitions: {}, scripts: {}, services: {}, connections: {}, transactions: {}, screens: {}, flows: {}, layouts: {}, elements: {} };
+        // The platform's own writes to the designs and to people and roles: let by the integrity tripwire (§7.7).
+        await platformWrites(tx);
+        const outcome = { definitions: {}, scripts: {}, services: {}, connections: {}, transactions: {}, screens: {}, flows: {}, layouts: {}, queries: {}, elements: {} };
         // The organization first: departments and people exist before anything names them.
         if (row.content.organization) {
-            const [live] = await tx.query("SELECT version FROM mes.organization WHERE status = 'published' FOR UPDATE");
+            const [live] = await tx.query("SELECT version, body FROM mes.organization WHERE status = 'published' FOR UPDATE");
             if ((live?.version ?? null) !== (row.base.organization ?? null)) throw new Error(`the organization changed since this was drafted (v${live?.version})`);
             await applyOrganization(tx, row.content.organization, (live?.version ?? 0) + 1);
             outcome.organization = (live?.version ?? 0) + 1;
+            // Setup ended, or opened again (§5.15): said in the audit trail, and in the event log after commit.
+            const was = live?.body?.setup?.open === true;
+            const now = row.content.organization.setup?.open === true;
+            if (was !== now) {
+                outcome.setup = now ? "opened" : "ended";
+                await appendAudit(tx, { actor: "platform", object: "$organization", recordId: null, defVersion: outcome.organization, action: `setup:${outcome.setup}`, after: { change: row.id, version: outcome.organization } });
+            }
         }
         for (const [name, source] of Object.entries(row.content.scripts ?? {})) {
             const [live] = await tx.query("SELECT version FROM mes.scripts WHERE name = $1 AND status = 'published' FOR UPDATE", [name]);
@@ -632,8 +907,10 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
             await tx.query("INSERT INTO mes.scripts (name, version, status, source, tests) VALUES ($1, $2, 'published', $3, $4)", [name, version, source, JSON.stringify(tests)]);
             outcome.scripts[name] = version;
         }
+        const beforeBodies = new Map();
         for (const [object, body] of Object.entries(row.content.definitions ?? {})) {
             const [live] = await tx.query("SELECT version, body FROM mes.definitions WHERE object = $1 AND status = 'published' FOR UPDATE", [object]);
+            beforeBodies.set(object, live?.body ?? null);
             if ((live?.version ?? null) !== (row.base.definitions?.[object] ?? null)) throw new Error(`${object} changed since this was drafted (v${live?.version})`);
             // Brought into the change and left as it was (§5.12): checked above, not published again.
             if (live && canonical(live.body) === canonical(body)) { (outcome.unchanged ??= {}).definitions = [...(outcome.unchanged.definitions ?? []), object]; continue; }
@@ -653,8 +930,21 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
             for (const [name, field] of Object.entries(live ? body.fields ?? {} : {})) {
                 const was = live.body.fields?.[name];
                 if (!was || field.type !== "enum" || Boolean(was.multiple) === Boolean(field.multiple)) continue;
+                // The platform's own write over many records (§7.7): let by the tripwire, each resealed after.
                 const converted = await tx.query(multipleConversion(field.multiple), [object, name]);
+                await resealRecords(tx, object, converted.map((r) => r.id));
                 if (converted.length) await appendAudit(tx, { actor: "platform", object, defVersion: version, action: `convert:${name}`, after: { field: name, to: field.multiple ? "several values" : "one value", records: converted.length, change: row.id } });
+            }
+        }
+        // Derived fields (§6.11) added or changed: every record they are on worked out again, and those
+        // that read through them, in this transaction (the platform's write, each record resealed after).
+        if (Object.keys(outcome.definitions).length) {
+            const now = new Map((await tx.query("SELECT object, body FROM mes.definitions WHERE status = 'published'")).map((d) => [d.object, d.body]));
+            const was = new Map([...now].map(([o, b]) => [o, Object.hasOwn(outcome.definitions, o) ? (beforeBodies.get(o) ?? null) : b]));
+            for (const object of changedDerived(was, now)) {
+                await platformWrites(tx);
+                const moved = await recomputeAll(tx, now, object, (ids) => resealRecords(tx, object, ids));
+                if (moved) await appendAudit(tx, { actor: "platform", object, defVersion: outcome.definitions[object] ?? null, action: "derive", after: { records: moved, change: row.id } });
             }
         }
         // Connections before the services that use them, and transactions after the objects they
@@ -662,7 +952,7 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
         for (const kind of ELEMENTS) {
             for (const [name, body] of Object.entries(row.content[kind] ?? {})) {
                 const [live] = await tx.query(`SELECT version, body FROM mes.${kind} WHERE name = $1 AND status = 'published' FOR UPDATE`, [name]);
-                if ((live?.version ?? null) !== (row.base[kind]?.[name] ?? null)) throw new Error(`${kind.slice(0, -1)} ${name} changed since this was drafted (v${live?.version})`);
+                if ((live?.version ?? null) !== (row.base[kind]?.[name] ?? null)) throw new Error(`${one(kind)} ${name} changed since this was drafted (v${live?.version})`);
                 if (live && canonical(live.body) === canonical(body)) { (outcome.unchanged ??= {})[kind] = [...(outcome.unchanged[kind] ?? []), name]; continue; }
                 const version = (await tx.query(`SELECT coalesce(max(version), 0) AS v FROM mes.${kind} WHERE name = $1`, [name]))[0].v + 1;
                 if (live) await tx.query(`UPDATE mes.${kind} SET status = 'superseded' WHERE name = $1 AND version = $2`, [name, live.version]);
@@ -690,6 +980,16 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
                 }
             }
         }
+        // What this change published or retired, sealed as it left it (§7.7): a later edit by hand is found; what
+        // it did not touch keeps its seal, so a hand edit made to it meanwhile is still found.
+        const changed = [
+            ...(outcome.organization ? [ACCESS] : []),
+            ...Object.keys(outcome.scripts).map((n) => `scripts:${n}`),
+            ...Object.keys(outcome.definitions).map((o) => `definitions:${o}`),
+            ...ELEMENTS.flatMap((kind) => Object.keys(outcome[kind] ?? {}).map((n) => `${kind}:${n}`)),
+            ...RETIRE_KINDS.flatMap((kind) => (row.content.retire?.[kind] ?? []).flatMap((n) => [`${kind}:${n}`, ...(kind === "services" ? [`scripts:${n}`] : [])])),
+        ];
+        if (changed.length) await sealDesigns(tx, undefined, changed);
         return outcome;
     }
 
@@ -698,7 +998,7 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
     // `draft`: a new report layout's body to start from (a layout made from a report, §34.11): only a
     // new one, never over a live layout or another change's draft.
     async function startIntegration(user, kind, name, label, from, elementKind = null, draft = null) {
-        const noun = kind.slice(0, -1);
+        const noun = one(kind);
         if (typeof name !== "string" || !named(name)) fail(`A ${noun}'s name is lower case letters, digits and _, starting with a letter.`, { fields: { [noun]: "Letters, digits and _." } });
         const live = await published();
         const current = live[kind][name];
@@ -727,6 +1027,7 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
                 : kind === "screens" ? SCREEN_TEMPLATE(name, label, stewards)
                 : kind === "flows" ? FLOW_TEMPLATE(name, label, stewards)
                 : kind === "layouts" ? LAYOUT_TEMPLATE(name, label, stewards)
+                : kind === "queries" ? QUERY_TEMPLATE(name, label, stewards)
                 // A suite's element (§30.11): what every element has, and what its kind starts with.
                 : kind === "elements" ? { name, kind: elementKind, label: label?.trim() || name.replace(/_/g, " "), description: "", stewards, ...(suiteExtensions.elements[elementKind]?.template?.(name) ?? {}) }
                 : { name, label: label?.trim() || name, baseUrl: "https://example.com/api", auth: { kind: "bearer", secret: name }, allow: [{ method: "GET", path: "/*" }], timeoutMs: 5000, stewards });
@@ -750,6 +1051,59 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
         });
     }
 
+    // Setup (§5.15): the same checks and fitness test as any submit, then executed at once, by the platform,
+    // on its designer's signature; no review, no approval. Never by the AI: a person signs it.
+    async function submitInSetup(self, user, draft, signature) {
+        const id = draft.id;
+        if (self?.via) fail("An AI does not execute a change during setup: a person submits it, with their signature. Submit it for review, or ask its author.", { status: 403, code: "design.setup_ai" });
+        if (!user.designRoles.includes("designer")) fail("Only a designer executes a change during setup.", { status: 403 });
+        // While setup is open (§5.15), or for good where the plant's approval level is none (§5.16).
+        const alone = (settings) => setupOpen(settings) || approvalLevel(settings) === "none";
+        if (!alone(await organizationSettings(db))) fail("Setup is over: changes are reviewed and approved now. Submit it for review.", { status: 409, code: "design.setup_closed" });
+        const problems = await problemsOf(draft.content);
+        if (problems.length) fail(`Fix ${problems.length} problem(s) before submitting.`, { code: "design.invalid" });
+        const report = fitness ? await fitness(draft, user) : null;
+        if (report) await db.query("UPDATE mes.change_requests SET fitness = $2, updated_at = now() WHERE id = $1", [id, JSON.stringify(report)]);
+        if (report && !report.passed) fail(`The fitness test failed: ${report.counts.fail} check(s). See the fitness report.`, { status: 409, code: "design.unfit" });
+        const proof = signatures ? await signatures.signOne(self, user, `change ${id}, executed during setup`, signature) : null;
+        let executed = false;
+        const result = await db.transaction(async (tx) => {
+            const row = await loadChange(tx, id, true);
+            if (row.state !== "design" || !editorsOf(row).includes(user.id)) fail("Only its author and co-designers submit a change in design.", { status: 409 });
+            // (Setup ended meanwhile: the change waits for review like any other.)
+            const settingsNow = await organizationSettings(tx);
+            if (!alone(settingsNow)) fail("Setup is over: changes are reviewed and approved now. Submit it for review.", { status: 409, code: "design.setup_closed" });
+            const hash = sha256(canonical(row.content));
+            if (report && report.hash !== hash) fail("The draft changed while it was tested; submit again.", { status: 409 });
+            const { elements, route } = await routeFor(row.content);
+            if (!elements.length) fail(nothingToDo(row.content));
+            const [{ now }] = await tx.query("SELECT now() AS now");
+            const record = { by: user.id, name: user.name, at: iso(now), because: setupOpen(settingsNow) ? "setup" : "approval level none", ...(proof ? { printedName: proof.printedName, method: proof.method } : {}) };
+            await tx.query(
+                "UPDATE mes.change_requests SET state = 'approval', content_hash = $2, footprint = $3, route = $4, submitted_at = now(), updated_at = now(), reviewer = NULL, review_note = NULL, setup = $5 WHERE id = $1",
+                [id, hash, JSON.stringify(elements), JSON.stringify(route), JSON.stringify(record)],
+            );
+            await audit(tx, user.id, id, "change:submit", { hash, route: route.map((r) => r.department), setup: setupOpen(settingsNow) ? "executed on its designer's signature, without review or approval (§5.15)" : "executed on its designer's signature: the plant's approval level is none (§5.16)" });
+            await tx.query("SAVEPOINT execute_change");
+            try {
+                const outcome = await execute(tx, await loadChange(tx, id, true));
+                await tx.query("UPDATE mes.change_requests SET state = 'executed', executed_at = now(), outcome = $2, updated_at = now() WHERE id = $1", [id, JSON.stringify(outcome)]);
+                await audit(tx, "platform", id, "change:execute", outcome);
+                await audit(tx, user.id, id, "change:setup:executed", { hash, meaning: record.because === "setup" ? "Executed during setup" : "Executed on its designer's signature (approval level none)", ...record });
+                executed = true;
+                return { ok: true, state: "executed", outcome, setup: true };
+            } catch (error) {
+                await tx.query("ROLLBACK TO SAVEPOINT execute_change");
+                log.error("change execution failed", error);
+                await tx.query("UPDATE mes.change_requests SET state = 'failed', outcome = $2, updated_at = now() WHERE id = $1", [id, JSON.stringify({ error: String(error.message) })]);
+                await audit(tx, "platform", id, "change:failed", { error: String(error.message) });
+                return { ok: false, state: "failed", error: String(error.message), setup: true };
+            }
+        });
+        if (executed) await afterExecuted(result.outcome);
+        return result;
+    }
+
     const services = {
         // What the designer lists: every object, published or drafted, and the user's design rights.
         async "design.home"({ as } = {}) {
@@ -759,10 +1113,13 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
             return {
                 me: { id: user.id, roles: user.designRoles, reps: user.reps },
                 plantTz,
+                // Setup (§5.15): a designer's change executes on their signature, without review or approval.
+                setupOpen: setupOpen(await organizationSettings(db)),
+                approvalLevel: approvalLevel(await organizationSettings(db)),
                 // What the platform and the installed suites lock, as it holds now, for the designer to show and check (builtins.js).
                 locks: liveLocks(allLocks, Object.fromEntries(Object.entries(live.definitions).map(([k, v]) => [k, v.body]))),
                 // What a transaction's editor offers: each object's fields, states and transitions.
-                objects: Object.entries(live.definitions).map(([object, d]) => ({ object, label: d.body.label, area: d.body.area, version: d.version, actions: (d.body.states?.transitions ?? []).map((t) => t.action), roles: d.body.roles ?? [], stewards: d.body.stewards?.object ?? [], stewardship: d.body.stewards ?? {}, titleField: d.body.titleField, tones: d.body.states?.tones ?? {}, ...(d.body.flow ? { flow: d.body.flow } : {}), fields: Object.fromEntries(Object.entries(d.body.fields ?? {}).map(([k, f]) => [k, { label: f.label ?? k, type: f.type, ...(f.to ? { to: f.to } : {}), ...(f.values ? { values: f.values } : {}), ...(f.multiple ? { multiple: true } : {}) }])), states: d.body.states?.list ?? [], transitions: (d.body.states?.transitions ?? []).map(({ action, label, from, to }) => ({ action, label: label ?? action, from, to })), open: changes.filter((c) => OPEN.includes(c.state) && c.content.definitions?.[object]).map((c) => c.id) })),
+                objects: Object.entries(live.definitions).map(([object, d]) => ({ object, label: d.body.label, area: d.body.area, version: d.version, actions: (d.body.states?.transitions ?? []).map((t) => t.action), roles: d.body.roles ?? [], stewards: d.body.stewards?.object ?? [], stewardship: d.body.stewards ?? {}, ...(d.body.approval ? { approval: d.body.approval } : {}), titleField: d.body.titleField, tones: d.body.states?.tones ?? {}, ...(d.body.flow ? { flow: d.body.flow } : {}), ...(d.body.access ? { access: d.body.access } : {}), fields: Object.fromEntries(Object.entries(d.body.fields ?? {}).map(([k, f]) => [k, { label: f.label ?? k, type: f.type, ...(f.to ? { to: f.to } : {}), ...(f.values ? { values: f.values } : {}), ...(f.multiple ? { multiple: true } : {}), ...(f.required ? { required: true } : {}) }])), states: d.body.states?.list ?? [], transitions: (d.body.states?.transitions ?? []).map(({ action, label, from, to }) => ({ action, label: label ?? action, from, to })), open: changes.filter((c) => OPEN.includes(c.state) && c.content.definitions?.[object]).map((c) => c.id) })),
                 scripts: Object.entries(live.scripts).map(([name, s]) => ({ name, version: s.version })),
                 // Services and connections (§15.2), each with its open change, like an object.
                 services: Object.entries(live.services).map(([name, s]) => ({ name, label: s.body.label, version: s.version, stewards: s.body.stewards ?? [], http: Boolean(s.body.http?.enabled), runs: (s.body.runAs ?? "service") === "service" ? s.body.uses?.transactions ?? [] : [], on: (s.body.on ?? []).map((t) => `${t.object} ${t.event}`), open: changes.filter((c) => OPEN.includes(c.state) && c.content.services?.[name]).map((c) => c.id) })),
@@ -770,7 +1127,7 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
                 // Transactions (§25), each with its open change.
                 transactions: Object.entries(live.transactions).map(([name, t]) => ({ name, label: t.body.label, version: t.version, appearsOn: t.body.appearsOn ?? null, inputs: t.body.inputs ?? {}, steps: (t.body.steps ?? []).length, stewards: t.body.stewards ?? [], services: t.body.callers?.services ?? [], signed: Boolean(t.body.signature), open: changes.filter((ch) => OPEN.includes(ch.state) && ch.content.transactions?.[name]).map((ch) => ch.id) })),
                 // Flows (§32), each with its open change; the node kinds the installed suites add.
-                flows: Object.entries(live.flows).map(([name, f]) => ({ name, label: f.body.label, kind: f.body.kind, version: f.version, ...(f.body.kind === "input" ? { summary: inputFlowSummary(f.body) } : {}), nodes: Object.keys(f.body.nodes ?? {}).length, subFlows: subFlowsOf(f.body), asSub: f.body.asSub === true, object: Object.values(f.body.participants ?? {}).find((p) => p?.as === (f.body.kind === "plan" ? "subject" : "traveler"))?.object ?? null, stewards: f.body.stewards ?? [], open: changes.filter((ch) => OPEN.includes(ch.state) && ch.content.flows?.[name]).map((ch) => ch.id) })),
+                flows: Object.entries(live.flows).map(([name, f]) => ({ name, label: f.body.label, kind: f.body.kind, version: f.version, guided: Object.values(f.body.nodes ?? {}).filter((n) => n?.guide !== undefined).length, ...(f.body.kind === "input" ? { summary: inputFlowSummary(f.body) } : {}), nodes: Object.keys(f.body.nodes ?? {}).length, subFlows: subFlowsOf(f.body), asSub: f.body.asSub === true, txSettings: txSettingsOf(f.body), object: Object.values(f.body.participants ?? {}).find((p) => p?.as === (f.body.kind === "plan" ? "subject" : "traveler"))?.object ?? null, stewards: f.body.stewards ?? [], open: changes.filter((ch) => OPEN.includes(ch.state) && ch.content.flows?.[name]).map((ch) => ch.id) })),
                 // What else the suites add (§30.11): what a service may ask of each, their step and block kinds.
                 suiteCapabilities: suiteExtensions.capabilities,
                 suiteSteps: Object.fromEntries(Object.entries(suiteExtensions.steps).map(([k, x]) => [k, { label: x.label, suite: x.suite, config: x.config ?? {}, required: x.required ?? [], irreversible: Boolean(x.irreversible) }])),
@@ -786,6 +1143,8 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
                     // designer checks them as they are typed.)
                     ...(suiteExtensions.elements[e.body.kind]?.shared ? { body: e.body } : {}) })),
                 suiteElements: Object.fromEntries(Object.entries(suiteExtensions.elements).map(([k, x]) => [k, { label: x.label, suite: x.suite, ...(typeof x.contract === "string" ? { contract: x.contract } : {}) }])),
+                // Named queries (§23.1), each with its open change.
+                queries: Object.entries(live.queries).map(([name, q]) => ({ name, label: q.body.label, description: q.body.description ?? "", version: q.version, params: q.body.params ?? {}, stewards: q.body.stewards ?? [], open: changes.filter((ch) => OPEN.includes(ch.state) && ch.content.queries?.[name]).map((ch) => ({ id: ch.id, title: ch.title, state: ch.state })) })),
                 // Report layouts (§34.5), each with its open change.
                 layouts: Object.entries(live.layouts).map(([name, l]) => ({ name, label: l.body.label, description: l.body.description ?? "", version: l.version, blocks: (l.body.blocks ?? []).map((b) => b.block), stewards: l.body.stewards ?? [], open: changes.filter((ch) => OPEN.includes(ch.state) && ch.content.layouts?.[name]).map((ch) => ch.id) })),
                 // Screens (§26), each with its open change.
@@ -794,8 +1153,8 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
                 // Who may be named a co-designer: the active designers (§5.3).
                 designers: (await db.query("SELECT DISTINCT u.id, u.name FROM mes.assignments a JOIN mes.users u ON u.id = a.subject_id AND u.active WHERE a.object = 'design' AND a.subject_kind = 'user' AND a.role = 'designer' ORDER BY u.id")),
                 // People & departments (§5.6): governance, standing approvers, each department's steps, and its open change.
-                organization: { ...(({ version, governance, standing, departments }) => ({ version, governance, standing, departments: Object.fromEntries(Object.entries(departments).map(([k, d]) => [k, { name: d.name, members: d.members, approval: d.approval }])) }))(live.organization), open: changes.filter((c) => OPEN.includes(c.state) && c.content.organization).map((c) => c.id) },
-                groups: await db.query("SELECT id, name FROM mes.groups ORDER BY id"),
+                organization: { ...(({ version, governance, standing, departments, certifications }) => ({ version, governance, standing, certifications: certifications ?? {}, departments: Object.fromEntries(Object.entries(departments).map(([k, d]) => [k, { name: d.name, members: d.members, approval: d.approval }])) }))(live.organization), open: changes.filter((c) => OPEN.includes(c.state) && c.content.organization).map((c) => c.id) },
+                groups: await db.query("SELECT id, name, kind FROM mes.groups ORDER BY id"),
                 departments: await departments(),
                 changes: changes.map(summary),
                 // Designs the installed suites bring (§29.6): what in each is new or differs from what is
@@ -806,12 +1165,84 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
                     return {
                         suite, from: pack.suite, label: pack.label, version: pack.version, description: pack.description ?? "",
                         counts: Object.fromEntries(["new", "changed", "same"].map((k) => [k, elements.filter((e) => e.status === k).length])),
-                        elements, roles: missingRoles(pack, live.organization).length,
+                        elements, roles: missingRoles(pack, live.organization).length, certifications: missingCertifications(pack, live.organization).length, groups: missingGroups(pack, live.organization).length,
                         samples: (pack.records ?? []).filter((r) => r.key !== undefined).length,
                         open: changes.filter((c) => OPEN.includes(c.state) && names.some(([k, n]) => c.content[k]?.[n] !== undefined)).map((c) => ({ id: c.id, title: c.title, state: c.state })),
+                        guide: Boolean(suiteGuides[suite]),
+                        newest: (suiteUpdates() ?? []).find((u) => u.name === suite)?.newest ?? null,
                     };
                 }),
+                // The set-up guides of installed suites that bring no designs (§29.8): only their guide to show.
+                guides: Object.entries(suiteGuides).filter(([suite]) => !suitePacks[suite]).map(([suite, g]) => ({ suite, from: g.suite, version: g.version, title: g.title, newest: (suiteUpdates() ?? []).find((u) => u.name === suite)?.newest ?? null })),
             };
+        },
+
+        // The suites, as the AI and the people who look after the installation need them (§29.10): each installed one
+        // with its version and a newer one on the registry (where the server asks it), its design pack against what is
+        // live (new, changed, the same; open changes holding it), what it gives designs, and its set-up guide; and
+        // what every live design needs from suites, each need given or not and why: a suite removed, or a version
+        // that no longer gives it. For anyone who may open the designer.
+        async "design.suites"({ as } = {}) {
+            await designUser(this, as);
+            const live = await published();
+            const changes = await db.query("SELECT id, title, state, content FROM mes.change_requests WHERE state = ANY($1)", [OPEN]);
+            const newer = new Map((suiteUpdates() ?? []).map((u) => [u.name, u.newest]));
+            const gives = (suite) => ({
+                capabilities: suiteExtensions.capabilities?.[suite] ?? [],
+                steps: Object.keys(suiteExtensions.steps ?? {}).filter((k) => k.startsWith(`${suite}.`)),
+                blocks: Object.keys(suiteExtensions.blocks ?? {}).filter((k) => k.startsWith(`${suite}.`)),
+                schedules: Object.keys(suiteExtensions.schedules ?? {}).filter((k) => k.startsWith(`${suite}.`)),
+                elements: Object.keys(suiteExtensions.elements ?? {}).filter((k) => k.startsWith(`${suite}.`)),
+                flowNodes: Object.keys(suiteFlowNodes ?? {}).filter((k) => k.startsWith(`${suite}.`)),
+                designPart: Boolean(suiteDesigns[suite]),
+            });
+            const suites = suitesInstalled.map((x) => {
+                const pack = suitePacks[x.name];
+                let designs = null;
+                if (pack) {
+                    const elements = packStatus(pack, live);
+                    const names = elements.map((e) => [e.kind, e.name]);
+                    designs = {
+                        label: pack.label, version: pack.version,
+                        counts: Object.fromEntries(["new", "changed", "same"].map((k) => [k, elements.filter((e) => e.status === k).length])),
+                        differ: elements.filter((e) => e.status !== "same").map((e) => ({ kind: e.kind, name: e.name, status: e.status })),
+                        open: changes.filter((c) => names.some(([k, n]) => c.content[k]?.[n] !== undefined)).map((c) => ({ id: c.id, title: c.title, state: c.state })),
+                    };
+                }
+                const n = newer.get(x.name) ?? null;
+                return { name: x.name, label: x.label, version: x.version, ...(n ? { newest: n, update: `opencore-mes suite update ${x.name}` } : {}), gives: gives(x.name), designs, guide: suiteGuides[x.name] ? { title: suiteGuides[x.name].title, intro: suiteGuides[x.name].intro ?? null, steps: suiteGuides[x.name].steps } : null };
+            });
+            // Every version run here (newest first), what each gave, and whether it is kept on disk to go back to.
+            const ran = await suiteHistory.read();
+            let keptOnDisk = {};
+            try { keptOnDisk = suiteHistory.kept() ?? {}; } catch { keptOnDisk = {}; }
+            const iso = (t) => (t ? new Date(t).toISOString() : null);
+            const historyOf = (name) => ran.filter((r) => r.name === name).map((r) => ({ version: r.version, label: r.label, gives: r.gives, pack_version: r.pack_version, first_run: iso(r.first_run), last_run: iso(r.last_run), kept: (keptOnDisk[name] ?? []).includes(r.version) }));
+            for (const x of suites) { x.history = historyOf(x.name); x.kept = keptOnDisk[x.name] ?? []; }
+            // Suites that ran here and are not installed now: what they last were, and how to have them back.
+            const removed = [...new Set(ran.map((r) => r.name))].filter((n) => !suites.some((x) => x.name === n)).map((name) => {
+                const history = historyOf(name);
+                const last = history[0];
+                const back = last.kept ? `opencore-mes suite use ${name}@${last.version}` : `opencore-mes suite install ${name}@${last.version}`;
+                return { name, label: last.label, last: last.version, last_run: last.last_run, history, kept: keptOnDisk[name] ?? [], back };
+            });
+            // A need not given: the newest version run here that gave it, and the command that has it back.
+            const GIVES = { "step kind": "steps", "step kind (a policy's via)": "steps", "block kind": "blocks", "kind of schedule": "schedules", "flow node kind": "flowNodes", "kind of design element": "elements" };
+            const gave = (g, need) => (need.what === "capability" ? (g?.capabilities ?? []).includes(need.needs.slice(need.suite.length + 1)) : need.what === "part of an object's design" ? Boolean(g?.designPart) : (g?.[GIVES[need.what]] ?? []).includes(need.needs));
+            const needs = suiteNeedsOf(live).map((n) => {
+                if (n.given) return n;
+                const v = historyOf(n.suite).find((h) => gave(h.gives, n));
+                return v ? { ...n, lastGiven: { version: v.version, last_run: v.last_run, kept: v.kept, back: v.kept ? `opencore-mes suite use ${n.suite}@${v.version}` : `opencore-mes suite install ${n.suite}@${v.version}` } } : n;
+            });
+            return { suites, removed, needs, broken: needs.filter((x) => !x.given) };
+        },
+
+        // An installed suite's set-up guide (§29.8): how a plant takes it into its own setup, step by
+        // step and by who. Static while the server runs (it changes with the suite, at a restart).
+        async "design.suiteGuide"({ suite, as } = {}) {
+            await designUser(this, as);
+            const g = suiteGuides[suite];
+            return g ? { name: suite, ...g } : null;
         },
 
         // Start a change from a suite's design pack (§29.6): everything in it that is new or differs from
@@ -822,6 +1253,8 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
             if (!user.designRoles.includes("designer")) fail("Only a designer starts a change.", { status: 403 });
             const pack = suitePacks[suite];
             if (!pack) fail(`No suite named "${suite}" with designs is installed.`, { status: 404 });
+            // The files its designs name (a guide's PDF, §35.4), kept first: the draft shows them at once.
+            await keepPackFiles(db, pack.$files, `suite:${pack.name ?? suite}`);
             return changeFromPack(this, user, pack, { title: `${pack.label} ${pack.version}`, reason: `From the ${pack.suite} suite's designs, version ${pack.version}. ${pack.description ?? ""}`.trim(), from: { pack: suite, version: pack.version } });
         },
 
@@ -857,6 +1290,7 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
                     screens: Object.fromEntries(Object.keys(row.content.screens ?? {}).map((n) => [n, live.screens[n]?.body ?? null])),
                     flows: Object.fromEntries(Object.keys(row.content.flows ?? {}).map((n) => [n, live.flows[n]?.body ?? null])),
                     layouts: Object.fromEntries(Object.keys(row.content.layouts ?? {}).map((n) => [n, live.layouts[n]?.body ?? null])),
+                    queries: Object.fromEntries(Object.keys(row.content.queries ?? {}).map((n) => [n, live.queries[n]?.body ?? null])),
                     elements: Object.fromEntries(Object.keys(row.content.elements ?? {}).map((n) => [n, live.elements[n]?.body ?? null])),
                 },
                 problems: row.state === "design" ? await problemsOf(row.content) : [],
@@ -882,6 +1316,16 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
                 // (then one approval executes it); the changes that roll this one back.
                 rollback: row.rollback ? { ...row.rollback, pure: pureRollback(row) } : null,
                 rolledBackBy: await db.query("SELECT id, title, state FROM mes.change_requests WHERE rollback->>'of' = $1 ORDER BY created_at", [id]),
+                // An emergency (§5.7): why, who signed it, by when it is to be reviewed afterwards, and who
+                // may review, confirm or flag it now; and the plant's word on emergencies, for the submit.
+                emergency: row.emergency ? await emergencyView(db, row, user.id) : null,
+                emergencyPolicy: emergencyPolicy(settings),
+                // Setup (§5.15): open now, and whether this change was executed during it (who signed, when).
+                setupOpen: setupOpen(settings),
+                setup: row.setup ?? null,
+                // The plant's approval level now (§5.16), and the one this change was submitted under.
+                approvalLevel: approvalLevel(settings),
+                submittedLevel: row.approval_level ?? null,
                 fitnessCurrent: Boolean(row.fitness && row.fitness.hash === sha256(canonical(row.content))),
                 // Before and during review: who may review it and still leave someone to sign every step.
                 reviewing: ["design", "review"].includes(row.state) ? await reviewOptions(route, authorsOf(row)) : null,
@@ -900,6 +1344,15 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
                     // The departments whose current step this person may sign.
                     approveFor: waiting.filter((r) => progress[r.department].current.eligible.includes(user.id)).map((r) => r.department),
                     approveSteps: Object.fromEntries(waiting.filter((r) => progress[r.department].current.eligible.includes(user.id)).map((r) => [r.department, { step: progress[r.department].current.step, label: progress[r.department].current.label, of: progress[r.department].steps.length }])),
+                    // Submitted as an emergency (§5.7): by its designers, where the plant allows it; never
+                    // by the AI, and not a rollback as drafted, which one approval executes already.
+                    // (Not where the plant's approval level is lighter than full, §5.16: one signature, or none, executes it already.)
+                    emergency: row.state === "design" && editorsOf(row).includes(user.id) && user.designRoles.includes("designer") && emergencyPolicy(settings).allowed && approvalLevel(settings) === "full" && !pureRollback(row) && !this?.via,
+                    // Executed now on the designer's own signature, while the plant is set up (§5.15); never by the AI.
+                    setup: row.state === "design" && editorsOf(row).includes(user.id) && user.designRoles.includes("designer") && (setupOpen(settings) || approvalLevel(settings) === "none") && !this?.via,
+                    // Reviewed afterwards: who may review it, then the departments this person confirms or flags it for.
+                    afterReview: row.state === "executed" && row.emergency?.stage === "review" && user.designRoles.some((r) => r === "reviewer" || r === "designer") && !authorsOf(row).includes(user.id) && row.emergency.approved?.user !== user.id,
+                    confirmFor: row.state === "executed" && row.emergency?.stage === "confirm" ? (await Promise.all((row.route ?? []).filter((r) => !row.emergency.departments?.[r.department]).map(async (r) => ((await confirmersFor(db, row, r.department)).includes(user.id) ? r.department : null)))).filter(Boolean) : [],
                 },
             };
         },
@@ -923,7 +1376,7 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
             const scripts = [...(K === "services" ? [name] : []), ...Object.values(content.definitions).flatMap((d) => (d.rules ?? []).map((r) => r?.script).filter(Boolean))];
             for (const s of scripts) if (live.scripts[s]) { content.scripts[s] = live.scripts[s].source; content.tests[s] = live.scripts[s].tests ?? []; }
             const open = await db.query(`SELECT id, title, state FROM mes.change_requests WHERE state = ANY($1) AND content->'${K}' ? $2 ORDER BY updated_at DESC`, [OPEN, name]);
-            const none = { definitions: {}, scripts: {}, services: {}, connections: {}, transactions: {}, screens: {}, flows: {}, layouts: {}, elements: {} };
+            const none = { definitions: {}, scripts: {}, services: {}, connections: {}, transactions: {}, screens: {}, flows: {}, layouts: {}, queries: {}, elements: {} };
             return {
                 id: `view-${kind}-${name}`,
                 view: { kind, name, version: current.version, open, mayChange: user.designRoles.includes("designer") && !open.length, uses: uses.map((o) => ({ object: o, label: live.definitions[o].body.label ?? o, version: live.definitions[o].version })), with: shown },
@@ -937,14 +1390,15 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
                 live: { ...none, ...Object.fromEntries(Object.entries(content).filter(([k]) => k !== "tests")) },
                 problems: [], footprint: [], route: [], reviewer: null, review_note: null, outcome: null, approvers: {}, whyNot: [], aiEdits: [],
                 fitness: null, fitnessCurrent: false, reviewing: null, reviewCosts: [],
-                can: { edit: false, submit: false, withdraw: false, codesigners: false, review: false, retractReview: false, approveFor: [], approveSteps: {} },
+                can: { edit: false, submit: false, withdraw: false, codesigners: false, review: false, retractReview: false, approveFor: [], approveSteps: {}, emergency: false, setup: false, afterReview: false, confirmFor: [] },
+                emergency: null,
             };
         },
 
         // Start a change: a new object, or an edit of a live one (its current version as the draft).
         // `service` or `connection` instead of `object` starts one for a service or a connection (§15.2),
         // `transaction` for a transaction (§25).
-        async "design.start"({ object, label, service, connection, transaction, screen, flow, layout, element, kind: elementKind, organization, retire, from, draft } = {}) {
+        async "design.start"({ object, label, service, connection, transaction, screen, flow, layout, query, element, kind: elementKind, organization, retire, from, draft } = {}) {
             const user = await designUser(this);
             if (!user.designRoles.includes("designer")) fail("Only a designer starts a change.", { status: 403 });
             if (from !== undefined && from !== null && from !== "" && (retire || organization)) fail("Retiring, or a change to people & departments, is not started as a copy.", { fields: { from: "Not copied." } });
@@ -989,9 +1443,9 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
                 if (!suiteExtensions.elements[of]) fail(`A ${of} needs the ${of.split(".")[0]} suite, which is not installed here: it is changed once the suite is back.`, { status: 409, code: "suite.missing" });
                 return startIntegration.call(this, user, "elements", element, label, from, of);
             }
-            if (service !== undefined || connection !== undefined || transaction !== undefined || screen !== undefined || flow !== undefined || layout !== undefined) {
-                const kind = service !== undefined ? "services" : connection !== undefined ? "connections" : transaction !== undefined ? "transactions" : screen !== undefined ? "screens" : flow !== undefined ? "flows" : "layouts";
-                return startIntegration.call(this, user, kind, service ?? connection ?? transaction ?? screen ?? flow ?? layout, label, from, null, draft ?? null);
+            if (service !== undefined || connection !== undefined || transaction !== undefined || screen !== undefined || flow !== undefined || layout !== undefined || query !== undefined) {
+                const kind = service !== undefined ? "services" : connection !== undefined ? "connections" : transaction !== undefined ? "transactions" : screen !== undefined ? "screens" : flow !== undefined ? "flows" : query !== undefined ? "queries" : "layouts";
+                return startIntegration.call(this, user, kind, service ?? connection ?? transaction ?? screen ?? flow ?? query ?? layout, label, from, null, draft ?? null);
             }
             if (typeof object !== "string" || !named(object)) fail("An object's name is lower case letters, digits and _, starting with a letter.", { fields: { object: "Letters, digits and _." } });
             const live = await published();
@@ -1093,7 +1547,7 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
         // `seen`: the draft's draft_rev as the editor loaded it; a save made on an older copy is refused.
         // draft_rev moves with the content only (a save, a rename), never with a fitness run, a review or
         // a signature, so those never make an editor's copy look stale.
-        async "design.save"({ id, title, reason, definitions, scripts, services, connections, tests, transactions, screens, flows, layouts, elements, organization, retire, seen } = {}) {
+        async "design.save"({ id, title, reason, definitions, scripts, services, connections, tests, transactions, screens, flows, layouts, queries, elements, organization, retire, seen } = {}) {
             const user = await designUser(this);
             return db.transaction(async (tx) => {
                 const row = await loadChange(tx, id, true);
@@ -1124,13 +1578,13 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
                         if (!(name in base.scripts)) base.scripts[name] = live.scripts[name]?.version ?? null;
                     }
                 }
-                for (const [kind, given] of [["services", services], ["connections", connections], ["transactions", transactions], ["screens", screens], ["flows", flows], ["layouts", layouts], ["elements", elements]]) {
+                for (const [kind, given] of [["services", services], ["connections", connections], ["transactions", transactions], ["screens", screens], ["flows", flows], ["layouts", layouts], ["queries", queries], ["elements", elements]]) {
                     if (given === undefined) continue;
                     if (!isPlain(given)) fail(`${kind[0].toUpperCase()}${kind.slice(1)} are { name: body }.`);
                     for (const [name, body] of Object.entries(given)) {
                         if (!named(name)) fail(`"${name}": a name is lower case letters, digits and _.`);
                         if (body === null) { delete content[kind][name]; delete base[kind][name]; continue; }
-                        if (!isPlain(body) || JSON.stringify(body).length > 50000) fail(`A bad ${kind.slice(0, -1)} "${name}".`);
+                        if (!isPlain(body) || JSON.stringify(body).length > 50000) fail(`A bad ${one(kind)} "${name}".`);
                         content[kind][name] = body;
                         if (!(name in base[kind])) base[kind][name] = live[kind][name]?.version ?? null;
                     }
@@ -1166,11 +1620,11 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
                 // change on it and bringing it in already have it): two changes holding it would each be
                 // reviewed and signed, and the second would fail at its last signature.
                 const was = withKinds(row.content);
-                for (const kind of ["definitions", "scripts", "services", "connections", "transactions", "screens", "flows", "layouts", "elements"]) {
+                for (const kind of ["definitions", "scripts", "services", "connections", "transactions", "screens", "flows", "layouts", "queries", "elements"]) {
                     for (const name of Object.keys(content[kind] ?? {})) {
                         if (was[kind]?.[name] !== undefined) continue;
                         const [other] = await tx.query(`SELECT title, author FROM mes.change_requests WHERE id <> $1 AND state = ANY($2) AND (content->'${kind}' ? $3 OR content->'retire'->'${kind}' ? $3) LIMIT 1`, [id, OPEN, name]);
-                        if (other) fail(`${kind === "definitions" ? "object" : kind.slice(0, -1)} ${name} is already in the open change "${other.title}" (${other.author}): finish or withdraw that one, or make this edit there.`, { status: 409, code: "design.taken" });
+                        if (other) fail(`${kind === "definitions" ? "object" : one(kind)} ${name} is already in the open change "${other.title}" (${other.author}): finish or withdraw that one, or make this edit there.`, { status: 409, code: "design.taken" });
                     }
                 }
                 const edit = aiEdit(this, row.content, content);
@@ -1186,11 +1640,27 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
         },
 
         // Design → review: the content is frozen and hashed; the footprint and the route are fixed.
-        async "design.submit"({ id } = {}) {
+        // `emergency: { reason }` (§5.7): the plant cannot wait. It skips review, one signature executes it,
+        // and it is reviewed afterwards, within the days the organization sets. Its checks and fitness
+        // test are the same; only a designer, never the AI, and only where the organization allows it.
+        // `setup: true` (§5.15): while the plant is set up, executed at once on its designer's signature
+        // (`signature`, where the plant asks signers to prove who they are), without review or approval.
+        async "design.submit"({ id, emergency, setup = false, signature } = {}) {
             const user = await designUser(this);
             const draft = await loadChange(db, id);
             if (draft.state !== "design" || !editorsOf(draft).includes(user.id)) fail("Only its author and co-designers submit a change in design.", { status: 409 });
             if (!draft.reason.trim()) fail("Say why: a change needs a reason.", { fields: { reason: "Required." } });
+            if (setup === true) return submitInSetup(this, user, draft, signature);
+            const urgent = emergency !== undefined && emergency !== null && emergency !== false;
+            const policy = emergencyPolicy(await organizationSettings(db));
+            const urgency = urgent ? String(isPlain(emergency) ? emergency.reason ?? "" : "").trim().slice(0, 2000) : "";
+            if (urgent) {
+                if (this?.via) fail("An AI does not submit a change as an emergency: a person decides that the plant cannot wait. Submit it for review, or ask its author.", { status: 403, code: "design.emergency_ai" });
+                if (!user.designRoles.includes("designer")) fail("Only a designer submits a change as an emergency.", { status: 403 });
+                if (!policy.allowed) fail("This plant does not allow emergency changes (People & departments, governance): submit it for review.", { status: 409, code: "design.emergency_off" });
+                if (pureRollback(draft)) fail("A rollback as drafted needs no emergency: submitted, one approval executes it already.", { status: 409, code: "design.emergency_rollback" });
+                if (!urgency) fail("Say why it cannot wait: an emergency needs a reason of its own, which its approver and its reviewers afterwards read.", { fields: { emergency: "Required." } });
+            }
             const problems = await problemsOf(draft.content);
             if (problems.length) fail(`Fix ${problems.length} problem(s) before submitting.`, { code: "design.invalid" });
             // The fitness test (§5.9) of exactly what is submitted: it runs scripts and reads records,
@@ -1204,19 +1674,31 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
                 const hash = sha256(canonical(row.content));
                 if (report && report.hash !== hash) fail("The draft changed while it was tested; submit again.", { status: 409 });
                 const { elements, route } = await routeFor(row.content);
-                if (!elements.length) fail("This change changes nothing.");
+                if (!elements.length) fail(nothingToDo(row.content));
                 // Submitted, it could never be approved: say so now, not after someone reviews it.
                 // A rollback as drafted (§5.14) is what was live before, reviewed and approved then: it is
                 // not reviewed again, and goes straight to approval, where one signature executes it.
                 const rolling = pureRollback(row);
-                const options = rolling ? { fine: ["no review"], empty: [], strands: [] } : await reviewOptions(route, authorsOf(row));
+                // Approval level one (§5.16): no review; the first signature by an approver of a department it
+                // touches (never its author) executes it. Someone must be able to give it.
+                const single = !urgent && !rolling && approvalLevel(await organizationSettings(tx)) === "one";
+                if (single) {
+                    const deps = route.map((r) => r.department);
+                    const [one] = await tx.query(`SELECT 1 FROM (SELECT group_id, user_id FROM mes.department_reps UNION SELECT m.group_id, m.user_id FROM mes.group_members m JOIN mes.groups g ON g.id = m.group_id AND g.kind = 'group') r
+                        JOIN mes.users u ON u.id = r.user_id AND u.active WHERE r.group_id = ANY($1) AND NOT (r.user_id = ANY($2)) LIMIT 1`, [deps, authorsOf(row)]);
+                    if (!one) fail(`Nobody but its author approves for ${deps.join(", ")}: add an approver there (People & departments) before submitting.`, { status: 409, code: "design.no_approver" });
+                }
+                const options = rolling || single ? { fine: ["no review"], empty: [], strands: [] } : await reviewOptions(route, authorsOf(row));
                 if (!options.fine.length) fail(`Nobody could review it and still leave someone to approve it${options.empty.length ? ` for ${options.empty.join(", ")} (no approvers)` : options.strands.length ? ` for ${[...new Set(options.strands.flatMap((x) => x.where))].join(", ")}` : ""}. Add approvers to ${options.empty.length || options.strands.length ? "those departments" : "its departments"} (People & departments) first.`, { status: 409, code: "design.no_approver" });
+                // An emergency waits for its one signature; its review comes after execution (§5.7).
+                const em = urgent ? { reason: urgency, by: user.id, at: new Date().toISOString(), reviewDays: policy.reviewDays, stage: "approval" } : null;
                 await tx.query(
-                    "UPDATE mes.change_requests SET state = $5, content_hash = $2, footprint = $3, route = $4, submitted_at = now(), updated_at = now(), reviewer = NULL, review_note = NULL WHERE id = $1",
-                    [id, hash, JSON.stringify(elements), JSON.stringify(route), rolling ? "approval" : "review"],
+                    "UPDATE mes.change_requests SET state = $5, content_hash = $2, footprint = $3, route = $4, submitted_at = now(), updated_at = now(), reviewer = NULL, review_note = NULL, emergency = $6, approval_level = $7 WHERE id = $1",
+                    [id, hash, JSON.stringify(elements), JSON.stringify(route), rolling || em || single ? "approval" : "review", em ? JSON.stringify(em) : null, single ? "one" : null],
                 );
-                await audit(tx, user.id, id, "change:submit", { hash, route: route.map((r) => r.department), ...(rolling ? { rollback: row.rollback.of, review: "none: it restores what was approved before" } : {}), ...(this?.via ? { via: this.via } : {}), ...(report ? { fitness: { passed: report.passed, fail: report.counts.fail, warn: report.counts.warn } } : {}) });
-                return { ok: true };
+                await audit(tx, user.id, id, "change:submit", { hash, route: route.map((r) => r.department), ...(single ? { approval: "one signature by an approver of a department it touches (§5.16)" } : {}), ...(rolling ? { rollback: row.rollback.of, review: "none: it restores what was approved before" } : {}), ...(em ? { emergency: true, review: "afterwards" } : {}), ...(this?.via ? { via: this.via } : {}), ...(report ? { fitness: { passed: report.passed, fail: report.counts.fail, warn: report.counts.warn } } : {}) });
+                if (em) await audit(tx, user.id, id, "change:emergency", { reason: em.reason, hash, route: route.map((r) => r.department), reviewDays: em.reviewDays });
+                return { ok: true, state: rolling || em || single ? "approval" : "review", ...(em ? { emergency: true } : {}), ...(single ? { approvalLevel: "one" } : {}) };
             });
         },
 
@@ -1304,6 +1786,7 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
             if (typeof meaning !== "string" || !meaning.trim()) fail("A signature states its meaning.", { fields: { meaning: "Required." } });
             const proof = signatures ? await signatures.signOne(this, user, `change ${id} for ${department}`, signature) : null;
             let executed = false;
+            let urgentDone = null;
             const result = await db.transaction(async (tx) => {
                 const row = await loadChange(tx, id, true);
                 if (row.state !== "approval") fail("This change is not awaiting approval.", { status: 409 });
@@ -1338,7 +1821,12 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
                 // A rollback as drafted (§5.14): one approval executes it. The others' signatures are not
                 // waited for: what it restores is what they approved before.
                 const rolling = pureRollback(row) && row.content_hash === row.rollback.hash;
-                if (missing.length && !rolling) return { state: "approval", waiting: missing };
+                // An emergency (§5.7): one signature executes it too, by an approver of any department on its
+                // route; the others confirm it afterwards, once it has been reviewed.
+                const urgent = row.emergency?.stage === "approval";
+                // Approval level one (§5.16): this signature is the one it needs.
+                const single = row.approval_level === "one";
+                if (missing.length && !rolling && !urgent && !single) return { state: "approval", waiting: missing };
                 // Every department has approved: execution, by the platform. A failure rolls the
                 // execution back (never a partial one) and keeps the approvals and the record of it.
                 await tx.query("SAVEPOINT execute_change");
@@ -1355,8 +1843,15 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
                     const outcome = await execute(tx, row);
                     await tx.query("UPDATE mes.change_requests SET state = 'executed', executed_at = now(), outcome = $2, updated_at = now() WHERE id = $1", [id, JSON.stringify(outcome)]);
                     await audit(tx, "platform", id, "change:execute", outcome);
+                    if (urgent) {
+                        const [{ at: when }] = await tx.query("SELECT executed_at AS at FROM mes.change_requests WHERE id = $1", [id]);
+                        const em = { ...row.emergency, stage: "review", approved: { department, user: user.id, step: step.step, at: iso(when) }, executedAt: iso(when), due: emergencyDue(when, row.emergency.reviewDays ?? 3) };
+                        await tx.query("UPDATE mes.change_requests SET emergency = $2 WHERE id = $1", [id, JSON.stringify(em)]);
+                        await audit(tx, "platform", id, "change:emergency:executed", { approvedBy: user.id, department, due: em.due, review: "afterwards: a reviewer, then each department on its route" });
+                        urgentDone = { title: row.title, author: row.author, reason: em.reason, by: user.id, department, due: em.due, route: row.route.map((r) => r.department) };
+                    }
                     executed = true;
-                    return { state: "executed", outcome };
+                    return { state: "executed", outcome, ...(urgent ? { emergency: { due: urgentDone.due } } : {}) };
                 } catch (error) {
                     await tx.query("ROLLBACK TO SAVEPOINT execute_change");
                     log.error("change execution failed", error);
@@ -1365,13 +1860,9 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
                     return { state: "failed", error: String(error.message) };
                 }
             });
-            if (executed) {
-                store.forget();
-                // Travelers already there when a route is published take it up, at the step their step field names (§32.5);
-                // one brought in as it was (not published again, §5.12) is still taken up, as a republish was.
-                const routes = [...Object.keys(result.outcome?.flows ?? {}), ...(result.outcome?.unchanged?.flows ?? [])];
-                if (routes.length) await onFlows?.(routes).catch((e) => log.error?.("flows: adopt", e));
-            }
+            // Every emergency is said in the event log, as it goes live (§5.7): rare, and never unseen.
+            if (urgentDone) events?.emit?.("change.emergency", { severity: "warning", message: `An emergency change went live on one signature: "${urgentDone.title}", by ${urgentDone.author}, signed by ${urgentDone.by} for ${urgentDone.department}. Why: ${urgentDone.reason} It is to be reviewed afterwards, and confirmed by ${urgentDone.route.join(", ")}, by ${urgentDone.due}.`, details: { change: id, author: urgentDone.author, approvedBy: urgentDone.by, department: urgentDone.department, due: urgentDone.due } });
+            if (executed) await afterExecuted(result.outcome);
             return result;
         },
 
@@ -1388,6 +1879,73 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
                 await audit(tx, user.id, id, "change:review:retract", {});
                 return { ok: true };
             });
+        },
+
+        // ---- an emergency, reviewed afterwards (§5.7) ----
+        // The review an emergency skipped, after it executed: a reviewer or a designer, none of its authors
+        // nor whoever signed it, passes it to its departments, or flags it (with a note: then it is offered
+        // for rolling back, §5.14). Passing must leave each department someone to confirm it.
+        async "design.emergencyReview"({ id, decision, note } = {}) {
+            const user = await designUser(this);
+            if (decision !== "pass" && decision !== "flag") fail("Pass it to its departments, or flag it.");
+            if (!user.designRoles.some((r) => r === "reviewer" || r === "designer")) fail("Only a reviewer or a designer reviews a change.", { status: 403 });
+            const text = String(note ?? "").trim().slice(0, 2000);
+            if (decision === "flag" && !text) fail("Say what is wrong with it: its author, its departments and the audit trail read it.", { fields: { note: "Required." } });
+            let flaggedNow = null;
+            const result = await db.transaction(async (tx) => {
+                const row = await loadChange(tx, id, true);
+                if (row.state !== "executed" || row.emergency?.stage !== "review") fail("This change is not an emergency waiting to be reviewed afterwards.", { status: 409 });
+                if (authorsOf(row).includes(user.id)) fail(designedBy(row, user.id, "review"), { status: 403 });
+                if (row.emergency.approved?.user === user.id) fail("You gave it its emergency signature, so someone else reviews it afterwards.", { status: 403 });
+                if (decision === "pass") {
+                    const none = [];
+                    for (const r of row.route ?? []) if (!(await confirmersFor(tx, row, r.department, user.id)).length) none.push(r.department);
+                    if (none.length) {
+                        const { fine } = await afterReviewers(tx, row);
+                        fail(`If you review it, nobody can confirm it for ${none.join(", ")}: its approvers there are its authors and you. ${fine.length ? `Ask ${fine.join(" or ")} to review it instead.` : "Add approvers to those departments (People & departments)."}`, { status: 409, code: "design.no_approver" });
+                    }
+                }
+                const at = new Date().toISOString();
+                const em = { ...row.emergency, review: { reviewer: user.id, decision, note: text, at }, stage: decision === "pass" ? "confirm" : "flagged", ...(decision === "flag" ? { flagged: { by: user.id, note: text, at }, closedAt: at } : {}) };
+                await tx.query("UPDATE mes.change_requests SET emergency = $2, updated_at = now() WHERE id = $1", [id, JSON.stringify(em)]);
+                await audit(tx, user.id, id, `change:emergency:review:${decision}`, { note: text });
+                if (decision === "flag") flaggedNow = { title: row.title, author: row.author };
+                return { ok: true, stage: em.stage };
+            });
+            if (flaggedNow) events?.emit?.("change.emergency.flagged", { severity: "warning", message: `The emergency change "${flaggedNow.title}" (by ${flaggedNow.author}) was flagged by ${user.id} when reviewed afterwards: ${text} A designer may roll it back.`, details: { change: id, by: user.id } });
+            return result;
+        },
+        // Each department on its route confirms the emergency, or flags it, once it is reviewed: one of its
+        // approvers (any step), not its authors nor its reviewer; its emergency signer may, the review now
+        // before them. A signature (§7.4),
+        // bound to the content that executed. Every department confirmed: it is closed; one flag: it is
+        // flagged, and offered for rolling back (§5.14).
+        async "design.emergencyConfirm"({ id, department, decision, note, signature } = {}) {
+            const user = await designUser(this);
+            if (decision !== "confirm" && decision !== "flag") fail("Confirm it, or flag it.");
+            const text = String(note ?? "").trim().slice(0, 2000);
+            if (decision === "flag" && !text) fail("Say what is wrong with it: its author, its reviewer and the audit trail read it.", { fields: { note: "Required." } });
+            const proof = signatures ? await signatures.signOne(this, user, `emergency change ${id} for ${department}`, signature) : null;
+            let flaggedNow = null;
+            const result = await db.transaction(async (tx) => {
+                const row = await loadChange(tx, id, true);
+                if (row.state !== "executed" || row.emergency?.stage !== "confirm") fail("This change is not an emergency waiting for its departments to confirm it.", { status: 409 });
+                if (!(row.route ?? []).some((r) => r.department === department)) fail("That department is not on its route.");
+                if (row.emergency.departments?.[department]) fail(`${department} has already decided.`, { status: 409 });
+                if (authorsOf(row).includes(user.id)) fail(designedBy(row, user.id, "approve"), { status: 403 });
+                if (row.emergency.review?.reviewer === user.id) fail("You reviewed it afterwards, so another of its approvers confirms it.", { status: 403 });
+                if (!(await confirmersFor(tx, row, department)).includes(user.id)) fail(`You do not approve for ${department}.`, { status: 403 });
+                const at = new Date().toISOString();
+                const departments = { ...(row.emergency.departments ?? {}), [department]: { decision, user: user.id, meaning: decision === "confirm" ? "Confirmed" : "Flagged", note: text, at, hash: row.content_hash, ...(proof ? { printedName: proof.printedName, method: proof.method } : {}) } };
+                const stage = stageAfter(row.route, departments);
+                const em = { ...row.emergency, departments, stage, ...(stage === "flagged" ? { flagged: { by: user.id, department, note: text, at } } : {}), ...(stage !== "confirm" ? { closedAt: at } : {}) };
+                await tx.query("UPDATE mes.change_requests SET emergency = $2, updated_at = now() WHERE id = $1", [id, JSON.stringify(em)]);
+                await audit(tx, user.id, id, `change:emergency:${decision}`, { department, meaning: departments[department].meaning, note: text, hash: row.content_hash, ...(stage !== "confirm" ? { closed: stage } : {}), ...(proof ? { printedName: proof.printedName, method: proof.method } : {}) });
+                if (stage === "flagged") flaggedNow = { title: row.title, author: row.author };
+                return { ok: true, stage };
+            });
+            if (flaggedNow) events?.emit?.("change.emergency.flagged", { severity: "warning", message: `The emergency change "${flaggedNow.title}" (by ${flaggedNow.author}) was flagged for ${department} by ${user.id}: ${text} A designer may roll it back.`, details: { change: id, by: user.id, department } });
+            return result;
         },
 
         async "design.withdraw"({ id } = {}) {
@@ -1423,6 +1981,84 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
         // An object's name, changed while it has never been published (§6.2): in this change, with what
         // the change says about it (other objects' references, transactions, screens, roles). Once a
         // version is approved its records, partition and history carry the name, so it stays.
+        // A query's columns, for the designer's pickers (§23.1): the change's draft of it, or the live one.
+        async "design.queryColumns"({ id = null, query } = {}) {
+            await designUser(this);
+            const live = await published();
+            let body = live.queries?.[query]?.body ?? null;
+            let content = {};
+            // (A live design's view has no change: its id is the view's, and what is live is all there is.)
+            if (typeof id === "string" && UUID.test(id)) { const [row] = await db.query("SELECT content FROM mes.change_requests WHERE id = $1", [id]); content = withKinds(row?.content ?? {}); body = content.queries?.[query] ?? body; }
+            if (!body) fail(`"${query}" is not a query.`, { status: 404 });
+            const d = describeQuery ? await describeQuery(body) : { problem: "Queries cannot be described here." };
+            // Where it is used, live and in this change: what a change to it must keep in line.
+            const usedBy = queryUses(designsOf(live, content)).filter((u) => u.query === query).map((u) => ({ kind: u.kind, name: u.name, label: u.label, at: u.at, columns: u.columns, inChange: content[KIND_KEY[u.kind]]?.[u.name] !== undefined }));
+            return { query, columns: d.columns ?? null, problem: d.problem ?? null, params: body.params ?? {}, usedBy };
+        },
+
+        // Align (§23.1): every design this change would break through a query (a column taken away, a parameter
+        // gone or now required) and every query reading a field it takes from an object, brought into the change:
+        // each as it is live, put right where that is plain (the columns and parameters that are no more, left out),
+        // the rest said by the checks for the designer to finish.
+        async "design.align"({ id } = {}) {
+            const user = await designUser(this);
+            return db.transaction(async (tx) => {
+                const row = await loadChange(tx, id, true);
+                if (row.state !== "design") fail("This change is no longer in design.", { status: 409 });
+                if (!editorsOf(row).includes(user.id)) fail(`Only its author and co-designers edit this change.`, { status: 403 });
+                const content = withKinds(row.content);
+                const base = withKinds(row.base);
+                const live = await published();
+                const known = await queryKnownOf(live, content);
+                const targets = alignTargets(live, content, known);
+                const copy = (v) => JSON.parse(JSON.stringify(v));
+                const keep = (q, cols) => { const have = known.queryColumns[q]; return Array.isArray(have) ? cols.filter((c) => have.includes(c)) : cols; };
+                const declared = (q) => known.queries[q]?.params ?? {};
+                const fitParams = (q, params) => Object.fromEntries(Object.entries(params ?? {}).filter(([p]) => Object.hasOwn(declared(q), p)));
+                const fitSource = (o) => {
+                    if (!o) return o;
+                    const display = keep(o.query, Array.isArray(o.display) ? o.display : []);
+                    const out = { ...o, params: fitParams(o.query, o.params) };
+                    if (display.length) out.display = display; else delete out.display;
+                    if (!Object.keys(out.params).length) delete out.params;
+                    return out;
+                };
+                const brought = [];
+                for (const u of targets.uses) {
+                    const key = KIND_KEY[u.kind];
+                    const body = copy(content[key]?.[u.name] ?? live[key]?.[u.name]?.body);
+                    if (!body) continue;
+                    if (u.kind === "object") for (const f of Object.values(body.fields ?? {})) { if (f?.options?.query === u.query) f.options = fitSource(f.options); }
+                    if (u.kind === "transaction") for (const i of Object.values(body.inputs ?? {})) { if (i?.options?.query === u.query) i.options = fitSource(i.options); }
+                    if (u.kind === "screen") for (const b of body.blocks ?? []) {
+                        if (b?.block !== "table" || b.query !== u.query) continue;
+                        if (Array.isArray(b.columns)) { b.columns = keep(u.query, b.columns); if (!b.columns.length) delete b.columns; }
+                        if (b.sort?.field && !keep(u.query, [b.sort.field]).length) delete b.sort;
+                        b.params = fitParams(u.query, b.params);
+                        if (!Object.keys(b.params).length) delete b.params;
+                    }
+                    if (u.kind === "flow") for (const n of Object.values(body.nodes ?? {})) for (const fld of n?.fields ?? []) {
+                        if (fld?.type !== "query" || fld.query !== u.query) continue;
+                        if (Array.isArray(fld.display)) { fld.display = keep(u.query, fld.display); if (!fld.display.length) delete fld.display; }
+                        fld.params = fitParams(u.query, fld.params);
+                    }
+                    content[key] = { ...(content[key] ?? {}), [u.name]: body };
+                    if (!Object.hasOwn(base[key] ?? {}, u.name)) base[key] = { ...(base[key] ?? {}), [u.name]: live[key]?.[u.name]?.body ?? null };
+                    if (!brought.some((b) => b.kind === u.kind && b.name === u.name)) brought.push({ kind: u.kind, name: u.name, label: u.label });
+                }
+                for (const q of targets.queries.filter((x) => !x.inChange)) {
+                    content.queries = { ...(content.queries ?? {}), [q.name]: copy(live.queries[q.name].body) };
+                    if (!Object.hasOwn(base.queries ?? {}, q.name)) base.queries = { ...(base.queries ?? {}), [q.name]: live.queries[q.name].body };
+                    brought.push({ kind: "query", name: q.name, label: q.label });
+                }
+                if (!brought.length) return { ok: true, brought, problems: await problemsOf(content) };
+                const [written] = await tx.query(`UPDATE mes.change_requests SET content = $2, base = $3, updated_at = now(), updated_by = $4, draft_rev = draft_rev + 1, contributors = ${CONTRIBUTE.replace("$7", "$4")} WHERE id = $1 RETURNING updated_at, draft_rev`, [id, JSON.stringify(content), JSON.stringify(base), user.id]);
+                await audit(tx, user.id, id, "change:align", { brought: brought.map((b) => `${b.kind}:${b.name}`) });
+                await saved(tx, id, user.id, written.draft_rev, { aligned: brought.length });
+                return { ok: true, brought, updated_at: iso(written.updated_at), draft_rev: written.draft_rev, problems: await problemsOf(content) };
+            });
+        },
+
         async "design.renameObject"({ id, from, to } = {}) {
             const user = await designUser(this);
             if (typeof to !== "string" || !named(to)) fail("An object's name is lower case letters, digits and _, starting with a letter.", { fields: { to: "Letters, digits and _." } });
@@ -1492,6 +2128,26 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
                     since: iso(row.submitted_at), lastSigned: iso(approvals.at(-1)?.at ?? null),
                     departments, reviewableBy,
                     mine: row.state === "review" ? mayReview && reviewableBy.includes(user.id) : departments.some((d) => d.mine),
+                    // An emergency waiting for its one signature (§5.7): any department's signs it.
+                    ...(row.emergency ? { emergency: { stage: row.emergency.stage, reason: row.emergency.reason } } : {}),
+                });
+            }
+            // Emergencies executed and still to be reviewed afterwards (§5.7): the review, then each
+            // department's confirmation; overdue ones say so.
+            for (const row of await db.query("SELECT * FROM mes.change_requests WHERE state = 'executed' AND emergency IS NOT NULL AND emergency->>'stage' = ANY($1) ORDER BY executed_at", [OPEN_STAGES])) {
+                const em = await emergencyView(db, row, user.id);
+                const departments = (row.route ?? []).map((r) => {
+                    const d = em.departments?.[r.department];
+                    if (em.stage === "review") return { department: r.department, status: "after review" };
+                    if (d) return { department: r.department, status: d.decision === "confirm" ? "confirmed" : "flagged", by: d.user };
+                    const who = em.confirmers?.[r.department] ?? [];
+                    return { department: r.department, status: "pending", waitingFor: who, mine: who.includes(user.id) };
+                });
+                out.push({
+                    id: row.id, title: row.title, author: row.author, state: row.state,
+                    since: iso(row.executed_at), lastSigned: null, departments, reviewableBy: em.reviewableBy ?? [],
+                    mine: em.stage === "review" ? mayReview && (em.reviewableBy ?? []).includes(user.id) : departments.some((d) => d.mine),
+                    emergency: { stage: em.stage, reason: em.reason, due: em.due, overdue: em.overdue, approved: em.approved ?? null },
                 });
             }
             return { me: user.id, changes: out };
@@ -1516,27 +2172,28 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
         },
 
         // Problems of a draft that is not saved yet: the designer's continuous check at the server.
-        async "design.check"({ definitions, scripts, services, connections, transactions, screens, flows, layouts, elements, organization, retire } = {}) {
+        async "design.check"({ definitions, scripts, services, connections, transactions, screens, flows, layouts, queries, elements, organization, retire } = {}) {
             await designUser(this);
-            const content = withKinds({ definitions: isPlain(definitions) ? definitions : {}, scripts: isPlain(scripts) ? scripts : {}, services: isPlain(services) ? services : {}, connections: isPlain(connections) ? connections : {}, transactions: isPlain(transactions) ? transactions : {}, screens: isPlain(screens) ? screens : {}, flows: isPlain(flows) ? flows : {}, layouts: isPlain(layouts) ? layouts : {}, elements: isPlain(elements) ? elements : {}, ...(isPlain(organization) ? { organization } : {}), ...(isPlain(retire) ? { retire } : {}) });
+            const content = withKinds({ definitions: isPlain(definitions) ? definitions : {}, scripts: isPlain(scripts) ? scripts : {}, services: isPlain(services) ? services : {}, connections: isPlain(connections) ? connections : {}, transactions: isPlain(transactions) ? transactions : {}, screens: isPlain(screens) ? screens : {}, flows: isPlain(flows) ? flows : {}, layouts: isPlain(layouts) ? layouts : {}, queries: isPlain(queries) ? queries : {}, elements: isPlain(elements) ? elements : {}, ...(isPlain(organization) ? { organization } : {}), ...(isPlain(retire) ? { retire } : {}) });
             return { problems: await problemsOf(content), ...(await routeFor(content)) };
         },
     };
 
     // A change's own live views re-run after every lifecycle step; execution also changes what
     // every page draws (definitions, and so lists and forms).
-    const changed = ({ id } = {}) => [{ name: "design.home" }, { name: "design.change", where: { id } }, { name: "design.view" }, { name: "design.organization" }, { name: "design.approvals" }, { name: "inbox.mine" }];
+    const changed = ({ id } = {}) => [{ name: "design.home" }, { name: "design.change", where: { id } }, { name: "design.view" }, { name: "design.organization" }, { name: "design.approvals" }, { name: "design.suites" }, { name: "inbox.mine" }];
     const everything = async function ({ id } = {}, result) {
         const out = changed({ id });
         if (result?.state === "executed") out.push({ name: "defs.list" }, { name: "defs.get" }, { name: "records.list" }, { name: "records.get" }, { name: "transactions.list" }, { name: "transactions.get" }, { name: "screens.list" }, { name: "screens.get" }, { name: "screens.data" }, { name: "popups.for" }, { name: "prefs.get" }, { name: "reports.layouts" });
         return out;
     };
     const touches = {
-        "design.start": [{ name: "design.home" }, { name: "design.view" }],
-        "design.fromPack": [{ name: "design.home" }],
+        "design.start": [{ name: "design.home" }, { name: "design.view" }, { name: "design.suites" }],
+        "design.fromPack": [{ name: "design.home" }, { name: "design.suites" }],
         "design.save": changed,
         "design.include": changed,
-        "design.submit": changed,
+        // (Executed at once during setup, §5.15: then what every page draws too.)
+        "design.submit": everything,
         "design.rollbackPlan": [],
         "design.rollback": (_args, result) => [{ name: "design.home" }, { name: "design.change" }, { name: "design.view" }, { name: "design.approvals" }, { name: "inbox.mine" }],
         "design.review": changed,
@@ -1544,7 +2201,11 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
         "design.withdraw": changed,
         "design.codesigners": changed,
         "design.renameObject": changed,
+        "design.align": changed,
+        "design.queryColumns": [],
         "design.retractReview": changed,
+        "design.emergencyReview": changed,
+        "design.emergencyConfirm": changed,
         "design.script": [],
         "design.organization": [],
         "design.approvals": [],
@@ -1556,20 +2217,25 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
         return (await designRolesOf(user.id)).length > 0;
     }
     return {
-        services, touches, authorize, queries: ["design.home", "design.change", "design.view", "design.organization", "design.approvals"],
+        services, touches, authorize, queries: ["design.home", "design.change", "design.view", "design.organization", "design.approvals", "design.suiteGuide", "design.suites"],
         // For the fitness test: what a change is checked against.
         problemsOf, published, designUser, designRolesOf, waitingFor,
         // A pack that came as a file (model-file.js): what it would change, and the change that does it.
         changeFromPack, packPreview,
         // What a draft screen or transaction may name, as it is live now plus `content`.
-        knownFor: async (content = {}) => integrationKnown(await published(), content),
+        knownFor: async (content = {}) => { const live = await published(); return { ...(await integrationKnown(live, content)), flowInfo: flowInfoOf(live, content) }; },
         useFitness(fn) { fitness = fn; },
+        useQueryDescribe(fn) { describeQuery = fn; },
         useSuiteDesigns(checks) { suiteDesigns = { ...checks }; },
         useSuitePacks(packs) {
             suitePacks = { ...packs };
             allLocks = mergeLocks(CORE_LOCKS, ...Object.entries(packs).map(([name, pack]) => suiteLocks({ name, label: pack.suite ?? name }, pack)));
         },
         locks: () => allLocks,
+        useSuiteGuides(guides) { suiteGuides = { ...guides }; },
+        useSuiteUpdates(fn) { if (typeof fn === "function") suiteUpdates = fn; },
+        useSuiteHistory(h) { if (h && typeof h.read === "function") suiteHistory = { read: h.read, kept: typeof h.kept === "function" ? h.kept : () => ({}) }; },
+        useSuitesInstalled(list) { suitesInstalled = (list ?? []).map(({ name, label, version }) => ({ name, label, version })); },
         // The installed suites' flow node kinds (§32.9), and what to do once a change publishes flows.
         useSuiteFlowNodes(kinds) { suiteFlowNodes = { ...kinds }; },
         useSignatures(given) { signatures = given; },
@@ -1578,6 +2244,10 @@ export function createDesign({ store, log = console, plantTz = "UTC" }) {
         // The suite's own check of a schedule from its kind, against what is live (integration.scheduleRuns' preview).
         async scheduleCheck(t) { return isSuiteSchedule(t) ? suiteScheduleCheck(t, await integrationKnown(await published(), {})) : []; },
         onFlowsPublished(fn) { onFlows = fn; },
+        onExecuted(fn) { onExecuted = fn; },
+        // The event log, and the job that flags emergencies whose review afterwards is overdue (§5.7).
+        useEvents(given) { events = given; },
+        emergencyTick,
         flowNodes: () => suiteFlowNodes,
         // A change's content applied to another database (a sandbox's, sandbox.js), by the very path
         // that executes an approved change: versions, partitions, conversions, its audit there.

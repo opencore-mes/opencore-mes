@@ -1,0 +1,137 @@
+<!-- {"title": "Design · OpenCore MES", "description": "Every new field, rule and screen waits on a vendor. In OpenCore MES your engineers design objects, rules, screens, routes, OEE, QMS and SPC themselves, with an AI that drafts."} -->
+<main>
+  <section class="page-hero hero">
+    <div class="wrap">
+      <span class="eyebrow problem">The problem</span>
+      <h1>Every new field, rule and screen waits on a vendor.</h1>
+      <p class="lede">The people who know the process cannot change the system that runs it. OpenCore MES lets them.</p>
+    </div>
+  </section>
+
+  <section class="sol alt" id="designs">
+    <div class="wrap">
+      <span class="eyebrow">Solution</span>
+      <h2 style="margin-top:16px">Everything is a design.</h2>
+      <p class="sub">Designed in the browser, never written into the product.</p>
+      <ul class="checks">
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Objects.</b> Lots, machines, work orders: fields, states, roles.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Screens and transactions.</b> Station screens, move-in, track-out, built from blocks.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Conditions in words.</b> Built from the fields, read back in plain words; no code.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Copy and change.</b> Any design is the start of the next.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Named queries.</b> The queries the plant relies on, approved like the rest.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>An AI that drafts.</b> Describe it; it drafts the change. <a href="/ai">AI</a></span></li>
+      </ul>
+      <p class="in-demo" style="margin-top:16px"><span>In the demo:</span> <a href="https://demo.opencoremes.com/design" target="_blank" rel="noopener">The designer<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></p>
+    </div>
+  </section>
+
+  <section class="sol" id="rules">
+    <div class="wrap two">
+      <div class="rule-mock" role="img" aria-label="A rule kept in the Lot object's design warns on the form while typing; on the server the same rule refuses the save, whether it comes from a screen or from the ERP service">
+        <div class="obj">
+          <div class="kind">Object · Lot · version 7</div>
+          <div class="parts"><span>Fields</span><span>States</span><span>Roles</span><span class="on">Rules</span><span>Screens</span></div>
+          <pre><span class="c">// scrap_within_lot.js</span>
+<span class="k">export default function</span> scrap_within_lot(ctx) {
+  <span class="k">if</span> (ctx.data.scrap_qty &gt; ctx.record.qty)
+    <span class="k">throw</span> Object.assign(
+      <span class="k">new</span> Error(<span class="c">"More scrap than the lot holds."</span>),
+      { field: <span class="c">"scrap_qty"</span> });
+  <span class="k">return</span> ctx;
+}</pre>
+        </div>
+        <div class="runs">
+          <div class="run">
+            <div class="kind"><svg class="icon"><use href="#i-pulse"/></svg>On the form</div>
+            <div class="field"><span>Scrap</span><b>140 kg</b></div>
+            <div class="warn-text"><svg class="icon"><use href="#i-warning"/></svg>More scrap than the lot holds.</div>
+          </div>
+          <div class="run">
+            <div class="kind"><svg class="icon"><use href="#i-server"/></svg>On the server</div>
+            <div class="refused"><svg class="icon"><use href="#i-x"/></svg>From a screen: refused</div>
+            <div class="refused"><svg class="icon"><use href="#i-x"/></svg>From the ERP: refused</div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <span class="eyebrow">Solution</span>
+        <h2 style="margin-top:16px">The object holds its rules.</h2>
+        <p class="sub">A short function in the object's design, run everywhere.</p>
+        <ul class="points">
+          <li><svg class="icon"><use href="#i-code"/></svg><div><b>One place to look</b><span>Every rule beside the fields it guards.</span></div></li>
+          <li><svg class="icon"><use href="#i-warning"/></svg><div><b>Warned as people type</b><span>The form runs it before anything is sent.</span></div></li>
+          <li><svg class="icon"><use href="#i-shield"/></svg><div><b>Enforced on every save</b><span>Screens, services, imports: nothing gets around it.</span></div></li>
+          <li><svg class="icon"><use href="#i-test"/></svg><div><b>Tested before approval</b><span>Its test cases run before a change can be submitted.</span></div></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="sol models alt" id="models">
+    <div class="wrap">
+      <span class="eyebrow">Solution</span>
+      <h2 style="margin-top:16px">OEE, quality and SPC are models, not modules.</h2>
+      <p class="sub">Built from objects, rules and screens, shaped to how your plant works. A new formula is a change, not a vendor release.</p>
+      <div class="grid3">
+        <div class="card">
+          <svg class="icon"><use href="#i-gauge"/></svg>
+          <h3>OEE</h3>
+          <p>Downtime by reason, counts by shift, a scheduled service works it out.</p>
+          <div class="made"><span>objects</span><span>scheduled service</span><span>screen</span></div>
+        </div>
+        <div class="card">
+          <svg class="icon"><use href="#i-clipboard"/></svg>
+          <h3>QMS</h3>
+          <p>Deviations, NCRs, CAPA: their states, signatures and links to the lot.</p>
+          <div class="made"><span>objects</span><span>states</span><span>rules</span><span>signatures</span></div>
+        </div>
+        <div class="card">
+          <svg class="icon"><use href="#i-chart"/></svg>
+          <h3>SPC</h3>
+          <p>Limits checked on every reading; out of limits sets off a plan.</p>
+          <div class="made"><span>objects</span><span>rules</span><span>flow template</span><span>screen</span></div>
+        </div>
+      </div>
+      <p class="in-demo" style="margin-top:20px"><span>In the demo:</span> <a href="https://demo.opencoremes.com/s/semi_station_metrology" target="_blank" rel="noopener">SPC at the metrology station<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></p>
+    </div>
+  </section>
+
+  <section class="sol flows" id="flows">
+    <div class="wrap">
+      <span class="eyebrow">Solution</span>
+      <h2 style="margin-top:16px">Routes and plans, drawn and approved.</h2>
+      <p class="sub">How a lot goes through the line, and what happens when a reading falls out of limits, on one canvas.</p>
+      <figure class="shot wide">
+        <a class="frame zoom" href="#zoom-flow-ocap" title="Zoom in"><img src="/img/flow-ocap.webp" width="1600" height="1002" alt="The Flow designer showing an SPC out-of-control plan: measure again, decisions, a calibration wait with a retry, a disposition screen, an investigation sub flow, and the Released and Scrapped ends" loading="lazy"><span class="zoom-hint" aria-hidden="true"><svg class="icon"><use href="#i-zoom"/></svg></span></a>
+        <figcaption><b>An SPC out-of-control plan</b>, live on the demo.</figcaption>
+        <a class="lightbox" id="zoom-flow-ocap" href="#_" title="Close" aria-label="Close the large view"><img loading="lazy" src="/img/flow-ocap.webp" width="1600" height="1002" alt="The Flow designer showing an SPC out-of-control plan"><span class="lb-cap"><b>An SPC out-of-control plan</b>, live on the demo.</span><span class="lb-close" aria-hidden="true"><svg class="icon"><use href="#i-x"/></svg></span></a>
+      </figure>
+      <div class="grid3">
+        <div class="card">
+          <svg class="icon"><use href="#i-steps"/></svg>
+          <h3>Routes</h3>
+          <p>Each step offers its transactions; the rest are refused.</p>
+        </div>
+        <div class="card">
+          <svg class="icon"><use href="#i-branch"/></svg>
+          <h3>Plans</h3>
+          <p>Set off by a reading, a tool down or a date; each step waits for its people.</p>
+        </div>
+        <div class="card">
+          <svg class="icon"><use href="#i-test"/></svg>
+          <h3>Proved first</h3>
+          <p>Scenarios walk a lot through it in a sandbox before approval.</p>
+        </div>
+      </div>
+      <p class="in-demo" style="margin-top:20px"><span>In the demo:</span> <a href="https://demo.opencoremes.com/design/view/flow/semi_back_end" target="_blank" rel="noopener">The back-end route<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a> <a href="https://demo.opencoremes.com/design/view/flow/semi_ocap_die_saw" target="_blank" rel="noopener">An out-of-control plan<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></p>
+    </div>
+  </section>
+
+  <section class="final">
+    <div class="wrap">
+      <h2>Designed. Now approve it.</h2>
+      <p class="sub">Nothing a designer or the AI makes reaches the plant until people sign.</p>
+      <div class="cta"><a class="btn primary" href="/control">Control: how changes go live <svg class="icon"><use href="#i-arrow"/></svg></a></div>
+    </div>
+  </section>
+</main>

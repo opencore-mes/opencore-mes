@@ -11,9 +11,14 @@ import { changesOf, countByTab } from "./compare.js";
 import { elementOps, jsonOf } from "./integration-editor.js";
 import { W, text, labelled } from "./editor-kit.js";
 import { icon } from "./icons.js";
+import { confirmRemove } from "./dialog.js";
+import { noun } from "./format.js";
 
 export const LAYOUT_VIEWS = [["copilot", "Copilot", "sparkle"], ["changes", "Changes"], ["general", "General"], ["blocks", "Blocks"], ["preview", "Preview"], ["stewards", "Stewards"], ["json", "JSON"]];
 const BLOCK_WORDS = { text: "text: the copilot's words", figure: "a figure: one number", chart: "a chart", table: "a table", assist: "an AI assisted line: advice on a set of records" };
+// The kinds a layout's block may be made here: a media block (a file kept with a report, §34.10) has nothing
+// here to choose its file with, so it is not offered.
+const LAYOUT_BLOCKS = REPORT_BLOCKS.filter((k) => BLOCK_WORDS[k]);
 const WIDTH_WORDS = { quarter: "a quarter of the page", third: "a third", half: "half", full: "the whole row" };
 const hint = (words) => ({ p: { className: "muted small", textContent: words } });
 const toggleIn = (list, value, on) => { const set = new Set(list ?? []); if (on) set.add(value); else set.delete(value); return [...set]; };
@@ -85,7 +90,7 @@ function scopeEditor(ctx, b, i) {
         ] } },
         labelled(`Which (${(scope.values ?? []).length} of at most ${MAX_SCOPE})`, { div: { className: "scope-pick", children: [
             { div: { className: "scope-chips", children: (scope.values ?? []).map((v) => ({ span: { key: v, className: "scope-chip", children: [{ span: v }, ro() ? { span: {} } : { button: { type: "button", className: "mini", title: `Remove ${v}`, "aria-label": `Remove ${v}`, children: [icon("x")], onclick: () => put({ ...scope, values: scope.values.filter((x) => x !== v) }) } }] } })) } },
-            ro() || !scope.object ? { span: {} } : { input: { type: "search", placeholder: `Type to find ${(objects[scope.object]?.label ?? scope.object).toLowerCase()} records; Enter adds what is typed`, value: () => api.getState(`${S}.q`, "") ?? "", oninput: (e) => search(e.target.value), onkeydown: (e) => { if (e.key === "Enter") { e.preventDefault(); add(e.target.value, true); } } } },
+            ro() || !scope.object ? { span: {} } : { input: { type: "search", placeholder: `Type to find ${noun(objects[scope.object]?.label ?? scope.object)} records; Enter adds what is typed`, value: () => api.getState(`${S}.q`, "") ?? "", oninput: (e) => search(e.target.value), onkeydown: (e) => { if (e.key === "Enter") { e.preventDefault(); add(e.target.value, true); } } } },
             () => { const found = (api.getState(`${S}.found`, []) ?? []).filter((v) => !(scope.values ?? []).includes(v)); return found.length ? { div: { className: "scope-found", children: found.map((v) => ({ button: { key: v, type: "button", className: "btn ghost", textContent: `+ ${v}`, onclick: () => add(v) } })) } } : { span: {} }; },
         ] } }, by ? `Each by its ${(objects[scope.object]?.fields?.[by]?.label ?? by).toLowerCase()}, as people call it. The copilot keeps ${i === null ? "the whole report" : "this block"} to them, as far as whoever asks may read them.` : "Pick the object first."),
         labelled("The goal", text(ctx, i === null ? "goal" : `blocks.${i}.goal`, { multiline: true, placeholder: "Meet this shift's output target on every work order running on the line; what is due first goes first." }), "What is to be achieved with them, and where the targets are found if they are data. The copilot looks at what waits and what is done, and says what to process first and why."),
@@ -107,10 +112,10 @@ function blockCard(ctx, b, i, count) {
                     ro() || i === count - 1 ? { span: {} } : { button: { type: "button", className: "mini", title: "Later", "aria-label": "Later", children: [icon("arrowDown")], onclick: () => move(1) } },
                     // A copy just below it: the same block for another set of records (the next line).
                     ro() || count >= MAX_BLOCKS ? { span: {} } : { button: { type: "button", className: "linkish", textContent: "copy", title: b.block === "assist" ? "A copy below it, for another set of records" : "A copy below it", onclick: () => ops.edit((bb) => { bb.blocks.splice(i + 1, 0, JSON.parse(JSON.stringify(bb.blocks[i]))); }) } },
-                    ro() || count === 1 ? { span: {} } : { button: { type: "button", className: "linkish", textContent: "remove", onclick: () => ops.edit((bb) => { bb.blocks.splice(i, 1); }) } },
+                    ro() || count === 1 ? { span: {} } : { button: { type: "button", className: "linkish", textContent: "remove", onclick: confirmRemove(ctx.api, "this block", () => ops.edit((bb) => { bb.blocks.splice(i, 1); }) )} },
                 ] } },
                 { div: { className: "ed-row", children: [
-                    labelled("Kind", select(ctx, b.block, REPORT_BLOCKS.map((k) => [k, BLOCK_WORDS[k]]), (v) => ops.edit((bb) => { bb.blocks[i].block = v; if (v !== "chart") delete bb.blocks[i].chart; if (v === "assist") { bb.blocks[i].scope ??= { object: "", values: [] }; bb.blocks[i].goal ??= ""; } else { delete bb.blocks[i].scope; delete bb.blocks[i].goal; } }))),
+                    labelled("Kind", select(ctx, b.block, LAYOUT_BLOCKS.map((k) => [k, BLOCK_WORDS[k]]), (v) => ops.edit((bb) => { bb.blocks[i].block = v; if (v !== "chart") delete bb.blocks[i].chart; if (v === "assist") { bb.blocks[i].scope ??= { object: "", values: [] }; bb.blocks[i].goal ??= ""; } else { delete bb.blocks[i].scope; delete bb.blocks[i].goal; } }))),
                     labelled("Width", select(ctx, widthOf(b), Object.keys(WIDTHS).map((k) => [k, WIDTH_WORDS[k]]), (v) => put("width", v)), "Of a 12-column row; a narrow screen gives it more."),
                     b.block === "chart" ? labelled("Chart", select(ctx, b.chart ?? "", [["", "the copilot chooses"], ...CHARTS.map((c) => [c, KINDS[c].label])], (v) => put("chart", v)), b.chart && KINDS[b.chart] ? `For ${KINDS[b.chart].for}.` : "The copilot picks the kind that answers the question; pick one to fix it.") : { span: {} },
                 ] } },
@@ -129,7 +134,7 @@ function blocksTab(ctx) {
             children: [
                 hint("The report's blocks, in reading order. A layout holds no query: it says what each block is for, and the copilot fills it from what the person asking may read. A report drawn on it has exactly these blocks."),
                 ...blocks.map((b, i) => blockCard(ctx, b, i, blocks.length)),
-                ro() || blocks.length >= MAX_BLOCKS ? { span: {} } : select(ctx, "", [["", "+ add a block"], ...REPORT_BLOCKS.map((k) => [k, BLOCK_WORDS[k]])], (k) => { if (k) ops.edit((b) => { (b.blocks ??= []).push({ block: k, width: widthOf({ block: k }), ...(k === "assist" ? { scope: { object: "", values: [] }, goal: "" } : {}) }); }); }, { className: "add-block" }),
+                ro() || blocks.length >= MAX_BLOCKS ? { span: {} } : select(ctx, "", [["", "+ add a block"], ...LAYOUT_BLOCKS.map((k) => [k, BLOCK_WORDS[k]])], (k) => { if (k) ops.edit((b) => { (b.blocks ??= []).push({ block: k, width: widthOf({ block: k }), ...(k === "assist" ? { scope: { object: "", values: [] }, goal: "" } : {}) }); }); }, { className: "add-block" }),
             ],
         },
     };

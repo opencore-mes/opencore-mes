@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { runDryScript, runServiceScript, runRules, stopScriptRunner, scriptRunnerIsolation, probeScriptRunner } from "../server/rules.js";
-import { ServiceError } from "../../../src/errors.js";
+import { ServiceError } from "@opencore-mes/juris-kit/errors.js";
 
 const now = "2026-10-02T08:00:00.000Z";
 const dry = (body, extra = {}) => runDryScript({ name: "p", source: `export default async function p(ctx) { ${body} }`, ctx: { now, lookup: async () => { throw new Error("refused"); } }, deadlineMs: 1500, ...extra });

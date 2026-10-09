@@ -10,6 +10,7 @@
 //   denied:    "locked" (a deny on writing: read at most) | "hidden" (a deny on reading) |
 //              "refused" (a deny on the action) | null; a deny wins over every grant
 //   by:        the policies that say so, each { id, when: true if under a condition }
+//   derived:   true on a derived field granted write: read at most (§6.11)
 //
 // Shared by the designer and its tests: it imports nothing.
 const list = (v) => (Array.isArray(v) ? v : []);
@@ -52,6 +53,8 @@ export function policyMatrix(body) {
                 const c = r.cells[role];
                 if (!reads[role].level) { c.level = null; c.sometimes = false; }
                 else if (c.level && reads[role].sometimes) c.sometimes = true;
+                // A derived field (§6.11) is the platform's to keep: read at most, whatever is granted.
+                if (body.fields[f]?.from !== undefined && c.level === "write") { c.level = "read"; c.derived = true; }
             }
             return r;
         }),
@@ -94,7 +97,7 @@ export function cellWords(cell, kind) {
     const level = cell.denied === "locked" && cell.level === "write" ? "read" : cell.level;
     if (!level) return { text: cell.denied === "locked" ? "locked" : "—", tone: cell.denied ? "deny" : "none" };
     const word = level === "yes" ? (kind === "action" ? "allow" : "yes") : level;
-    return { text: `${word}${cell.sometimes ? "*" : ""}${cell.denied === "locked" ? " (locked)" : ""}`, tone: cell.denied === "locked" ? "deny" : level === "write" || level === "yes" ? "write" : "read" };
+    return { text: `${word}${cell.sometimes ? "*" : ""}${cell.denied === "locked" ? " (locked)" : cell.derived ? " (derived)" : ""}`, tone: cell.denied === "locked" ? "deny" : level === "write" || level === "yes" ? "write" : "read" };
 }
 // Why, for the cell's tooltip: the policies that say so.
 export const cellWhy = (cell) => (cell.by.length ? cell.by.map((b) => `${b.deny ? "denied by" : "by"} ${b.id}${b.when ? " (under its condition)" : ""}`).join("; ") : "no policy grants it");

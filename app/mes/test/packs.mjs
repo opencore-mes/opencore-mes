@@ -13,7 +13,7 @@
 import pg from "pg";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 import { loadSuites } from "../suites.mjs";
 
@@ -25,7 +25,7 @@ let app = null;
 
 try {
     const suites = await loadSuites({ dir: fileURLToPath(new URL("./fixtures/packs/", import.meta.url)) });
-    const { KILN, LOAD, FIRE, SCREEN } = await import("./fixtures/packs/kiln/suite.mjs");
+    const { KILN, LOAD, FIRE, SCREEN, GUIDE, CERT } = await import("./fixtures/packs/kiln/suite.mjs");
     app = await createApp({ db, dev: false, build: "test", outboxEveryMs: 0, schedulerEveryMs: 0, suites });
     const { url: mes } = await app.listen({ port: 0 });
     const people = ["olga", "sam", "quinn", "dana", "eli", "vera", "ivan", "ines"];
@@ -44,7 +44,7 @@ try {
     // ---- 1. offered ----
     const home = await call("dana", "design.home", { as: "dana" });
     const pack = home.packs?.find((p) => p.suite === "kiln");
-    step("offered on the designer's home: 5 new (2 objects, a script, a transaction, a screen), 2 roles (not the group that does not exist), 3 samples", pack && pack.counts.new === 5 && pack.counts.changed === 0 && pack.roles === 2 && pack.samples === 3 && pack.from === "Kiln", pack);
+    step("offered on the designer's home: 5 new (2 objects, a script, a transaction, a screen), 2 roles (not the group that does not exist), 3 samples, a certification to list", pack && pack.counts.new === 5 && pack.counts.changed === 0 && pack.roles === 2 && pack.samples === 3 && pack.from === "Kiln" && pack.certifications === 1, pack);
 
     // ---- 2. a change from it ----
     const notHers = await call("olga", "design.fromPack", { suite: "kiln" });
@@ -52,7 +52,7 @@ try {
     const started = await call("dana", "design.fromPack", { suite: "kiln" });
     const change = await call("dana", "design.change", { id: started.id, as: "dana" });
     const c = change.content ?? {};
-    step("the change holds every element and the roles, titled with the pack's name and version", Object.keys(c.definitions ?? {}).sort().join() === [KILN, LOAD].sort().join() && c.transactions?.[FIRE] && c.screens?.[SCREEN] && Object.keys(c.scripts ?? {}).length === 1 && c.organization?.roles?.[KILN]?.operator?.includes("group:production") && !c.organization.roles[KILN].operator.includes("group:nowhere") && change.title === "Kiln designs 1.0.0" && !change.problems?.length, { title: change.title, problems: change.problems, kinds: Object.keys(c) });
+    step("the change holds every element, the roles and the certification it suggests, titled with the pack's name and version", Object.keys(c.definitions ?? {}).sort().join() === [KILN, LOAD].sort().join() && c.transactions?.[FIRE] && c.screens?.[SCREEN] && Object.keys(c.scripts ?? {}).length === 1 && c.organization?.roles?.[KILN]?.operator?.includes("group:production") && !c.organization.roles[KILN].operator.includes("group:nowhere") && change.title === "Kiln designs 1.0.0" && !change.problems?.length && c.organization?.certifications?.[CERT]?.name === "Kiln firing", { title: change.title, problems: change.problems, kinds: Object.keys(c) });
     const again = await call("dana", "design.fromPack", { suite: "kiln" });
     step("a second start is refused, naming the open change", again.status === 409 && /Kiln designs 1\.0\.0/.test(again.error), again);
 
@@ -67,7 +67,7 @@ try {
         }
     }
     const after = (await call("dana", "design.home", { as: "dana" })).packs.find((p) => p.suite === "kiln");
-    step("submitted, reviewed, approved by everyone it reaches: live, and the home says all of it is live", submitted.ok && state === "executed" && after.counts.same === 5 && after.counts.new === 0 && after.roles === 0 && !after.open.length, { submitted, state, after });
+    step("submitted, reviewed, approved by everyone it reaches: live, and the home says all of it is live", submitted.ok && state === "executed" && after.counts.same === 5 && after.counts.new === 0 && after.roles === 0 && after.certifications === 0 && !after.open.length, { submitted, state, after });
 
     // ---- 4. samples ----
     const notShared = await call("olga", "design.samples", { suite: "kiln" });
@@ -88,6 +88,12 @@ try {
     const screen = await call("olga", "screens.data", { name: SCREEN, as: "olga" });
     const row = screen.blocks?.[0]?.rows?.find((r) => r.id === loads[0].id);
     step("a screen's table carries what its row button's condition reads (pieces), unshown", row && row.pieces === 12 && !screen.blocks[0].fields.pieces, screen.blocks?.[0]);
+    // The file the pack brings (§35.4): kept in the file store when the change was started, by the suite, and
+    // shown by the screen's guide with its two steps on one page.
+    const [kept] = await db.query("SELECT type, name, created_by FROM mes.blobs WHERE sha256 = $1", [GUIDE]);
+    const guide = screen.blocks?.[3];
+    step("the guide the pack brings is in the file store, kept by the suite under its name, and the screen shows it with its steps",
+        kept?.type === "application/pdf" && kept.name === "Firing guide.pdf" && kept.created_by === "suite:kiln" && guide?.src === `/blob/${GUIDE}` && guide.steps?.map((x) => `${x.n}:${x.at}`).join() === "1:1,2:1", { kept, guide });
     const wrongTab = await call("dana", "design.check", { screens: { [SCREEN]: { name: SCREEN, label: "x", blocks: [{ block: "text", text: "x", tab: "" }], callers: { users: [], groups: [] }, stewards: ["production"] } } });
     step("a tab that is not a label is named", JSON.stringify(wrongTab).includes("a tab is a label"), wrongTab);
 } catch (error) {

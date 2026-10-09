@@ -27,4 +27,6 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # Known vulnerabilities in what ships (COMPLIANCE.md G8): a high or critical one fails the build.
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run test:all -- --full

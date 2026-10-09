@@ -55,6 +55,12 @@ test("a screen's mistakes are named", () => {
     // A row's transaction must appear on the table's records.
     const moveOnMachines = { ...workCentre, blocks: [{ block: "table", object: "machine", columns: ["machine_id"], rowActions: ["move_in"] }] };
     assert.match(validateScreen(moveOnMachines, known).map((p) => p.message).join("\n"), /move_in does not appear on machine records/);
+    // Where a row button's form opens: under the table (unsaid), or in a panel over the screen.
+    const table = workCentre.blocks.find((x) => x.block === "table" && (x.rowActions ?? []).length);
+    const opening = (rowActionsIn) => validateScreen({ ...workCentre, blocks: workCentre.blocks.map((x) => (x === table ? { ...x, rowActionsIn } : x)) }, known).map((p) => p.message).join("\n");
+    assert.equal(opening("panel"), "");
+    assert.equal(opening("below"), "");
+    assert.match(opening("popup"), /a row button's form opens below the table or in a panel \("below" or "panel"\), not "popup"/);
 });
 
 test("footprint: only its stewards (it writes nothing); compare: block by block", () => {

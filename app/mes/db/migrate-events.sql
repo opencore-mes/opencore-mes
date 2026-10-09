@@ -18,6 +18,12 @@ CREATE INDEX IF NOT EXISTS event_log_at ON mes.event_log (at DESC);
 CREATE INDEX IF NOT EXISTS event_log_incident ON mes.event_log (incident) WHERE incident IS NOT NULL;
 CREATE OR REPLACE FUNCTION mes.event_log_is_append_only() RETURNS trigger AS $$
 BEGIN
+  -- The retention purge alone (§27.8, migrate-retention.sql: the same body, whichever file runs last) may
+  -- delete, and only rows past a year.
+  IF TG_OP = 'DELETE' AND TG_LEVEL = 'ROW' AND current_setting('mes.retention_purge', true) = 'on'
+     AND OLD.at < now() - interval '365 days' THEN
+    RETURN OLD;
+  END IF;
   RAISE EXCEPTION 'event_log is append-only';
 END;
 $$ LANGUAGE plpgsql;

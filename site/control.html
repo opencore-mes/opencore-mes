@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control · OpenCore MES</title>
+<meta name="description" content="Changes reach the plant untested, unapproved and untraced. In OpenCore MES every change is designed, reviewed, approved and executed; every version is kept; every record is proved.">
+<meta name="theme-color" content="#2b303a">
+<meta property="og:title" content="Control · OpenCore MES">
+<meta property="og:description" content="Changes reach the plant untested, unapproved and untraced. In OpenCore MES every change is designed, reviewed, approved and executed; every version is kept; every record is proved.">
+<meta property="og:url" content="https://opencoremes.com/control">
+<meta property="og:type" content="website">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://opencoremes.com/control">
+<link rel="stylesheet" href="/site.css">
+<script src="/glow.js" defer></script>
+</head>
+<body>
+<div class="bg-bricks" aria-hidden="true"><div class="bgb k1"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k2"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k3"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k4"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k5"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k6"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k7"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div></div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-test" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6M10 3v6L4.5 18.5A2 2 0 0 0 6.2 21.5h11.6a2 2 0 0 0 1.7-3L14 9V3"/><path d="M7 15h10"/></symbol>
+    <symbol id="i-sync" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12a9 9 0 0 1 15.5-6.2"/><path d="M18 2v4h-4"/><path d="M6 22v-4h4"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></symbol>
+    <symbol id="i-clipboard" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-zoom" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M11 8v6M8 11h6"/></symbol>
+  </defs>
+</svg>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="OpenCore MES home">
+      <svg viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="102" fill="#2b303a"/><path fill="#fff" d="M138 374V138h47l71 101 71-101h47v236h-47V222l-71 100-71-100v152z"/></svg>
+      OpenCore MES
+    </a>
+    <nav class="links" aria-label="Main">
+      <a href="/design">Design</a>
+      <a href="/control" aria-current="page">Control</a>
+      <a href="/floor">Floor</a>
+      <a href="/ai">AI</a>
+      <a href="/connect">Connect</a>
+      <a href="/scale">Scale</a>
+      <a href="/editions">Editions</a>
+    </nav>
+    <a class="btn primary" href="https://demo.opencoremes.com/">Try the demo</a>
+    <details class="menu">
+      <summary aria-label="Every page, and the other sites"><svg class="icon"><use href="#i-menu"/></svg></summary>
+      <nav aria-label="Pages">
+          <a href="/">Home</a>
+          <a href="/design"><b>Design</b><small>Changes wait on a vendor</small></a>
+          <a href="/control" aria-current="page"><b>Control</b><small>Changes nobody can trace</small></a>
+          <a href="/floor"><b>Floor</b><small>Stale screens and paper</small></a>
+          <a href="/ai"><b>AI</b><small>Answers that take a week</small></a>
+          <a href="/connect"><b>Connect</b><small>Glue for every machine</small></a>
+          <a href="/scale"><b>Scale</b><small>Growth means downtime</small></a>
+          <a href="/editions"><b>Editions</b><small>Paying for what you skip</small></a>
+          <a href="/about"><b>About</b><small>Who makes it</small></a>
+          <hr>
+          <a href="https://trainings.opencoremes.com/">Courses</a>
+          <a href="https://suites.opencoremes.com/">Suites store</a>
+          <a href="https://github.com/opencore-mes/opencore-mes" rel="noopener">Source on GitHub</a>
+      </nav>
+    </details>
+  </div>
+</header>
+<main>
+  <section class="page-hero hero">
+    <div class="wrap">
+      <span class="eyebrow problem">The problem</span>
+      <h1>Changes reach the plant untested, unapproved and untraced.</h1>
+      <p class="lede">A hotfix on Friday, a field edited in the database, an auditor asking who and why. OpenCore MES answers each.</p>
+    </div>
+  </section>
+
+  <section class="sol alt" id="how">
+    <div class="wrap">
+      <span class="eyebrow">Solution</span>
+      <h2 style="margin-top:16px">One path for every change.</h2>
+      <p class="sub">A field, a rule, a screen, an approver: all go the same way, on the record.</p>
+      <ol class="flow flow-wrap">
+        <li><h3>Design</h3><p>Drafted alone, with co-designers or the AI, with why.</p></li>
+        <li><h3>Review</h3><p>Someone who did not design it checks the frozen draft.</p></li>
+        <li><h3>Approval</h3><p>Each department it touches signs, never its authors.</p></li>
+        <li><h3>Execution</h3><p>Live exactly as approved, everywhere, no restart.</p></li>
+      </ol>
+      <p class="in-demo" style="margin-top:24px"><span>In the demo:</span> <a href="https://demo.opencoremes.com/design/approvals" target="_blank" rel="noopener">Changes waiting for approval<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></p>
+    </div>
+  </section>
+
+  <section class="sol ver-sec" id="versions">
+    <div class="wrap">
+      <div class="fl-mock" role="img" aria-label="An illustration of an object's versions: version 9 under test in the test sandbox, version 8 live after a rollback that restored version 6, version 7 rolled back, version 6 superseded">
+        <div class="head"><b>Lot · versions</b><span>nothing is ever deleted</span></div>
+        <ul class="ver-list">
+          <li><span class="v">draft</span><span class="what">Hold reason by category<small>in the test sandbox, with 2 other changes</small></span><span class="tag test">Under test</span></li>
+          <li><span class="v">v8</span><span class="what">Roll back: scrap limit per item<small>restores v6 · one approval, by Sam</small></span><span class="tag live">Live</span></li>
+          <li class="was"><span class="v">v7</span><span class="what">Scrap limit per item<small>approved by Production and Quality</small></span><span class="tag">Rolled back</span></li>
+          <li class="was"><span class="v">v6</span><span class="what">Hold on contamination<small>approved by Production and Quality</small></span><span class="tag">Superseded</span></li>
+        </ul>
+      </div>
+      <div>
+        <span class="eyebrow">Solution</span>
+        <h2 style="margin-top:16px">Every version kept. Roll back in one step.</h2>
+        <p class="sub">Nothing is overwritten, nothing is deleted.</p>
+        <ul class="points">
+          <li><svg class="icon"><use href="#i-eye"/></svg><div><b>See what changes</b><span>Published beside proposed, before anyone signs.</span></div></li>
+          <li><svg class="icon"><use href="#i-test"/></svg><div><b>Test together</b><span>Drafts tried side by side in a test sandbox.</span></div></li>
+          <li><svg class="icon"><use href="#i-sync"/></svg><div><b>Undo with one approval</b><span>The rollback is drafted for you, and recorded too.</span></div></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="sol ver-sec alt" id="integrity">
+    <div class="wrap">
+      <div>
+        <span class="eyebrow">Solution</span>
+        <h2 style="margin-top:16px">Changed in the database? It is found.</h2>
+        <p class="sub">The audit trail proves itself, and every record proves it still holds what the platform wrote.</p>
+        <ul class="points">
+          <li><svg class="icon"><use href="#i-shield"/></svg><div><b>Every record sealed</b><span>A write around the platform cannot match the seal.</span></div></li>
+          <li><svg class="icon"><use href="#i-eye"/></svg><div><b>Caught as it happens</b><span>Who, from where, each field before and after.</span></div></li>
+          <li><svg class="icon"><use href="#i-pulse"/></svg><div><b>Scanned all the time</b><span>Every fifteen minutes; every record each week.</span></div></li>
+          <li><svg class="icon"><use href="#i-clipboard"/></svg><div><b>Closed with a signed report</b><span>Never quietly restored; into your own NCRs.</span></div></li>
+        </ul>
+      </div>
+      <div class="fl-mock" role="img" aria-label="An illustration of the data integrity review: a lot's quantity changed in the database, a role given by SQL, and a lot put back as an earlier version, closed with a signed report">
+        <div class="head"><b>Data integrity · findings</b><span>scanned every 15 minutes</span></div>
+        <ul class="ver-list">
+          <li><span class="v int-x"><svg class="icon"><use href="#i-x"/></svg></span><span class="what">Lot 4712: changed in the database<small>quantity 600 → 900 kg · by etl_job, from 10.0.4.17</small></span><span class="tag bad">Open</span></li>
+          <li><span class="v int-x"><svg class="icon"><use href="#i-x"/></svg></span><span class="what">Role given by SQL: designer<small>no change, no approval</small></span><span class="tag bad">Open</span></li>
+          <li class="was"><span class="v int-ok"><svg class="icon"><use href="#i-check"/></svg></span><span class="what">Lot 4711: an earlier version put back<small>report signed by Quinn</small></span><span class="tag live">Closed</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="sol" id="regulated">
+    <div class="wrap">
+      <span class="eyebrow">Solution</span>
+      <h2 style="margin-top:16px">Made for plants that answer to auditors.</h2>
+      <p class="sub">Part 11 practices built in; SOC 2, ISO 27001 and HIPAA mapped control by control in the repository.</p>
+      <ul class="checks">
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Your sign-in.</b> Single sign-on, LDAP or Active Directory, or passwords with a second factor.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>An audit trail that checks itself.</b> Append only, chained, verified every 15 minutes.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Segregation of duties.</b> Nobody approves what they designed or reviewed.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Signed by two.</b> An operator and a verifier, each proving it is them.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Record changes that wait.</b> Edits your design names go to the people responsible.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Emergency changes.</b> Live on one signature, reviewed within days.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Sensitive fields.</b> Hidden by default, shown with a reason, never sent to the AI.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Retention and erasure.</b> Periods approved like any change; the audit trail kept.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Backups you have restored.</b> Nightly, encrypted, a restore tested every month.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>"Why can't I?"</b> Every refusal explained from the rule that decided it.</span></li>
+      </ul>
+      <figure class="shot" style="margin-top:32px">
+        <a class="frame zoom" href="#zoom-lot" title="Zoom in"><picture><source srcset="/img/lot-dark.webp" media="(prefers-color-scheme: dark)"><img src="/img/lot.webp" width="1600" height="1000" alt="A lot held by an out-of-control plan: where it is on its route, the plan and its step, and beside each field why it is read only" loading="lazy"></picture><span class="zoom-hint" aria-hidden="true"><svg class="icon"><use href="#i-zoom"/></svg></span></a>
+        <figcaption><b>A lot on hold</b>: its route, its plan, and why each field is read only.</figcaption>
+        <a class="lightbox" id="zoom-lot" href="#_" title="Close" aria-label="Close the large view"><picture><source srcset="/img/lot-dark.webp" media="(prefers-color-scheme: dark)"><img loading="lazy" src="/img/lot.webp" width="1600" height="1000" alt="A lot held by an out-of-control plan"></picture><span class="lb-cap"><b>A lot on hold</b>: its route, its plan, and why each field is read only.</span><span class="lb-close" aria-hidden="true"><svg class="icon"><use href="#i-x"/></svg></span></a>
+      </figure>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 OpenCore MES. "OpenCore MES" is a trademark of its owner.</span>
+    <span><a href="/design">Design</a> · <a href="/control">Control</a> · <a href="/floor">Floor</a> · <a href="/ai">AI</a> · <a href="/connect">Connect</a> · <a href="/scale">Scale</a> · <a href="/editions">Editions</a> · <a href="/about">About</a></span>
+    <span><a href="https://demo.opencoremes.com/">Live demo</a> · <a href="https://trainings.opencoremes.com/">Courses</a> · <a href="https://suites.opencoremes.com/">Suites store</a> · <a href="https://github.com/opencore-mes/opencore-mes" rel="noopener">Source on GitHub</a> · <a href="mailto:contact@opencoremes.com?subject=OpenCore%20MES">Contact</a></span>
+  </div>
+</footer>
+</body>
+</html>

@@ -2,7 +2,7 @@
 // they existed, or to check that the live ones agree with the trail. Idempotent.
 //   DATABASE_URL=postgres:///openmes_poc node app/mes/db/rebuild-intervals.mjs [object]
 import pg from "pg";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { rebuildIntervals } from "../server/analytics.js";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL ?? "postgres:///openmes_poc" });

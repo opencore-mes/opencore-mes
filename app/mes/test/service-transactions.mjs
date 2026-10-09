@@ -19,7 +19,7 @@
 //   DATABASE_URL=postgres:///openmes_test node app/mes/test/service-transactions.mjs   (after a reset)
 import pg from "pg";
 import { randomBytes } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 import { createTokens } from "../server/ai-api.js";
 

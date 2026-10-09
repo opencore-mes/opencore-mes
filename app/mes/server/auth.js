@@ -3,9 +3,10 @@
 // offer the picker (anyone as anyone). The session is an opaque id in an HttpOnly cookie, stored
 // server-side, resolved on every request and never memoised.
 import { createHash, randomBytes } from "node:crypto";
-import { ID_PATTERN, audit, clearFailures, countFailure, createOidc, hashPassword, ldapBind, lockedUntil, passwordProblem, spendDecoy, verifyPassword, policyOf, expiredAt, reused, remember, startPending, pendingOf, endPending, checkSecondFactor, newTotpSecret, otpauthUri, recoveryCodes, codeHash, totpStep, PENDING_MINUTES } from "./sign-in.js";
-import { parseCookies, serializeCookie, appendSetCookie, readBody, onThisSite, clientIp } from "../../../src/server/http.js";
+import { ID_PATTERN, audit, clearFailures, countFailure, createOidc, hashPassword, ldapBind, lockedUntil, passwordProblem, spendDecoy, verifyPassword, policyOf, expiredAt, reused, remember, startPending, pendingOf, endPending, checkSecondFactor, newTotpSecret, otpauthUri, recoveryCodes, codeHash, totpStep, PENDING_MINUTES, checkSetupCode, setupCodeHash, signInIdOf, signInSettings } from "./sign-in.js";
+import { parseCookies, serializeCookie, appendSetCookie, readBody, onThisSite, clientIp } from "@opencore-mes/juris-kit/server/http.js";
 import { sessionKey } from "./store.js";
+import { sealSecret, openSecret } from "./seal.js";
 
 // The cookie's name: mes_session, or the instance's own (createApp sessionCookie), since a browser
 // sends a host's cookies to every port on it: two instances on one machine (a training one beside
@@ -55,6 +56,8 @@ export const methodsOf = (signIn) => ({
     picker: Boolean(signIn?.picker),
     password: Boolean(signIn?.passwords || signIn?.ldap),
     directory: signIn?.ldap ? (signIn.ldap.label ?? "the plant's directory") : null,
+    // A setup code from a printed slip sets a first password (§8.2): where passwords are kept here.
+    codes: Boolean(signIn?.passwords),
     sso: signIn?.sso ? (signIn.sso.label ?? "Single sign-on") : null,
 });
 
@@ -92,6 +95,9 @@ export function authHandler({ store, secure, signIn = {}, fetchFn = fetch, homeF
         return redirect(res, location === "/" && home?.path ? home.path : location, serializeCookie(SESSION_COOKIE, id, { secure, maxAge: SESSION_HOURS * 3600 }));
     };
     const refuse = async (res, who, method, reason, extra) => {
+        // Nobody in People & departments at all (an empty installation, reset.mjs --empty): no id is told
+        // apart from another by saying so; IT names the first administrator (db/admin.mjs).
+        if ((reason === "unknown" || reason === "wrong") && !(await db.query("SELECT 1 FROM mes.users LIMIT 1")).length) reason = "empty";
         await audit(db, who, "sign-in refused", { method, reason });
         if (reason === "locked") events?.emit?.("auth.locked", { severity: "warning", message: `Sign-in id ${String(who ?? "?").slice(0, 80)} is locked after wrong passwords.`, details: { user: String(who ?? "").slice(0, 80), method } });
         return redirect(res, back(reason, extra));
@@ -102,7 +108,7 @@ export function authHandler({ store, secure, signIn = {}, fetchFn = fetch, homeF
 
     // A sign-in id and password: their own password if they have one here, else the plant's directory.
     const byPassword = async (req, res, given, password, location = "/") => {
-        const id = String(given ?? "").trim().toLowerCase();
+        const id = signInIdOf(given, (await signInSettings(db)).domains);
         if (!ID_PATTERN.test(id) || !password) return refuse(res, id, "password", "wrong", going(location));
         if (await lockedUntil(db, id)) return refuse(res, id, "password", "locked", going(location));
         const user = await store.user(id);
@@ -243,7 +249,7 @@ export function authHandler({ store, secure, signIn = {}, fetchFn = fetch, homeF
             const secret = newTotpSecret();
             const codes = recoveryCodes();
             await db.transaction(async (tx) => {
-                await tx.query("INSERT INTO mes.mfa (user_id, secret) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET secret = $2, enabled_at = NULL, last_step = 0", [row.user_id, secret]);
+                await tx.query("INSERT INTO mes.mfa (user_id, secret) VALUES ($1, $2) ON CONFLICT (user_id) DO UPDATE SET secret = $2, enabled_at = NULL, last_step = 0", [row.user_id, sealSecret(secret)]);
                 await tx.query("DELETE FROM mes.mfa_recovery WHERE user_id = $1", [row.user_id]);
                 for (const c of codes) await tx.query("INSERT INTO mes.mfa_recovery (user_id, code_hash) VALUES ($1, $2)", [row.user_id, codeHash(c)]);
             });
@@ -276,7 +282,8 @@ export function authHandler({ store, secure, signIn = {}, fetchFn = fetch, homeF
         if (path === "/login/code") return byCode(req, res, form);
         if (path === "/login/expired") return newPassword(req, res, form);
         if (path === "/login/enroll") return enrolled(req, res, form);
-        if (form.has("password")) return byPassword(req, res, form.get("user"), form.get("password"), backTo(form.get("to")));
+        // The sign-in id as typed, trimmed (§11.1a); the password exactly as typed.
+        if (form.has("password")) return byPassword(req, res, String(form.get("user") ?? "").trim(), form.get("password"), backTo(form.get("to")));
         // The picker: a development or demo instance only. A switch from the top bar stays on its page.
         if (!signIn.picker) return redirect(res, back("wrong"));
         const user = await store.user(form.get("user"));
@@ -309,7 +316,7 @@ export function authHandler({ store, secure, signIn = {}, fetchFn = fetch, homeF
         const row = await pendingFrom(req, "enroll");
         if (!row) return redirect(res, back("step"));
         const [m] = await db.query("SELECT secret FROM mes.mfa WHERE user_id = $1 AND enabled_at IS NULL", [row.user_id]);
-        const step = m ? totpStep(m.secret, form.get("code")) : null;
+        const step = m ? totpStep(openSecret(m.secret), form.get("code")) : null;
         if (step === null) { await countFailure(db, row.user_id); return again(res, "enroll", "code", row.return_to); }
         await db.query("UPDATE mes.mfa SET enabled_at = now(), last_step = $2 WHERE user_id = $1", [row.user_id, step]);
         await audit(db, row.user_id, "second factor set", { by: "themselves", at: "sign-in" });
@@ -363,6 +370,42 @@ export function authHandler({ store, secure, signIn = {}, fetchFn = fetch, homeF
         return donePage(res, true, "Signed in again: you may sign.");
     }
 
+    // A first password set with a setup code (§8.2): the sign-in id and the code from a printed slip, at any
+    // station. A wrong code counts against the id as a wrong password does (its lock), and against the code
+    // (spent after CODE_TRIES); the page says only that the id or code is wrong.
+    async function bySetupCode(res, form, next, again) {
+        const id = signInIdOf(form.get("user"), (await signInSettings(db)).domains);
+        const page = (code) => redirect(res, `/password?${new URLSearchParams({ setup: "1", ...(ID_PATTERN.test(id) ? { u: id } : {}), e: code })}`);
+        if (!ID_PATTERN.test(id)) return page("code");
+        if (await lockedUntil(db, id)) { await audit(db, id, "setup code refused", { reason: "locked" }); return page("locked"); }
+        const checked = await checkSetupCode(db, id, form.get("code"));
+        if (checked !== "ok") {
+            const locked = await countFailure(db, id);
+            await audit(db, id, "setup code refused", { reason: locked ? "locked" : checked });
+            return page(locked ? "locked" : checked === "spent" ? "spent" : "code");
+        }
+        if (next !== again) return page("again");
+        const weak = passwordProblem(next, id);
+        if (weak) return page(weak);
+        const [had] = await db.query("SELECT hash FROM mes.credentials WHERE user_id = $1", [id]);
+        if (await reused(db, id, "password", next, policy, had?.hash)) return page("reused");
+        const hash = await hashPassword(next);
+        const set = await db.transaction(async (tx) => {
+            const [spent] = await tx.query("UPDATE mes.password_tokens SET used_at = now() WHERE token_hash = $1 AND kind = 'code' AND used_at IS NULL AND expires_at > now() RETURNING user_id", [setupCodeHash(id, form.get("code"))]);
+            if (!spent) return false;
+            const [active] = await tx.query("SELECT 1 FROM mes.users WHERE id = $1 AND active", [id]);
+            if (!active) return false;
+            await tx.query("INSERT INTO mes.credentials (user_id, hash, set_at) VALUES ($1, $2, now()) ON CONFLICT (user_id) DO UPDATE SET hash = $2, set_at = now()", [id, hash]);
+            await remember(tx, id, "password", had?.hash, policy);
+            await tx.query("DELETE FROM mes.sessions WHERE user_id = $1", [id]);
+            await tx.query("DELETE FROM mes.sign_in_failures WHERE user_id = $1", [id]);
+            return true;
+        });
+        if (!set) return page("spent");
+        await audit(db, id, "password set", { by: "setup code" });
+        return redirect(res, `/login?${new URLSearchParams({ m: "password", u: id })}`);
+    }
+
     // A password set through a one-time link, or changed by the person signed in.
     async function setPassword(req, res, form) {
         if (!signIn.passwords) return redirect(res, "/login");
@@ -370,7 +413,7 @@ export function authHandler({ store, secure, signIn = {}, fetchFn = fetch, homeF
         const next = form.get("next") ?? "", again = form.get("again") ?? "";
         const page = (code) => redirect(res, `/password?${new URLSearchParams(token ? { token, e: code } : { e: code })}`);
         if (token) {
-            const [link] = await db.query("SELECT user_id FROM mes.password_tokens WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()", [createHash("sha256").update(token).digest("hex")]);
+            const [link] = await db.query("SELECT user_id FROM mes.password_tokens WHERE token_hash = $1 AND kind = 'link' AND used_at IS NULL AND expires_at > now()", [createHash("sha256").update(token).digest("hex")]);
             if (!link) return redirect(res, "/password?e=link");
             if (next !== again) return page("again");
             const weak = passwordProblem(next, link.user_id);
@@ -380,7 +423,7 @@ export function authHandler({ store, secure, signIn = {}, fetchFn = fetch, homeF
             const hash = await hashPassword(next);
             const set = await db.transaction(async (tx) => {
                 // Spent, whatever else happens: a link sets one password.
-                const [spent] = await tx.query("UPDATE mes.password_tokens SET used_at = now() WHERE token_hash = $1 AND used_at IS NULL RETURNING user_id", [createHash("sha256").update(token).digest("hex")]);
+                const [spent] = await tx.query("UPDATE mes.password_tokens SET used_at = now() WHERE token_hash = $1 AND kind = 'link' AND used_at IS NULL RETURNING user_id", [createHash("sha256").update(token).digest("hex")]);
                 if (!spent) return false;
                 await tx.query("INSERT INTO mes.credentials (user_id, hash, set_at) VALUES ($1, $2, now()) ON CONFLICT (user_id) DO UPDATE SET hash = $2, set_at = now()", [spent.user_id, hash]);
                 await remember(tx, spent.user_id, "password", had?.hash, policy);
@@ -394,6 +437,7 @@ export function authHandler({ store, secure, signIn = {}, fetchFn = fetch, homeF
             await audit(db, link.user_id, "password set", { by: "link" });
             return redirect(res, "/login?m=password");
         }
+        if (form.has("code")) return bySetupCode(res, form, next, again);
         const sid = sessionIdOf(req);
         const user = await store.userForSession(sid);
         if (!user) return redirect(res, "/login");

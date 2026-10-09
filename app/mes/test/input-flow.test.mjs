@@ -2,7 +2,7 @@
 // designer is told about a flow, and about the transactions and screens that name it.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { stepFrom, advances, entryComplete, inputFlowSummary } from "../client/input-flow.js";
+import { stepFrom, advances, entryComplete, inputFlowSummary, inputScope } from "../client/input-flow.js";
 import { validateFlow, validateTransaction, validateScreen, explainFlow } from "../client/definition.js";
 
 const flow = () => ({
@@ -116,4 +116,24 @@ test("a screen names an input flow over its parameter and its transaction blocks
     assert.deepEqual(of(screen([two[0]], { inputFlow: "loose" })), []);
     assert.match(of(screen([two[1]], { inputFlow: "station" })).join("\n"), /move_in is not a transaction block of this screen/);
     assert.match(of({ ...screen(two, { inputFlow: "station" }), params: {} }).join("\n"), /the screen has no parameter/);
+});
+
+test("a screen's decision on one of its transactions' inputs ({ input: \"<transaction>.<input>\" }) reads it, asked or filled on the way", () => {
+    const f = {
+        nodes: {
+            start: { kind: "start" }, condition: { kind: "ask", input: "take_in.condition" }, damaged: { kind: "auto_decision" },
+            symptom: { kind: "ask", input: "take_in.symptom" }, good: { kind: "run", transaction: "take_in" }, flag: { kind: "fill", input: "take_in.note", value: "seen" },
+            noted: { kind: "auto_decision" }, bad: { kind: "end" }, odd: { kind: "end" },
+        },
+        edges: [
+            { from: "start", to: "condition" }, { from: "condition", to: "damaged" },
+            { from: "damaged", to: "flag", when: { eq: [{ input: "take_in.condition" }, "damaged"] } }, { from: "damaged", to: "good" },
+            { from: "flag", to: "noted" }, { from: "noted", to: "symptom", when: { eq: [{ input: "take_in.note" }, "seen"] } }, { from: "noted", to: "odd" },
+        ],
+    };
+    assert.deepEqual(inputScope([["take_in.condition", "damaged"], ["take_in.touchdowns", 5], ["param", "b1"]]), { take_in: { condition: "damaged", touchdowns: 5 }, param: "b1" });
+    // As the screen's driver gives it (nested), and as flat names (older callers): the same way on.
+    assert.equal(stepFrom(f, "condition", { input: inputScope([["take_in.condition", "damaged"]]) }).id, "symptom");
+    assert.equal(stepFrom(f, "condition", { input: { "take_in.condition": "damaged" } }).id, "symptom");
+    assert.equal(stepFrom(f, "condition", { input: inputScope([["take_in.condition", "good"]]) }).id, "good");
 });

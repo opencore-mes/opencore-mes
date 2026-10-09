@@ -98,6 +98,8 @@ export function transactionChanges(before, after) {
     for (let i = 0; i < most(before.steps, after.steps); i++) push("steps", `step:${i}`, `Step ${i + 1}`, before.steps?.[i], after.steps?.[i]);
     for (let i = 0; i < most(before.scenarios, after.scenarios); i++) push("scenarios", `scenario:${i}`, `Scenario ${after.scenarios?.[i]?.name ?? before.scenarios?.[i]?.name ?? i + 1}`, before.scenarios?.[i], after.scenarios?.[i]);
     push("callers", "callers", "Callers", before.callers, after.callers);
+    push("callers", "http", "Published over HTTP", before.http, after.http);
+    push("callers", "deprecated", "Deprecated", before.deprecated, after.deprecated);
     push("stewards", "stewards", "Stewards", before.stewards, after.stewards);
     return out;
 }
@@ -153,6 +155,24 @@ export function layoutChanges(before, after) {
     return out;
 }
 
+// A named query (§23.1): its words, its SELECT, its parameters one by one, its limit, tests and stewards.
+export const QUERY_TABS = { general: "General", sql: "Query", params: "Parameters", tests: "Try and tests", web: "Web", stewards: "Stewards" };
+export function queryChanges(before, after) {
+    const out = [];
+    const push = (tab, element, label, a, b) => { if (!same(a, b)) out.push({ tab, element, label, change: changeOf(a, b), before: a ?? null, after: b ?? null }); };
+    if (!after) return out;
+    if (!before) return [{ tab: "general", element: "query", label: `New query ${after.label ?? after.name}`, change: "added", before: null, after }];
+    for (const [key, label] of [["label", "Label"], ["description", "Description"]]) push("general", key, label, before[key], after[key]);
+    push("sql", "sql", "The SELECT", before.sql, after.sql);
+    push("sql", "limit", "At most (rows)", before.limit, after.limit);
+    for (const p of new Set([...Object.keys(before.params ?? {}), ...Object.keys(after.params ?? {})])) push("params", `param:${p}`, `Parameter ${p}`, before.params?.[p], after.params?.[p]);
+    push("tests", "tests", "Tests", before.tests, after.tests);
+    push("web", "http", "Published over HTTP", before.http, after.http);
+    push("web", "deprecated", "Deprecated", before.deprecated, after.deprecated);
+    push("stewards", "stewards", "Stewards", before.stewards, after.stewards);
+    return out;
+}
+
 // A design element of a suite's kind (§30.11): what every element has, and each of its own settings.
 export const ELEMENT_TABS = { general: "General", design: "Design", stewards: "Stewards" };
 export function suiteElementChanges(before, after) {
@@ -167,7 +187,7 @@ export function suiteElementChanges(before, after) {
 }
 
 // People & departments (§5.6): each department, person and object's roles on its own tab.
-export const ORG_TABS = { departments: "Departments", people: "People", roles: "Roles", standing: "Approvals", formats: "Formats", theme: "Theme" };
+export const ORG_TABS = { departments: "Departments", groups: "Groups", people: "People", roles: "Roles", certifications: "Certifications", standing: "Approvals", formats: "Formats", theme: "Theme", retention: "Retention", signin: "Sign-in" };
 export function organizationChanges(before, after) {
     const out = [];
     const push = (tab, element, label, a, b) => { if (!same(a, b)) out.push({ tab, element, label, change: changeOf(a, b), before: a ?? null, after: b ?? null }); };
@@ -175,12 +195,15 @@ export function organizationChanges(before, after) {
     const keys = (a, b) => [...new Set([...Object.keys(a ?? {}), ...Object.keys(b ?? {})])];
     push("departments", "governance", "Governance", before?.governance, after.governance);
     for (const d of keys(before?.departments, after.departments)) push("departments", `department:${d}`, `Department ${after.departments?.[d]?.name ?? before?.departments?.[d]?.name ?? d}`, before?.departments?.[d], after.departments?.[d]);
-    for (const g of keys(before?.groups, after.groups)) push("departments", `group:${g}`, `Group ${g}`, before?.groups?.[g], after.groups?.[g]);
+    for (const g of keys(before?.groups, after.groups)) push("groups", `group:${g}`, `Group ${after.groups?.[g]?.name ?? before?.groups?.[g]?.name ?? g}`, before?.groups?.[g], after.groups?.[g]);
     for (const u of keys(before?.users, after.users)) push("people", `person:${u}`, `${after.users?.[u]?.name ?? before?.users?.[u]?.name ?? u}`, before?.users?.[u], after.users?.[u]);
     for (const o of keys(before?.roles, after.roles)) push("roles", `roles:${o}`, `Roles on ${o}`, before?.roles?.[o], after.roles?.[o]);
+    for (const c of keys(before?.certifications, after.certifications)) push("certifications", `certification:${c}`, `Certification ${after.certifications?.[c]?.name ?? before?.certifications?.[c]?.name ?? c}`, before?.certifications?.[c], after.certifications?.[c]);
     push("standing", "standing", "Standing approvers", before?.standing ?? {}, after.standing ?? {});
     push("formats", "formats", "Dates, times and numbers", before?.formats ?? {}, after.formats ?? {});
     push("theme", "theme", "Theme", before?.theme ?? {}, after.theme ?? {});
+    push("retention", "retention", "How long data is kept", before?.retention ?? {}, after.retention ?? {});
+    push("signin", "signIn", "The sign-in id's label and domains", before?.signIn ?? {}, after.signIn ?? {});
     return out;
 }
 
@@ -251,6 +274,7 @@ export function changesOf(api, id, kind, name) {
     if (kind === "screen") return screenChanges(live.screens?.[name] ?? null, api.peek(`${w}.sc.${name}`));
     if (kind === "flow") return flowChanges(live.flows?.[name] ?? null, api.peek(`${w}.fl.${name}`));
     if (kind === "layout") return layoutChanges(live.layouts?.[name] ?? null, api.peek(`${w}.ly.${name}`));
+    if (kind === "query") return queryChanges(live.queries?.[name] ?? null, api.peek(`${w}.qy.${name}`));
     if (kind === "element") return suiteElementChanges(live.elements?.[name] ?? null, api.peek(`${w}.el.${name}`));
     if (kind === "organization") return organizationChanges(live.organization ?? null, api.peek(`${w}.org`));
     return connectionChanges(live.connections?.[name] ?? null, api.peek(`${w}.cn.${name}`));

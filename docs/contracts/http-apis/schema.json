@@ -6,7 +6,7 @@
   "type": "object",
   "x-contract": {
     "name": "http-apis",
-    "version": "1.0"
+    "version": "1.3"
   },
   "x-policy": {
     "minor": "adds: an operation, an optional request field, a field in an answer. Recorded here and in CHANGELOG.md first.",
@@ -46,6 +46,11 @@
           "params": [],
           "fields": []
         },
+        "GET /suites": {
+          "scope": "design:read",
+          "params": [],
+          "fields": []
+        },
         "GET /objects/{object}": {
           "scope": "design:read",
           "params": [
@@ -72,8 +77,10 @@
             "connection",
             "flow",
             "label",
+            "layout",
             "object",
             "organization",
+            "query",
             "screen",
             "service",
             "transaction"
@@ -116,6 +123,7 @@
             "flows",
             "layouts",
             "organization",
+            "queries",
             "reason",
             "screens",
             "scripts",
@@ -156,6 +164,7 @@
             "definitions",
             "flows",
             "layouts",
+            "queries",
             "screens",
             "scripts",
             "services",
@@ -262,23 +271,39 @@
       }
     },
     "/svc/v1": {
-      "openapi": "/svc/v1/openapi.json (the web services this token's person may call: the plant's designs)",
+      "openapi": "/svc/v1/openapi.json (the web services, transactions and named queries this token's person may call: the plant's designs)",
       "request": "POST /svc/v1/{service} with Authorization: Bearer <token> (scope service:call), Content-Type: application/json, optional Idempotency-Key (8 to 100 characters: the first answer is given again)",
       "answers": {
-        "200": "{ output, ... } as the service answers",
-        "400": "bad input: { error, fields }",
+        "200": "{ output, ... } as the service answers; a transaction's run or preview, a query's page, as above",
+        "400": "bad input: { error, fields } (a query's parameter, a transaction's input)",
         "401": "no or bad token: { error, code: token.missing }",
         "403": "missing scope or not among its callers: { error, code }",
-        "404": "no such web service: { error }",
-        "409": "the first request with this Idempotency-Key still runs: { error, code: idempotency.running }, Retry-After",
+        "404": "no such web service, transaction or query published over HTTP: { error }",
+        "409": "the first request with this Idempotency-Key still runs: { error, code: idempotency.running }, Retry-After; or a record a transaction reads changed while it was checked: { error, code: stale } (run it again)",
         "413": "the body is too large: { error }",
         "415": "not JSON: { error }",
         "422": "refused by the service, a rule or a policy: { error, fields?, code? }",
         "500": "the service failed: { error }",
-        "502": "a system it depends on could not be reached: { error }"
+        "502": "a system it depends on could not be reached: { error }",
+        "503": "the server is busy or its database out of reach: { error, code: db.busy | db.unavailable }, Retry-After; nothing was changed"
       },
       "error": "{ error: words a person reads, code?: a stable identifier, fields?: { input: words } }",
-      "services": "each web service's input and answer are the plant's promise to its callers, governed by its change requests: a change that would break callers who called in the last 30 days needs the notice first (the service deprecated with a sunset, its callers told on every call) or a new name"
+      "services": "each web service's, transaction's and named query's input and answer are the plant's promise to its callers, governed by its change requests: a change that would break callers who called in the last 30 days needs the notice first (deprecated with a sunset, its callers told on every call) or a new name. For a query: a parameter gone, made required, its type changed, a column it gives taken away",
+      "transactions": {
+        "run": "POST /svc/v1/{transaction} (scope transaction:run), a transaction its design publishes over HTTP (http.enabled): JSON in, its inputs by name; a reference input is a record's id or its title (as a scanner reads it off a label); a rows input is an array of objects; an input its design fills in is never read. Optional Idempotency-Key, as for a service: a retry never runs it twice. Answers 200 { ok, run, transaction, changes, records }",
+        "preview": "POST /svc/v1/{transaction}/preview (scope transaction:run): the same body; what running it would change, record by record, nothing written. Answers 200 { transaction, changes, skipped }",
+        "never": "a transaction a person signs (an electronic signature), or one only routes run, is never published over HTTP"
+      },
+      "queries": {
+        "read": "GET /svc/v1/{query}?<parameter>=<value>&offset=&sort=&dir=asc|desc&limit= (scope query:run), a named query its design publishes over HTTP (http.enabled): each parameter by name, typed as the query declares it; run as the token's person (their policies decide the rows and fields). Answers 200 { columns, rows, next }: at most the query's limit (or `limit`, if smaller), `next` the offset of the next page, or null",
+        "safe": "a GET changes nothing: repeat it at will; it takes no Idempotency-Key"
+      },
+      "scopes": {
+        "service:call": "POST /svc/v1/{service}",
+        "transaction:run": "POST /svc/v1/{transaction}, POST /svc/v1/{transaction}/preview",
+        "query:run": "GET /svc/v1/{query}: reads, never writes"
+      },
+      "names": "services, transactions and named queries published over HTTP share one set of names: a design refuses a name another kind already publishes"
     }
   },
   "x-deprecated": {

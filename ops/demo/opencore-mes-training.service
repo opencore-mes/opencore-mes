@@ -1,0 +1,23 @@
+[Unit]
+Description=OpenCore MES training plant (beside trainings.opencoremes.com)
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+User=opencore
+Group=opencore
+WorkingDirectory=/srv/opencore-mes/current
+EnvironmentFile=/srv/opencore-mes/current/ops/demo/training.env
+EnvironmentFile=-/srv/opencore-mes/current/BUILD.env
+ExecStart=/usr/local/bin/node app/mes/server.mjs
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/opencore-mes
+
+[Install]
+WantedBy=multi-user.target

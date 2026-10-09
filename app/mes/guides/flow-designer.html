@@ -1,27 +1,68 @@
-<!-- The Flow designer's guide (DESIGN.md §33). Drawn through an allowlist: an element with
-     data-highlight="<CSS selector>" outlines what the selector finds in the Flow designer's window. -->
+<!-- The Flow designer's guide (DESIGN.md §33): flow-editor.js, each of its tabs (FLOW_VIEWS), the side
+     panel of a node and of a wire. Drawn through an allowlist: an element with data-highlight="<CSS
+     selector>" outlines what the selector finds in the Flow designer's window. -->
 <article data-title="The Flow designer">
-  <p>A flow template is drawn here: a <strong>route</strong> a lot goes along step by step, or a
-  <strong>plan</strong> (an OCAP) an event sets off. It is approved like every other design.</p>
+  <p>A flow template is drawn here: a <strong>route</strong> a traveler (a lot) goes along step by step, a
+  <strong>plan</strong> (an OCAP) an event sets off, or an <strong>input flow</strong> that fills a
+  transaction or a screen from the keyboard. It is approved like every other design.</p>
 
   <h3>Its tabs</h3>
   <dl>
     <dt data-highlight=".subtabs">The tabs</dt>
-    <dd>Flow is the canvas; General, its kind and when a run ends early; Context, the values every run
-    carries; Participants, its records and what the template itself may do; Stewards, who approves it;
-    Scenarios, its evidence; Changes, what differs from the live version; JSON, all of it as data.</dd>
-    <dt data-highlight=".subtabs .subtab:nth-child(7)">Scenarios</dt>
-    <dd>A record walked through it in a sandbox, each step expecting the node reached: made in the
-    sandbox, run again by the fitness test on every submit.</dd>
-    <dt data-highlight=".subtabs .subtab:first-child">Copilot</dt>
-    <dd>Ask the AI to draft, check or explain the template. It works as you, and never submits.</dd>
+    <dd>Copilot, Changes, Flow (the canvas), General, Context, Participants, Scenarios, Stewards and JSON.
+    An input flow has no Context, Participants or Scenarios.</dd>
+    <dt data-highlight=".subtabs .tab-more-btn">… more</dt>
+    <dd>When the tabs do not all fit, the last ones are under this button: click it and pick one.</dd>
+    <dt data-highlight=".subtabs .tab-diff">The number on a tab</dt>
+    <dd>How many things on that tab differ from the live version. The number on Changes counts them
+    all.</dd>
+    <dt data-highlight=".el-picker">This window shows</dt>
+    <dd>When the change holds more than this template, pick here what this window shows.</dd>
+    <dt>Undo, Redo</dt>
+    <dd>Above the windows: take back the last edit, or bring it again (⌘Z or Ctrl+Z, ⇧⌘Z or Ctrl+Y, outside
+    a text box). Moving a node is an edit too.</dd>
+    <dt>Remove</dt>
+    <dd>Removing a node, a wire, a field, a value, a record or a scenario asks you to confirm first; Undo
+    brings it back.</dd>
   </dl>
 
-  <h3>Drawing</h3>
+  <h3>Copilot</h3>
+  <dl>
+    <dt data-highlight=".subtabs .subtab:first-child">Copilot</dt>
+    <dd>Ask the AI to draft, check or explain the template. It works as you, through the design tools, and
+    never submits. It works inside a change only.</dd>
+    <dt data-highlight=".copilot-log">The conversation</dt>
+    <dd>What you asked, what it answered, and each tool it used (ticked, or crossed when it failed). It is
+    kept with the change and picks up where it stopped.</dd>
+    <dt data-highlight=".copilot-input textarea">Ask the copilot…</dt>
+    <dd>Write what you want; ⌘ or Ctrl and Enter sends it. Paste or drop a picture, a PDF, a CSV or an Excel
+    file into the box to give it one.</dd>
+    <dt data-highlight=".copilot-input .att-btn">Attach</dt>
+    <dd>Adds up to 5 files to your next message; × on a file takes it off.</dd>
+    <dt data-highlight=".copilot-buttons .btn.primary">Send</dt>
+    <dd>Sends your message. While it works, it shows the step it is on.</dd>
+    <dt data-highlight=".copilot-buttons .btn.ghost">New conversation</dt>
+    <dd>Deletes the conversation kept with this change, after you confirm; the draft stays as it is.</dd>
+  </dl>
+
+  <h3>Changes</h3>
+  <dl>
+    <dt data-highlight=".subtabs .subtab:nth-child(2)">Changes</dt>
+    <dd>Everything that differs from the live version: how many changed, added and removed, grouped by
+    tab.</dd>
+    <dt data-highlight=".changes-head .mini">Open Flow, Open General…</dt>
+    <dd>Opens that tab in this window.</dd>
+    <dt data-highlight=".change-item">Each difference</dt>
+    <dd>Click it to fold or unfold it: lines taken out are marked −, lines added +.</dd>
+  </dl>
+
+  <h3>Flow: drawing</h3>
   <dl>
     <dt data-highlight=".flow-palette">Add (the palette)</dt>
-    <dd>Adds a node of that kind. A route has Start, Sequence, Auto decision and End; a plan has Start,
-    Wait, Auto and Manual decision, Input screen, Sub flow and End.</dd>
+    <dd>Adds a node of that kind and opens its settings. A route has Start, Sequence, Auto decision, Sub flow
+    and End; a plan has Start, Wait, Auto and Manual decision, Input screen, Sub flow and End; an input flow
+    has Start, Ask, Fill, Auto decision, Run and End. Start is offered until the template has one. An
+    installed suite may add kinds of its own, named with the suite.</dd>
     <dt data-highlight=".flow-palette button[title^='Arrange']">Tidy</dt>
     <dd>Lays the nodes out, left to right from the start, branches below.</dd>
     <dt data-highlight=".flow-canvas-wrap">The canvas</dt>
@@ -30,9 +71,17 @@
     <dt data-highlight=".flow-edge">Wires</dt>
     <dd>Where a run goes next. Draw one with <em>Wire from here…</em> in a node's settings, then click the
     node it goes to. A wire's words: its choice, <em>if …</em> (a condition), <em>otherwise</em>, or
-    <em>retry</em> (dashed, a wait's way back).</dd>
+    <em>retry</em> (dashed, a wait's way back). A wire from a manual decision starts as Choice 1, 2…</dd>
+    <dt data-highlight=".flow-canvas-tab > p.notice">Drawing a wire</dt>
+    <dd>While a wire is being drawn, the line above the canvas names the node it starts from: click the node
+    it goes to.</dd>
     <dt data-highlight=".flow-node.bad, .flow-edge.bad">Problems</dt>
     <dd>A node or wire outlined in red has something wrong; its settings say what.</dd>
+    <dt data-highlight=".zoom-controls">− Fit +</dt>
+    <dd>Zoom out and in; the middle button shows the zoom and fits the drawing to the panel again. Ctrl or ⌘
+    and the wheel (or a pinch) zoom about the pointer; zoomed in, drag the empty ground to move about.</dd>
+    <dt data-highlight=".flow-list">On a phone</dt>
+    <dd>The canvas is a list: each node with where it goes. Tap one for its settings.</dd>
   </dl>
 
   <h3>The nodes</h3>
@@ -40,8 +89,9 @@
     <dt data-highlight=".flow-node.kind-start">Start</dt>
     <dd>Where every run begins: one per template, with the condition that starts it.</dd>
     <dt data-highlight=".flow-node.kind-sequence">Sequence</dt>
-    <dd>A step of a route. Entering it sets the lot's step and, if you say so, its state. It offers its
-    transactions on the resources it allows; Move out (or any change of the lot's step) takes it on.</dd>
+    <dd>A step of a route. Entering it sets the traveler's step and, if you say so, its state. It offers its
+    transactions on the resources it allows; one that takes it on (or any change of the traveler's step)
+    moves it along.</dd>
     <dt data-highlight=".flow-node.kind-auto_decision">Auto decision</dt>
     <dd>Decides at once from the run's context: its wires' conditions in order, the last may be
     <em>otherwise</em>.</dd>
@@ -51,26 +101,308 @@
     <dd>Shows a message and the time remaining. It goes on by itself, waits to be acknowledged, or also
     offers Retry.</dd>
     <dt data-highlight=".flow-node.kind-input_screen">Input screen</dt>
-    <dd>Collects into the context: list choices, typed values, files, images and links.</dd>
+    <dd>Collects into the context: list choices, typed values, files, images, links, and choices from a
+    named query.</dd>
     <dt data-highlight=".flow-node.kind-sub_flow">Sub flow</dt>
-    <dd>Runs another template, passing values in and taking some back.</dd>
+    <dd>Runs another template of the same kind, passing values in and taking some back.</dd>
+    <dt data-highlight=".flow-node.kind-ask">Ask</dt>
+    <dd>In an input flow: puts the cursor on one input of the form and says when to move on.</dd>
+    <dt data-highlight=".flow-node.kind-fill">Fill</dt>
+    <dd>In an input flow: fills an input by itself, from another input, a lookup or a value.</dd>
+    <dt data-highlight=".flow-node.kind-run">Run</dt>
+    <dd>In an input flow: checks the form and confirms it.</dd>
     <dt data-highlight=".flow-node.kind-end">End</dt>
-    <dd>Closes the run, with its outcome.</dd>
+    <dd>Closes the run, with its outcome; in an input flow, starts again for the next one or stops.</dd>
+    <dt data-highlight=".flow-node.kind-missing">A suite's node, suite missing</dt>
+    <dd>A node whose suite is not installed stays, and a run that reaches it stops there.</dd>
   </dl>
 
   <h3>A node's settings</h3>
   <dl>
     <dt data-highlight=".flow-side.open">The drawer</dt>
-    <dd>Opens over the canvas when a node or wire is selected; × closes it.</dd>
+    <dd>Opens over the canvas when a node or wire is selected; × closes it. Its heading gives the node's
+    label, kind and id.</dd>
+    <dt data-highlight=".flow-side.open h4 + .ed-field">Label</dt>
+    <dd>The name shown on the node and to people.</dd>
     <dt data-highlight=".flow-side.open .checks">Checkboxes</dt>
-    <dd>Tick each that applies: the transactions done at a step, those that take the lot on, who acts.</dd>
+    <dd>Tick each that applies: the transactions done at a step, those that take the traveler on, the
+    departments and groups who act.</dd>
     <dt data-highlight=".flow-side.open select">Drop-downs</dt>
-    <dd>Pick one: the state a step marks, its screen, a script to run.</dd>
-    <dt data-highlight=".flow-side.open .expr-input">Conditions and settings</dt>
-    <dd>Written as data, such as <code>{"gt": [{"context": "lot.qty"}, 5]}</code>; outlined red until it
-    reads correctly.</dd>
+    <dd>Pick one: the state a step marks, its screen, the template a sub flow runs, a script to run.</dd>
+    <dt data-highlight=".flow-side.open .expr-input">Values written as data</dt>
+    <dd>Settings, resources, what a sub flow passes and takes back, a query's parameters (and an input
+    flow's conditions) are written as JSON, such as <code>{"context": "lot.product"}</code>; outlined red
+    until it reads correctly.</dd>
+    <dt data-highlight=".flow-side.open > div > div.small">Goes on to</dt>
+    <dd>The wires leaving this node; click one to open its settings.</dd>
+    <dt data-highlight=".flow-side.open button[title='Click the node it goes to']">Wire from here…</dt>
+    <dd>Starts a wire from this node: then click the node it goes to. An End has none.</dd>
+    <dt data-highlight=".flow-side.open .view-actions .btn.ghost">Remove the node</dt>
+    <dd>Takes the node out, with every wire to and from it, after you confirm.</dd>
+    <dt data-highlight=".flow-side.open p.error">Its problems</dt>
+    <dd>What is wrong with this node, in words, under its settings.</dd>
+  </dl>
+
+  <h3>Conditions</h3>
+  <dl>
+    <dt data-highlight=".flow-side.open .expr-field, .ed-grid .expr-field">A condition</dt>
+    <dd>A start's, a wire's or the template's early end, built from what the run reads: its context, its
+    values and the fields of its records. The box shows it in words; empty, it shows what none means
+    (always, otherwise, never).</dd>
+    <dt data-highlight=".expr-rule">Edit (or Add a condition)</dt>
+    <dd>Click the box or Edit to open it as rows: a field, a comparison and a value or another field. Done
+    closes it.</dd>
+    <dt data-highlight=".expr-builder .expr-row">A row</dt>
+    <dd>Pick what it reads, how it compares, and the value; × removes the row.</dd>
+    <dt data-highlight=".expr-builder .expr-group">All of these, any of these, none of these</dt>
+    <dd>A group of rows; its drop-down says how they combine. × removes the group.</dd>
+    <dt data-highlight=".expr-add">+ condition, + group, + from a pattern…</dt>
+    <dd>Adds a row, a group, or a common condition (is in state, is one of, is empty, is between…) filled in
+    with what this place reads.</dd>
+    <dt data-highlight=".expr-json">JSON</dt>
+    <dd>The same condition as JSON, applied as soon as it reads; empty means none.</dd>
+    <dt data-highlight=".expr-try">Try</dt>
+    <dd>Type a value for each thing it reads and see whether it holds, and why.</dd>
+    <dt data-highlight=".expr-problem">Its problems</dt>
+    <dd>What does not fit: JSON that does not read, or something this place cannot read (a field the run
+    does not have).</dd>
+  </dl>
+
+  <h3>Each kind's settings</h3>
+  <dl>
+    <dt data-highlight="[aria-label='For travelers where'], [aria-label='For events where']">Start: For travelers where, For events where</dt>
+    <dd>A route takes up a traveler made where this holds (at its step, if it is part-way); a plan's runs
+    start where it holds. Empty: always.</dd>
+    <dt data-highlight="[aria-label='For events where'] + label.ed-field">Start: Due on</dt>
+    <dd>A plan: a date field of its subject. When that date arrives, the plan sets off by itself, where the
+    condition also holds.</dd>
+    <dt data-highlight=".flow-side.open > div > label:not(.ed-field)">Start: sets off again</dt>
+    <dd>A plan: sets off again for a record once its last run there has ended.</dd>
+    <dt data-highlight="[aria-label='Done here']">Sequence: Done here</dt>
+    <dd>The transactions offered on a traveler at this step; elsewhere they are refused.</dd>
+    <dt data-highlight="[aria-label='…taking it on']">Sequence: …taking it on</dt>
+    <dd>Once one of these has run, the traveler goes on by this node's wire.</dd>
+    <dt data-highlight="[aria-label='…taking it on'] + label.ed-field">Sequence: Marks its state</dt>
+    <dd>The state the traveler is put in on entering, or left as it is.</dd>
+    <dt data-highlight="[aria-label='…taking it on'] + label.ed-field + label.ed-field">Sequence: On resources where</dt>
+    <dd>The fields a resource must have to work it here, such as <code>{"process": ["die_saw"]}</code>;
+    another is refused. Empty: any.</dd>
+    <dt data-highlight="[aria-label='…taking it on'] + label.ed-field + label.ed-field + label.ed-field">Sequence: Settings</dt>
+    <dd>Values for this step, such as limits, read by its transactions as <code>{"node": "lsl"}</code>.</dd>
+    <dt data-highlight="[aria-label='…taking it on'] + label.ed-field + label.ed-field + label.ed-field + label.ed-field">Sequence: Its screen</dt>
+    <dd>The screen opened for this step, or none.</dd>
+    <dt>Sequence: In the guide at</dt>
+    <dd>Where this step is in the route's guide: a page of a PDF (3) or a moment of a video (0:45). A screen's
+    file block that follows this route shows the step there, ticked once the lot has gone on.</dd>
+    <dt data-highlight="input[placeholder='Is the saw blade worn?']">Manual decision: Asks</dt>
+    <dd>The question the person answers by picking one of its wires.</dd>
+    <dt data-highlight="[aria-label='Who']">Who</dt>
+    <dd>On a manual decision, an acknowledged wait and an input screen: tick the departments and groups who
+    act on it.</dd>
+    <dt data-highlight="input[placeholder='Let the oven cool down']">Wait: Shows</dt>
+    <dd>The message shown while it waits.</dd>
+    <dt data-highlight=".flow-side.open input[type='number']">Wait: For (seconds)</dt>
+    <dd>How long it waits; the time remaining is shown.</dd>
+    <dt data-highlight=".flow-side.open h4 + .ed-field + span + .ed-field + .ed-field + .ed-field">Wait: When the time is up</dt>
+    <dd>It goes on by itself, waits for someone to acknowledge, or waits with a Retry that goes back. For
+    Retry, wire its way back and tick that wire as the retry wire.</dd>
+    <dt data-highlight=".flow-side.open h4 + .ed-field + span + .ed-field">Sub flow: Runs</dt>
+    <dd>The template it runs, of the same kind: a route runs another route for the same traveler, which
+    goes through its steps and comes back; a plan waits for the other plan to end.</dd>
+    <dt data-highlight=".flow-side.open [placeholder*='lot.id']">Sub flow: Passes</dt>
+    <dd>Values into its context: <code>{ name: expression }</code>.</dd>
+    <dt data-highlight=".flow-side.open [placeholder*='verdict']">Sub flow: Takes back</dt>
+    <dd>Values from its context when it ends: <code>{ name here: its name there }</code>.</dd>
+    <dt data-highlight="input[placeholder='shipped']">End: Outcome</dt>
+    <dd>The word the run ends with, such as shipped or scrapped.</dd>
+  </dl>
+
+  <h3>An input screen's fields</h3>
+  <dl>
+    <dt data-highlight="input[placeholder^='Measure the kerf']">Asks</dt>
+    <dd>What the person is asked to do, shown above the fields.</dd>
+    <dt data-highlight="[aria-label='Collects']">Collects</dt>
+    <dd>One row per field, in the order the screen shows them. What the person enters is kept in the context
+    under each field's name.</dd>
+    <dt data-highlight=".flow-input-row input[title='Its name in the context']">Name</dt>
+    <dd>Its name in the context, read by the decisions after as <code>{"context": "name"}</code>.</dd>
+    <dt data-highlight=".flow-input-row input[placeholder='Label']">Label</dt>
+    <dd>What the person sees beside the field.</dd>
+    <dt data-highlight=".flow-input-row > select">Type</dt>
+    <dd>Text, a whole or decimal number, yes or no, a list of choices, a file, an image, a link, or from a
+    query.</dd>
+    <dt data-highlight=".flow-input-row > .pick">Choices</dt>
+    <dd>For a list: type a choice and press Enter or pick <em>Add "…"</em>; × removes one.</dd>
+    <dt data-highlight=".flow-input-row > label.small">required</dt>
+    <dd>Ticked, the screen cannot be sent without it.</dd>
+    <dt data-highlight=".flow-input-row button[title='Earlier on the screen']">up</dt>
+    <dd>Moves the field one place earlier on the screen.</dd>
+    <dt data-highlight=".flow-inputs > .btn">+ a field</dt>
+    <dd>Adds a text field at the end; rename it and pick its type.</dd>
+  </dl>
+
+  <h3>A field from a query</h3>
+  <dl>
+    <dt data-highlight=".flow-query-field > label.ed-field:first-child">Its list from</dt>
+    <dd>A named query (Designer, Queries). Each person sees the rows it gives them.</dd>
+    <dt data-highlight=".flow-query-field input[placeholder='id']">Value (column)</dt>
+    <dd>The column whose value goes into the context; id when empty.</dd>
+    <dt data-highlight="[aria-label='Shown (columns)']">Shown (columns)</dt>
+    <dd>The columns the person sees, joined in this order. Type a column and press Enter.</dd>
+    <dt data-highlight=".flow-query-field .ed-row > :last-child">Between them</dt>
+    <dd>What separates the shown columns, · when empty.</dd>
+    <dt data-highlight=".flow-query-field > .ed-row ~ label.ed-field">The query's parameters</dt>
+    <dd>Each parameter it declares (* if required), from the run's context
+    (<code>{"context": "lot.product"}</code>), the person (<code>{"user": "id"}</code>) or a value.</dd>
+  </dl>
+
+  <h3>An input flow's settings</h3>
+  <dl>
+    <dt data-highlight="[aria-label='Asks for']">Ask: Asks for</dt>
+    <dd>A transaction's input by name. On a screen: <code>param</code> (what it is opened with) or
+    <code>transaction.input</code>. Suggestions appear as you type.</dd>
+    <dt data-highlight="input[placeholder='Scan the lot']">Ask: Prompt</dt>
+    <dd>Shown above the form while it asks; its label otherwise.</dd>
+    <dt data-highlight="[aria-label='Asks for'] + label.ed-field + label.ed-field">Ask: Moves on by</dt>
+    <dd>Enter (a scanner's too), Tab, either, a key of its own, or by itself once complete. A scan always
+    finds its record first.</dd>
+    <dt data-highlight="input[placeholder^='F2']">Ask: The key</dt>
+    <dd>Press it in the box, or type it: F1 to F12, or one character that is not a letter or a digit (a
+    scanner's suffix).</dd>
+    <dt data-highlight="input[max='200']">Ask: Complete at (characters)</dt>
+    <dd>A label of fixed length moves on as soon as it is read whole.</dd>
+    <dt data-highlight="input[placeholder^='LOT']">Ask: …or when it matches</dt>
+    <dd>A regular expression the whole entry matches.</dd>
+    <dt data-highlight=".flow-side.open > div > label:not(.ed-field)">Ask: passed over when already filled</dt>
+    <dd>Ticked, it is skipped when the screen, a row or a fill has filled it already.</dd>
+    <dt data-highlight=".flow-side.open > div > label:not(.ed-field) + label.ed-field">Ask: On an error</dt>
+    <dd>While its field shows an error or is required and empty: the cursor stays, or it goes on
+    regardless.</dd>
+    <dt data-highlight="input[placeholder='good_qty']">Fill: Fills</dt>
+    <dd>The input it fills, named as an ask names one.</dd>
+    <dt data-highlight=".flow-side.open [placeholder*='lookup']">Fill: With</dt>
+    <dd>An expression: <code>{"input": "lot"}</code>, <code>{"lookup": "lot.qty"}</code>,
+    <code>{"param": "equipment"}</code>, or a value.</dd>
+    <dt>Run: Runs, Confirming</dt>
+    <dd>On a screen with several transactions, which one it runs; and whether it waits for Enter on Confirm
+    or confirms at once. A signature is always asked for.</dd>
+    <dt>End: Then</dt>
+    <dd>The start again, for the next one, or stop here.</dd>
+  </dl>
+
+  <h3>A node's scripts</h3>
+  <dl>
     <dt data-highlight=".flow-lifecycle">Scripts</dt>
-    <dd>A rule script run on entering and on leaving the node: the context in and out. What it asks to
-    write goes through the record's own rules.</dd>
+    <dd>A rule script run on entering and on leaving the node: the context in and out. A variable it sets is
+    kept on the run, for the decisions and lists after; what it asks to write goes through the record's own
+    rules, as the template. Not in an input flow.</dd>
+    <dt data-highlight="[aria-label='On entering'] select, [aria-label='On leaving'] select">On entering, On leaving</dt>
+    <dd>Pick a script, or none.</dd>
+    <dt data-highlight=".flow-lifecycle .linkish">New script…, Edit</dt>
+    <dd>New script asks its name and puts it in this change, with a first test case. Edit opens the script
+    under the canvas; Close hides it.</dd>
+    <dt data-highlight=".flow-hook-editor">The script under the canvas</dt>
+    <dd>Its code, whether it compiles, a dry run that changes nothing, and its test cases, which the fitness
+    test runs before the change is submitted.</dd>
+  </dl>
+
+  <h3>A wire's settings</h3>
+  <dl>
+    <dt data-highlight=".flow-side.open h4">From → to</dt>
+    <dd>The two nodes it joins.</dd>
+    <dt data-highlight="[aria-label='Taken when']">Taken when</dt>
+    <dd>From an auto decision: its wires are tried in order, and the first that holds is taken. Leave the
+    last empty for otherwise.</dd>
+    <dt data-highlight=".flow-side.open .view-actions .btn:not(.ghost)">Try earlier</dt>
+    <dd>From an auto decision: moves this wire one place up, to be tried sooner.</dd>
+    <dt data-highlight="input[placeholder='Scrap the lot']">The choice</dt>
+    <dd>From a manual decision: what the person sees and picks.</dd>
+    <dt data-highlight=".flow-side.open > div > label:not(.ed-field)">the way back, behind its Retry button</dt>
+    <dd>From a wait that retries: tick it on the wire that goes back.</dd>
+    <dt data-highlight=".flow-side.open .view-actions .btn.ghost">Remove the wire</dt>
+    <dd>Takes the wire out, after you confirm.</dd>
+  </dl>
+
+  <h3>General</h3>
+  <dl>
+    <dt data-highlight="input[placeholder='Back-end route']">Label</dt>
+    <dd>The template's name, as people see it.</dd>
+    <dt data-highlight=".ed-grid > :nth-child(2)">Kind</dt>
+    <dd>A route, a plan (OCAP) or an input flow. It decides the palette and the tabs. A template nobody has drawn on yet, made an input
+    flow, starts with an ask, a run and an end, ready to change.</dd>
+    <dt data-highlight="textarea[placeholder='What it is for']">Description</dt>
+    <dd>What it is for, in a few words.</dd>
+    <dt data-highlight=".ed-grid > :nth-child(4)">Runs</dt>
+    <dd>A route: on its own, taking up the travelers its start names, or only inside another route as its
+    sub flow (a rework loop, a test segment drawn once). A sub route needs no scenario of its own.</dd>
+    <dt data-highlight="[aria-label='Ends early when']">Ends early when</dt>
+    <dd>Checked after each write to the traveler, such as when it is merged or scrapped: the run ends there.
+    Empty: never.</dd>
+  </dl>
+
+  <h3>Context</h3>
+  <dl>
+    <dt data-highlight=".subtabs .subtab:nth-child(5)">Context</dt>
+    <dd>What every run carries, read by its decisions as <code>{"context": "name"}</code>.</dd>
+    <dt data-highlight=".editor-head + div > table.grid">The list</dt>
+    <dd>Its records (from Participants), the values it starts with, and what its input screens collect and
+    its sub flows return.</dd>
+    <dt data-highlight=".editor-head + div > table.grid td:first-child input">A value's name</dt>
+    <dd>Rename it here; a name already in use is not taken.</dd>
+    <dt data-highlight=".editor-head + div > table.grid td:nth-child(2) input">Its value</dt>
+    <dd>What a run starts with: a number, true or false, or text. Its scripts may change it.</dd>
+    <dt data-highlight=".editor-head + div > .btn">+ a value</dt>
+    <dd>Adds a value, starting at 0.</dd>
+  </dl>
+
+  <h3>Participants</h3>
+  <dl>
+    <dt data-highlight=".subtabs .subtab:nth-child(6)">Participants</dt>
+    <dd>The records the template works with, in its context by these names: the traveler going through it,
+    the resources it is worked on, its subject, what it reads.</dd>
+    <dt data-highlight=".editor-head + div > table.grid td:nth-child(2) select">Object</dt>
+    <dd>Only objects whose design says they take part in flows (on their General tab) are offered.</dd>
+    <dt data-highlight=".editor-head + div > table.grid td:nth-child(3) select">Takes part as</dt>
+    <dd>Traveler, resource, subject or reference, among those its object allows.</dd>
+    <dt data-highlight=".editor-head + div > table.grid td:nth-child(4) select">From</dt>
+    <dd>Its own record, or the one another participant's field points to.</dd>
+    <dt data-highlight=".editor-head + div > .btn">+ a record</dt>
+    <dd>Adds a participant.</dd>
+    <dt data-highlight=".editor-head + div > div:last-child .checks">What the template itself may do</dt>
+    <dd>The roles it acts with, per object, when it marks a step or a state and when its scripts write. Give
+    it the least it needs.</dd>
+  </dl>
+
+  <h3>Scenarios</h3>
+  <dl>
+    <dt data-highlight=".subtabs .subtab:nth-child(7)">Scenarios</dt>
+    <dd>Its evidence: a record walked through it in a sandbox, each step expecting the node reached. The
+    fitness test runs them on every submit; a new or changed template without one, or with one that fails,
+    is not submitted. A plan set off only as a sub flow needs none.</dd>
+    <dt data-highlight=".editor-head + div > a.btn">Make one in the sandbox</dt>
+    <dd>Opens the sandbox on this template, to walk a record through it and save the scenario.</dd>
+    <dt data-highlight=".scenario-list > li">A scenario</dt>
+    <dd>Its name, passed or failed at the last fitness test, its records, and its steps with what each
+    expects. A failure says why.</dd>
+    <dt data-highlight=".scenario-list a">open in the sandbox</dt>
+    <dd>Opens it in the sandbox to run or change it.</dd>
+    <dt data-highlight=".scenario-list .linkish">remove</dt>
+    <dd>Takes it out of the template, after you confirm.</dd>
+  </dl>
+
+  <h3>Stewards</h3>
+  <dl>
+    <dt data-highlight=".editor-head + div > .checks">Stewards</dt>
+    <dd>Tick the departments that approve a change to this template. The stewards of the transactions it
+    offers and of the objects it may write approve it too.</dd>
+  </dl>
+
+  <h3>JSON</h3>
+  <dl>
+    <dt data-highlight=".code-editor">The template as JSON</dt>
+    <dd>All of it as data, for integrators.</dd>
+    <dt data-highlight=".code-editor + .btn">Apply JSON</dt>
+    <dd>Replaces the draft with what you wrote (its name must stay); every check runs on it. If it does not
+    read, an error says why and the draft stays as it was.</dd>
   </dl>
 </article>

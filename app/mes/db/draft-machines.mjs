@@ -13,11 +13,12 @@
 // transitions, the via policy and a form section), so nothing already designed is lost. A reset
 // database has all of it from the seed already; this is for a database that grew by changes.
 import pg from "pg";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createStore } from "../server/store.js";
 import { createDesign } from "../server/design.js";
 import { appendAudit } from "../server/audit.js";
 import { openInterval, dimsOf } from "../server/analytics.js";
+import { platformWrites, resealRecords } from "../server/integrity.js";
 import { definitions, transactions, screens, assignments, records } from "./seed.mjs";
 
 const TITLE = "Machines, the lot's machine transactions, and their screens";
@@ -34,8 +35,10 @@ try {
         if (n) { console.log(`${n} machine(s) already there; nothing to do.`); process.exit(0); }
         const def = (await db.query("SELECT body FROM mes.definitions WHERE object = 'machine' AND status = 'published'"))[0].body;
         await db.transaction(async (tx) => {
+            await platformWrites(tx);
             for (const r of records.filter((x) => x.object === "machine")) {
                 const [row] = await tx.query("INSERT INTO mes.records (object, def_version, state, data, created_by, updated_by) VALUES ('machine', $1, $2, $3, 'sam', 'sam') RETURNING id", [machineLive.version, r.state, JSON.stringify(r.data)]);
+                await resealRecords(tx, "machine", [row.id]);
                 await appendAudit(tx, { actor: "sam", object: "machine", recordId: row.id, defVersion: machineLive.version, action: "create", after: { ...r.data, state: r.state } });
                 await openInterval(tx, { object: "machine", recordId: row.id, state: r.state, by: "sam", action: "create", dims: dimsOf(def, r.data) });
                 console.log(`machine ${r.data.machine_id} (${r.data.name}, capacity ${r.data.capacity})`);

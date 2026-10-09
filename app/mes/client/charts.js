@@ -146,7 +146,9 @@ export function chartOption(spec, data, theme) {
     const whole = (values) => values.length > 0 && values.every((v) => v === null || v === "-" || Number.isInteger(v));
     const valueAxis = (extra = {}) => ({ type: spec.log ? "log" : "value", min: spec.min, max: spec.max, axisLabel: { color: theme.muted, formatter: (v) => theme.number(v) }, splitLine: { lineStyle: { color: theme.line } }, ...extra });
     const catAxis = (data, extra = {}) => ({ type: "category", data, axisLabel: { color: theme.muted, hideOverlap: true }, axisLine: { lineStyle: { color: theme.line } }, axisTick: { alignWithLabel: true }, ...extra });
-    const marked = (s, along = "yAxis") => ({
+    // Reference lines and bands, drawn once: on the first series (`along` its value axis); the others pass "none"
+    // and carry none (a mark line on an axis that is not one is no line: ECharts then draws none of that series).
+    const marked = (s, along = "yAxis") => (along === "none" ? s : {
         ...s,
         ...(spec.marks?.length ? { markLine: { symbol: "none", silent: true, data: spec.marks.map((m) => ({ [along]: m.value, lineStyle: { color: tone(m.tone), type: "dashed", width: 1.5 }, label: { formatter: textOnly(m.label ?? theme.number(m.value)), color: tone(m.tone), position: "insideEndTop" } })) } } : {}),
         ...(spec.bands?.length ? { markArea: { silent: true, data: spec.bands.map((b) => [{ [along]: b.from, name: textOnly(b.label ?? ""), itemStyle: { color: tone(b.tone), opacity: 0.12 }, label: { color: tone(b.tone) } }, { [along]: b.to }]) } } : {}),

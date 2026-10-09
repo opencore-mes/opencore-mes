@@ -43,13 +43,13 @@ test("a form's guide: each field's control in words, required and filled in said
     assert.equal(fields.length, 6);
     assert.match(fields[0].words, /A scan field: scan the lot's barcode.*Required: marked \*/);
     assert.equal(fields[0].highlight, '[data-guide="field:lot"]');
-    assert.match(fields[1].words, /A drop-down: open it and pick the machine\. Filled in for you from lot's machine/);
+    assert.match(fields[1].words, /A search box: type at least 2 letters of the machine's name, then pick it from the matches.*Filled in for you from lot's machine/);
     assert.match(fields[2].words, /A checkbox: ticked means yes/);
     assert.match(fields[3].words, /Radio buttons: pick exactly one \(a, b\)/);
     assert.match(fields[4].words, /A text box/);
     assert.match(fields[5].words, /A table: one line per entry/);
     const controls = g.sections.find((s) => s.title === "The controls on this form").items;
-    assert.deepEqual(controls.map((c) => c.label), ["Scan field", "Drop-down", "Checkbox", "Radio buttons", "Text box", "Table"]);
+    assert.deepEqual(controls.map((c) => c.label), ["Scan field", "Search box", "Checkbox", "Radio buttons", "Text box", "Table"]);
     assert.match(controls[0].words, /the record's barcode/);
 });
 

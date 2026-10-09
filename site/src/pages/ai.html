@@ -1,0 +1,57 @@
+<!-- {"title": "AI · OpenCore MES", "description": "An answer about the floor takes a report request and a week. In OpenCore MES anyone allowed asks in plain words and gets a report from live data; in the designer, an AI drafts changes that people approve."} -->
+<main>
+  <section class="page-hero hero">
+    <div class="wrap">
+      <span class="eyebrow problem">The problem</span>
+      <h1>An answer about the floor takes a week.</h1>
+      <p class="lede">A report request, a queue, a spreadsheet out of date by the time it arrives. And AI you cannot let near production data.</p>
+    </div>
+  </section>
+
+  <section class="sol alt" id="reports">
+    <div class="wrap">
+      <span class="eyebrow">Solution</span>
+      <h2 style="margin-top:16px">Ask the plant. Get a report.</h2>
+      <p class="sub">Plain words in; a page of sentences, figures, charts and tables out, from live records.</p>
+      <ul class="live-points">
+        <li><b>With the asker's rights</b><span>It reads only what they may read; every query audited.</span></li>
+        <li><b>It reads, never changes</b><span>Advice only; acting is a person's transaction.</span></li>
+        <li><b>AI assisted lines</b><span>Give a line its shift goal; it says which lots first, and why.</span></li>
+        <li><b>Every morning by itself</b><span>Keep a prompt; have it asked on a schedule.</span></li>
+        <li><b>Layouts your engineers approve</b><span>The blocks and their order, designed like any screen.</span></li>
+        <li><b>Photos, specs, spreadsheets</b><span>Attach them; it compares them with the line.</span></li>
+      </ul>
+      <p class="in-demo" style="margin-top:20px"><span>In the demo:</span> <a href="https://demo.opencoremes.com/reports" target="_blank" rel="noopener">Ask for a report<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></p>
+    </div>
+  </section>
+
+  <section class="sol ai" id="copilot">
+    <div class="wrap">
+      <div>
+        <span class="eyebrow">Solution</span>
+        <h2 style="margin-top:16px">AI drafts. People decide.</h2>
+        <p class="sub">Describe what the plant needs; the AI drafts it as a change for people to approve.</p>
+        <ul class="ai-points">
+          <li><svg class="icon"><use href="#i-sparkle"/></svg><div><b>Drafts, checks, tests</b><span>Fields, rules with their tests, screens, routes.</span></div></li>
+          <li><svg class="icon"><use href="#i-eye"/></svg><div><b>Marked on the record</b><span>Reviewers see what the AI wrote.</span></div></li>
+          <li><svg class="icon"><use href="#i-user-check"/></svg><div><b>Never the one who signs</b><span>It never reviews, approves or makes anything live.</span></div></li>
+          <li><svg class="icon"><use href="#i-plug"/></svg><div><b>Claude, or your own model</b><span>Or any model your company runs itself.</span></div></li>
+        </ul>
+        <p class="in-demo" style="margin-top:20px"><span>In the demo:</span> <a href="https://demo.opencoremes.com/design" target="_blank" rel="noopener">The designer and its copilot<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></p>
+      </div>
+      <div class="chat" role="img" aria-label="The OpenCore MES copilot drafting a change: a hold reason on lots, with a rule and its tests">
+        <div class="head"><svg class="icon"><use href="#i-sparkle"/></svg>Copilot · Change Lot</div>
+        <div class="msg me">Quality wants to put a lot on hold when contamination is suspected, with the reason recorded.</div>
+        <div class="msg ai">Drafted in this change:
+          <ul>
+            <li>a field <code>hold_reason</code> on Lot, required on hold</li>
+            <li>the rule <code>lot_hold_needs_reason.js</code>, 3 tests pass</li>
+            <li>Hold for Quality and Production supervisors</li>
+          </ul>
+          It needs Production and Quality to approve.
+        </div>
+        <div class="drafted"><span class="chip"><svg class="icon"><use href="#i-sparkle"/></svg>Drafted with AI · 3 elements</span><span>visible to reviewers</span></div>
+      </div>
+    </div>
+  </section>
+</main>

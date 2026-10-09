@@ -18,8 +18,13 @@ export default {
         locks: { person: { fields: ["hello_nickname"], why: "Hello greets people by their nickname." } },
         // A sample on a record the pack does not make: found, and set (test/reset-suites.mjs).
         records: [{ object: "person", find: { user: "olga" }, set: { hello_nickname: "Ollie" } }],
+        // A group of its own, made empty for the plant to fill, holding the role it suggests (test/reset-suites.mjs).
+        groups: { hello_greeters: { name: "Greeters", seedMembers: ["olga", "nobody_here"] } },
+        // A named query of its own, published by a seeding reset with the rest (test/reset-suites.mjs).
+        queries: [{ name: "hello_people", label: "People to greet", description: "", sql: "SELECT id, name FROM person ORDER BY name", params: {}, limit: 100, tests: [{ name: "all", params: {} }], stewards: ["engineering"] }],
+        roles: { person: { viewer: ["group:hello_greeters"] } },
     },
-    register({ db, fail, records, appendAudit, store, scripts, elements }) {
+    register({ db, fail, records, appendAudit, store, scripts, elements, files }) {
         const viewer = (self, as) => records.internals.requireViewer(self, as);
         return {
             // A flow node kind of its own (§32.9): a station that greets, behaving as an operation.
@@ -46,6 +51,12 @@ export default {
                 async "hello.cards"({ as } = {}) {
                     await viewer(this, as);
                     return (await elements.published("hello.card")).map((e) => ({ name: e.name, version: e.version, to: e.body.to, message: e.body.message }));
+                },
+                // A note kept as a file of its own (ctx.files.keep): a CSV of the notes, in the file store.
+                async "hello.keepNotes"() {
+                    await viewer(this);
+                    const rows = await db.query("SELECT id, text FROM mes.hello_notes ORDER BY id");
+                    return files.keep(Buffer.from(["id,text", ...rows.map((r) => `${r.id},"${String(r.text).replace(/"/g, '""')}"`)].join("\n") + "\n"), "hello notes.csv");
                 },
                 async "hello.add"({ text } = {}) {
                     const user = await viewer(this);
@@ -137,7 +148,7 @@ export default {
                 if (user.id === "eli") throw new Error("the alerts cannot be read");
                 return user.id === "dana" ? [{ id: "welcome", title: "Hello, Dana", what: "An alert from the hello suite", link: "/design" }, { id: "nowhere", title: "No link" }] : [];
             },
-            touches: { "hello.notes": [], "hello.add": [{ name: "hello.notes" }], "hello.greet": [], "hello.cards": [] },
+            touches: { "hello.notes": [], "hello.add": [{ name: "hello.notes" }], "hello.keepNotes": [], "hello.greet": [], "hello.cards": [] },
             designs: { object: { validate } },
             queries: ["hello.notes"],
         };

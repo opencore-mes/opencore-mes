@@ -1,6 +1,6 @@
 # OpenCore MES: the application
 
-A thin vertical slice of the design on Node 24, PostgreSQL and Juris (`src/`). Plain
+A thin vertical slice of the design on Node 24, PostgreSQL and Juris (`@opencore-mes/juris-kit`, from npm). Plain
 JavaScript, no build step.
 
 ## Run it
@@ -60,7 +60,7 @@ when they may review one (hover for which):
 | Dana Reyes | Engineering | designer |
 | Eli Brandt | Engineering | reviewer |
 | ERP integration | — | work order planner, lot viewer: an integration user, for services (below) |
-| Ivan Kim, Ines Ortega | IT | design reviewers; IT approves in two steps: Ivan (Specialist), then Ines (Manager) |
+| Ivan Kim, Ines Ortega | IT | design reviewers; IT approves in two steps: Ivan (Specialist), then Ines (Manager); Ines is the privacy officer (Data retention: the purge's report, erasure, §27.8) |
 | Iris Hale | IT | designer and reviewer, analyst, sign-in administrator; reads every record (§27.7), writes none; designs services and connections with the copilot; not IT's approver |
 
 Sam, Quinn and Eli are reviewers, and the representatives of Production, Quality and Engineering who
@@ -86,6 +86,10 @@ stewarded by the department of its area, not by its author's.
 | People & departments (§27): the organization as one design element (people, departments with members and ordered approval steps, groups, role assignments, governance, standing approvers), changed through a change request approved by whom it affects, and written to the tables at execution. Departments approve in steps (IT: Specialist → Manager), each by a different person; standing approvers join every change of a kind (IT on connections and services). Seed: IT (Ivan Kim, Ines Ortega) | `server/organization.js`, `client/organization-editor.js`, `test/organization.mjs`, `test/organization.test.mjs` |
 | Dates, times and numbers (§27.6): the plant's formats (date format, 24/12 hours, locale for numbers, first day of the week, time zone) set on People & departments' **Formats** tab and approved by governance; every page reads and writes them through one module, date fields take the plant's format or a calendar, and nothing stored changes | `client/format.js`, `test/format.test.mjs`, `test/formats.mjs` |
 | Themes (§10.8): every colour a token, light and dark; a state's tone (ok, warn, danger, info, neutral) in its object's design, never a colour; the plant's theme in People & departments (name, label, colours checked for contrast, and light or dark for everyone, or each person's choice), written into the page before its first byte | `client/theme.js`, `client/app.css`, `client/shell.js`, `client/organization-editor.js`, `test/theme.test.mjs`, `test/themes.mjs` |
+| Named queries (§23.1): a SELECT over the query views with parameters by name, designed, tried and approved like a screen, run as whoever it is for; a plan's input screen draws a dropdown from one (value column, display columns joined), its parameters bound to the run's context, which a node's script may set (New script… in the flow designer) | `client/query-def.js`, `client/query-editor.js`, `server/query.js` (`runNamed`), `server/flows.js`, `test/named-queries.mjs` |
+| Emergency changes (§5.7, COMPLIANCE.md G15): submitted as an emergency with a reason, one signature executes it, reviewed afterwards (a reviewer, then each department confirms or flags) within a set number of days; overdue ones flagged, flagged ones rolled back | `server/design.js`, `client/emergency.js`, `client/emergency-panel.js`, `test/emergency.mjs` |
+| Sensitive fields (§6.10): a field marked `sensitive` is masked wherever records are shown or leave, shown only with a reason (each showing audited), and never in the query views, analytics, the copilots or the audit trail's values | `server/policy.js`, `server/services.js` (`records.reveal`), `test/sensitive.mjs` |
+| Data retention and erasure (§27.8, COMPLIANCE.md G11): a period per kind of data on People & departments' **Retention** tab (days or forever; defaults keep everything but sign-in leftovers, 30 days, and answers kept for retries, 90), approved by governance; the audit trail at least six years and as long as the records. The instance that schedules removes what is past them every six hours, in one transaction per run, summarised in the audit trail and the event log in numbers; records and the audit trail are counted, never removed. **Data retention** (privacy officers, `privacy`): the periods, what would go, the last runs, the purge run now, and `records.erase`: the fields an object marks `erasable` replaced by "[erased]" on one record, audited by name, never by value | `client/retention.js`, `server/retention.js`, `client/retention-page.js`, `db/migrate-retention.sql`, `test/retention.test.mjs`, `test/retention.mjs` |
 | Dialogs (§10.6): one modal at a time from any screen, `confirmDialog` / `askDialog` (text, number, date or a choice; required; a check), focus kept inside, Esc cancels, Enter confirms, focus restored; used for archive, reload with unsaved edits, reject and ask-for-changes (a reason required), withdraw, taking a review back | `client/dialog.js` |
 | Lists as they scroll (§10.1): an object's list 50 at a time, more as its end comes into view, each page live; the database pages, sorts (the definition's `list.sort`) and filters over every record, with the person's rights compiled into the query, so screens' numbers and breakdowns are exact and an old record is found at any size; indexes by last change, state, the record's JSON and its text (`pg_trgm`); text sorts with numbers in number order (`client/sort.js`); screen tables hold up to 1 000 rows and draw 25 at a time | `server/services.js` records.list, `server/record-sql.js`, `db/migrate-record-indexes.sql`, `client/records.js`, `client/sort.js`, `test/lists.mjs` |
 | Screens (§26): pages composed of fixed blocks (record, table, number, breakdown, an embedded transaction, text), each a design element opened at `/s/<name>[/<value>]` with at most one parameter (a machine, scanned). Every block reads with the viewer's own rights; a table's row buttons run transactions inline; live on every record write; a draft previews with the designer's rights. Seed: **Work centre** and **Shop floor**. A design may let its page fill the window (`maximize`: a Maximize button, or opening so), hiding the navigator, top bar and tabs on a tablet or a board. Any screen opens as a dialog over the page (a button block, or a pop-up); a pop-up opens a screen by itself over a transaction, a screen or every page, for the people named, while its condition holds over the page, and closes when it stops holding (`popups.for`, live); it decides nothing | `server/screens.js`, `client/screen.js`, `client/screen-editor.js`, `test/screens.mjs`, `test/screens.test.mjs`, `test/popups.mjs` |
@@ -130,11 +134,9 @@ disposition, and watch Olga's screen follow.
 
 ## Not built yet
 
-- **Parts of the lifecycle (§5):** no emergency route, no effective time, no post-execution
-  verification, no data migrations (a change that removes or retypes a field holding data is
-  refused).
-- **E-signatures (§7.4)**: an approval is recorded with its meaning and the content hash, but without
-  re-entering credentials. Password ageing and SAML (§8.2). Groups beyond departments, scopes (site/area/line).
+- **Parts of the lifecycle (§5):** no effective time, no post-execution verification, no data
+  migrations (a change that removes or retypes a field holding data is refused).
+- SAML (§8.2). Groups beyond departments, scopes (site/area/line).
 - Decision tables.
 - Decimals are JSON numbers here; the design stores exact decimals.
 
@@ -158,15 +160,50 @@ is set in the environment (`server.mjs`), any of these together:
 | `PASSWORD_MAX_DAYS`, `PASSWORD_HISTORY` | 90, 5 | A password of its own, and a signing password, expire; a new one may not repeat the last few |
 | `MFA` | `optional` | `required` or `off`: an authenticator app's code after a password sign-in (theirs or the directory's), with recovery codes |
 | `SESSION_IDLE_MINUTES` | 30 | A session with nothing done for this long ends (12 hours in any case) |
+| `PASSWORD_LINK_DAYS` | 3 | How long a one-time password link lasts unless its maker says (1 to 14 days) |
+| `SEAL_KEY` or `SEAL_KEY_FILE` | none | 64 hex characters (`openssl rand -hex 32`), kept outside the database and its backups: authenticators' secrets are sealed under it (AES-256-GCM). Those kept before: `node app/mes/db/seal-secrets.mjs` |
+| `INTEGRITY_KEY` or `INTEGRITY_KEY_FILE` | none | 64 hex characters (`openssl rand -hex 32`), apart from `SEAL_KEY`, kept outside the database and its backups: each record's seal is made under it (the data integrity review, DESIGN.md §7.7). Without it the seals are plain digests, which find a careless edit, not a deliberate one. Changed, a reviewer seals everything again (Design → Data integrity) |
+| `SETUP=1` | off | A new installation being set up (DESIGN.md §5.15): at its first start, a designer's change executes on their signature, without review or approval, until People & departments ends setup (Approvals). Ignored, and said so, where any change was already reviewed and approved. Leaving it set after setup ends changes nothing |
+| `INTEGRITY_FULL_HOURS` | 168 | How often the data integrity scan reads every record (it reads what was written every 15 minutes) |
+
+**A plant's own installation** starts empty and is entered by one person IT names (DESIGN.md §27.1a):
+
+```bash
+opencore-mes db reset --yes --empty                  # nobody in it yet: node app/mes/db/reset.mjs --empty
+opencore-mes admin ann "Ann Example" --url https://mes.plant   # node app/mes/db/admin.mjs …
+```
+
+Ann is designer, reviewer and sign-in administrator, approver for Engineering (which governs), and gets a
+one-time link to set her password (`--no-password` when she signs in through SSO or the directory). Setup is
+open (§5.15): her changes execute on her signature while she adds the plant's people and roles, and ends
+setup once someone else can review. Refused once anybody is in People & departments.
 
 Sign-in administrators (the role *administrator* on *Sign-in* in People & departments; Iris in the seed)
 issue password links, reset second factors, lift locks and end sessions on **Design → Sign-in
-administration**, and see ids locked and password spraying there and in their inbox. A token for an
-integration lasts `--days` (90 by default, at most 365): `node app/mes/db/token.mjs erp "ERP" --days 365`.
+administration**, download setup codes (five letters for a printed slip, typed with the sign-in id under
+**I have a setup code** on the sign-in page) for everyone who has no password yet and has never signed
+in, and see ids locked and password spraying there and in their inbox. A token for an integration lasts `--days` (90 by default, at most 365): `node app/mes/db/token.mjs erp "ERP" --days 365`.
+
+**Mail to approving departments** (DESIGN §28.6). A department's mailbox (People & departments, Email)
+is told when a change to a record waits for it. `SMTP_URL` is the plant's mail server:
+`smtp://user:password@host:587` (STARTTLS, which it must offer before the user and password are sent) or
+`smtps://…:465`; `MAIL_FROM` the sender (`OpenCore MES <mes@plant.example>`); `PUBLIC_URL` where people
+open the MES, for the links (`https://mes.plant.example`). Messages wait in `mes.mail_outbox`, sent by the
+instance that runs the outbox, tried again on a failure (1, 5, 15, 60 minutes…) and given up after eight
+tries with why. With no `SMTP_URL` each message is written to the journal instead (development, tests).
+
+**Alerts and the audit trail's protection** (COMPLIANCE.md G3, G9). `ALERT_WEBHOOK_URL` receives each
+event at or above `ALERT_MIN_SEVERITY` (`error` by default: the database down, the audit chain broken, a
+crash, a trigger given up on) as `{ text, event }`, which a chat channel's incoming webhook shows as is;
+the same kind is sent at most once in ten minutes. Each is also one `alert {…}` JSON line in the journal,
+for whatever ships logs off the machine. `/healthz` says whether the audit chain verifies (`audit`,
+checked every 15 minutes; `node app/mes/db/verify-audit.mjs --full` by hand). In production, a database
+administrator runs `ops/db/protect-audit.sql` once, so the application's own role can add to the audit
+trail but never change it (`ops/db/README.md`). Backups and their restore test: `ops/backup/README.md`.
 
 **Trying single sign-on**: `npm run sso:sim` runs an OpenID Connect provider for development and training
 (never production; `app/mes/sso-sim.mjs`): start OpenCore MES with `OIDC_ISSUER=http://127.0.0.1:9095
-OIDC_CLIENT_ID=open-mes PICKER=0`, and sign in as a seeded person with the password `sso-sim` (`--mfa`
+OIDC_CLIENT_ID=opencore-mes PICKER=0`, and sign in as a seeded person with the password `sso-sim` (`--mfa`
 asks a code too, `--users people.json` other people).
 
 **A desktop's page.** A record of the built-in **Desktop** object maps a computer's IP address to the
@@ -183,6 +220,23 @@ any instance started with `SIMPLE_LISTS=1` (a test instance).
 A person with a password here signs in with it; anyone else with the directory's. Five wrong passwords
 lock the sign-in id for 15 minutes. Sign-ins, refusals (and why), sign-outs and passwords set are in the
 audit trail under `$auth`. The server says at start which ways are on.
+
+## The Database area: statements, plans, indexes
+
+Every statement the platform sends is counted (`server/sql-stats.js`; DESIGN §38) and shown, with its
+plans, the tables and the indexes, at **Design → Database** to whoever People & departments makes a
+database administrator (Roles: Database). Nothing to set up for that. Two PostgreSQL extensions add to it
+where IT installs them:
+
+- **pg_stat_statements** (the database's own statistics, every client's statements): add it to
+  `shared_preload_libraries` in `postgresql.conf`, restart PostgreSQL, then `CREATE EXTENSION
+  pg_stat_statements;` in the plant's database.
+- **HypoPG** (each proposed index tried as a hypothetical one before it is built): install the package for
+  your PostgreSQL version (`postgresql-17-hypopg` on Debian and Ubuntu), then `CREATE EXTENSION hypopg;`.
+
+An index proposed by the AI (when one is set up, `AI_PROVIDER`) is a description the server turns into a
+statement; an administrator builds it (`CREATE INDEX CONCURRENTLY`), saying why, in the audit trail. Plans
+need PostgreSQL 16 or later (`EXPLAIN (GENERIC_PLAN)`).
 
 ## Read scaling with a replica
 
@@ -201,8 +255,8 @@ pg_ctl -D .local/pg/primary -l .local/pg/primary.log start
 pg_basebackup -h /tmp -p 5434 -D .local/pg/replica -R -X stream   # then port 5435
 pg_ctl -D .local/pg/replica -l .local/pg/replica.log start
 
-DATABASE_URL="postgresql://%2Ftmp:5434/openmes_repl" npm run db:reset
-DATABASE_URL="postgresql://%2Ftmp:5434/openmes_repl" REPLICA_URL="postgresql://%2Ftmp:5435/openmes_repl" PORT=3300 npm run dev
+DATABASE_URL="postgresql://%2Ftmp:5434/opencore_mes_repl" npm run db:reset
+DATABASE_URL="postgresql://%2Ftmp:5434/opencore_mes_repl" REPLICA_URL="postgresql://%2Ftmp:5435/opencore_mes_repl" PORT=3300 npm run dev
 ```
 
 **Measured on 2026-09-29.** One Node instance, PostgreSQL 17 primary and replica, a laptop.
@@ -252,7 +306,7 @@ affected live queries on every instance. The pieces that make that correct:
   the cloud balancer with the same rule.
 
 ```bash
-export DATABASE_URL="postgresql://%2Ftmp:5434/openmes_repl" REPLICA_URL="postgresql://%2Ftmp:5435/openmes_repl" BUS=1
+export DATABASE_URL="postgresql://%2Ftmp:5434/opencore_mes_repl" REPLICA_URL="postgresql://%2Ftmp:5435/opencore_mes_repl" BUS=1
 INSTANCE=n1 PORT=3401 npm run dev &  INSTANCE=n2 PORT=3402 npm run dev &  INSTANCE=n3 PORT=3403 npm run dev &
 LB_PORT=3400 BACKENDS=127.0.0.1:3401,127.0.0.1:3402,127.0.0.1:3403 node app/mes/lb.mjs
 node app/mes/test/cluster.mjs 100      # A/B/C default to 3401/3402/3403
@@ -273,6 +327,24 @@ The last row is the next piece of work. Every instance hears every save and re-r
 lists for it, so adding instances spreads the viewers but not that per-save cost. The fixes are
 narrower targets (per record, per line), cheaper list re-runs (the rows that changed, not the list),
 and a short coalescing window for busy lists.
+
+## Load tests: lot moves a second
+
+`ops/load/moves.mjs` sends moves through the HTTP API as people would (no browser), open loop: moves start on the
+clock whether or not the earlier ones are done, so a server that falls behind shows it. It starts its own servers
+(production mode, on 127.0.0.1) on a database whose name says test, and reports every 10 seconds: moves and
+transactions a second, each transaction's p95, the servers' CPU and memory, what the database's busy connections
+wait on, its size and the disk's room (it stops itself under `MIN_FREE_GB`).
+
+```bash
+DATABASE_URL=postgres:///openmes_loadtest RAMP=100:50:120:800 node ops/load/moves.mjs --reset
+```
+
+`RATE` (steady), `RAMP` (from:step:seconds:to, judged step by step, stopping at the knee) or `BURST`
+(base:peak:seconds:every, a shift's start); `INSTANCES` servers on the change bus; `PROFILE` what a move is
+(`machines`, the seed's four transactions; `cmos`, a step of a fab's CMOS route on a copy of its database,
+`--copy-from <url>`). `ops/load/stats.mjs` sums a run up; `ops/load/heap.mjs` samples a server's heap after a
+full collection, for leaks.
 
 ## AI as a designer: the REST API
 
@@ -379,6 +451,25 @@ A refusal by a rule or the script answers 422 with its words and fields; a retry
 `Idempotency-Key` answers the first result again; a retry sent while the first call is still running
 is answered 409 (`idempotency.running`, with `Retry-After`), never run a second time.
 
+A transaction or a named query its design publishes over HTTP answers at its own name too (DESIGN.md §25.7,
+§23.3): give the token `transaction:run` or `query:run` (`--scope`, again for several):
+
+```bash
+node app/mes/db/token.mjs erp "ERP lots" --scope transaction:run --scope query:run
+```
+
+```bash
+curl -s -X POST http://127.0.0.1:9090/svc/v1/<transaction> -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -H "Idempotency-Key: lot-4713-in" -d '{"lot": "4713", "machine": "M-101"}'
+```
+
+```bash
+curl -s "http://127.0.0.1:9090/svc/v1/<query>?state=created&limit=50" -H "Authorization: Bearer $TOKEN"
+```
+
+A reference is sent as its record's id or its title; `POST /svc/v1/<transaction>/preview` says what it would
+change, writing nothing; a query answers `{ columns, rows, next }`, a page at a time. Every call, by the web or a
+page, is counted in the Database area's **Calls** (§38.1).
+
 **The fitness test**: a change is submitted only when it passes. It checks
 validation, that scripts compile and call only what they will have, and that every new or changed
 script has test cases that pass. It warns about existing records the draft would no longer let be
@@ -389,6 +480,20 @@ test case with **Save as test case**.
 integration designed, approved by engineering, production and quality, then called (wrong caller, bad
 input, a quantity the work order's own rule refuses, a good order, a retry), and a lot's release
 confirmed to ERP, including while ERP is down.
+
+## Shown in a frame by another site
+
+A site the plant names may show OpenCore MES in a frame beside its own content (a course, a work
+instruction) and talk to it by window messages: the contract `embedding` 1.0
+([`docs/contracts/embedding`](../../docs/contracts/embedding/README.md), DESIGN.md §37).
+`EMBED_ORIGINS=https://trainings.example.com` (origins only, comma-separated) names them; unset, no site
+may frame it. The framed page tells the site who is signed in and where they go, and outlines what the site
+names by its visible label; nothing else. Sign-in works in the frame when both sites share a registrable
+domain. `node docs/contracts/embedding/kit.mjs --url <this> --origin <the site>` checks it.
+
+A public training plant beside a course site (`ops/demo/training.env`) is a demo with more guests per
+address (`DEMO_GUEST_LIMITS=60/600/3000`: a classroom often reaches it from one address); a reader's token
+for the course site's checks: `node app/mes/db/token.mjs <user> <name> --scope design:read --quiet`.
 
 ## Scripts: the runner's walls
 
@@ -401,7 +506,7 @@ no network at all, and nothing of the machine to read. On Linux:
 
 ```bash
 apt-get install bubblewrap        # dnf install bubblewrap
-install -m 0644 ops/script-runner-sandbox.apparmor /etc/apparmor.d/open-mes-bwrap && apparmor_parser -r /etc/apparmor.d/open-mes-bwrap   # Ubuntu 23.10 and later
+install -m 0644 ops/script-runner-sandbox.apparmor /etc/apparmor.d/opencore-mes-bwrap && apparmor_parser -r /etc/apparmor.d/opencore-mes-bwrap   # Ubuntu 23.10 and later
 ```
 
 then, in the server's environment, `SCRIPT_RUNNER_WRAP=ops/script-runner-sandbox.sh` (the path from

@@ -14,11 +14,11 @@
 //
 //   DATABASE_URL=postgres:///openmes_poc node app/mes/test/transfer.mjs
 import pg from "pg";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createStore } from "../server/store.js";
 import { createServices } from "../server/services.js";
 import { createTransfer } from "../server/transfer.js";
-import { CALL_KIND } from "../../../src/live-protocol.js";
+import { CALL_KIND } from "@opencore-mes/juris-kit/live-protocol.js";
 import { writeXlsx, readXlsx } from "../server/xlsx.js";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL ?? "postgres:///openmes_poc" });

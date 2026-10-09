@@ -5,10 +5,10 @@
 //
 //   DATABASE_URL=postgres:///openmes_test node app/mes/test/demo.mjs   (after a reset)
 import pg from "pg";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 import { sessionKey } from "../server/store.js";
-import { addGuest } from "../db/guest.mjs";
+import { addGuest, keepGuestsWhole } from "../db/guest.mjs";
 import { PSEUDO_ROLES } from "../client/definition.js";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL ?? "postgres:///openmes_poc" });
@@ -66,12 +66,12 @@ try {
     const made = await addGuest(db);
     const again = await addGuest(db);
     const [{ n: departmentCount }] = await db.query("SELECT count(*)::int AS n FROM mes.groups WHERE kind = 'department'");
-    const declared = [...Object.entries(PSEUDO_ROLES).flatMap(([o, roles]) => roles.map((r) => `${o}:${r}`)), ...(await db.query("SELECT object, body->'roles' AS roles FROM mes.definitions WHERE status = 'published'")).flatMap((d) => (d.roles ?? []).map((r) => `${d.object}:${r}`))];
+    const declared = [...Object.entries(PSEUDO_ROLES).filter(([o]) => o !== "privacy" && o !== "integrity").flatMap(([o, roles]) => roles.map((r) => `${o}:${r}`)), ...(await db.query("SELECT object, body->'roles' AS roles FROM mes.definitions WHERE status = 'published'")).flatMap((d) => (d.roles ?? []).map((r) => `${d.object}:${r}`))];
     const held = new Set((await db.query("SELECT object, role FROM mes.assignments WHERE subject_kind = 'group' AND subject_id = 'guests'")).map((a) => `${a.object}:${a.role}`));
     const [{ n: groups }] = await db.query("SELECT count(*)::int AS n FROM mes.groups g WHERE (g.id = 'guests' OR g.kind = 'department') AND NOT EXISTS (SELECT 1 FROM mes.group_members m WHERE m.group_id = g.id AND m.user_id = 'guest')");
     const [{ n: departments }] = await db.query("SELECT count(*)::int AS n FROM mes.groups g WHERE g.kind = 'department' AND NOT EXISTS (SELECT 1 FROM mes.department_reps r WHERE r.group_id = g.id AND r.user_id = 'guest')");
     const [person] = await db.query("SELECT 1 FROM mes.records WHERE object = 'person' AND archived_at IS NULL AND data->>'user_id' = 'guest'").catch(() => [null]);
-    step("the group Guests holds every role every published object declares, the designer's, the reviewer's, the query page's and sign-in administration; the shared guest is in it and in every department, and approves for each; a second run changes nothing",
+    step("the group Guests holds every role every published object declares, the designer's, the reviewer's, the query page's and sign-in administration (not the privacy officer's, nor the integrity reviewer's); the shared guest is in it and in every department, and approves for each; a second run changes nothing",
         declared.length > 10 && declared.every((r) => held.has(r)) && groups === 0 && departments === 0 && made.given === declared.length && again.given === 0, { made, again, missing: declared.filter((r) => !held.has(r)), groups, departments, person });
     const guestApp = await createApp({ db, dev: false, demo: true, demoAs: "guest", build: "test", outboxEveryMs: 0, schedulerEveryMs: 0 });
     apps.push(guestApp);
@@ -117,6 +117,15 @@ try {
     const mineListed = await pick(one.cookie, [one.user]);
     step("the picker lists no visitor's guest, but the one this browser arrived as (kept among its picks), so a visitor can come back to it",
         !plainList.some((id) => id.startsWith("guest_")) && mineListed.includes(one.user) && !mineListed.includes(two.user), { plainList: plainList.filter((id) => id.startsWith("guest")), mineListed: mineListed.filter((id) => id.startsWith("guest")) });
+    // A training plant's guests follow what changes make live (DEMO_GUESTS_FOLLOW=1, §6.9): a role the group
+    // lacks is given and audited; nothing when it lacks none.
+    await db.query("DELETE FROM mes.assignments WHERE subject_kind = 'group' AND subject_id = 'guests' AND object = 'lot' AND role = 'viewer'");
+    const followed = await keepGuestsWhole(db);
+    const [back] = await db.query("SELECT 1 FROM mes.assignments WHERE subject_kind = 'group' AND subject_id = 'guests' AND object = 'lot' AND role = 'viewer'");
+    const followedAgain = await keepGuestsWhole(db);
+    const [said] = await db.query("SELECT after FROM mes.audit_log WHERE action = 'demo:guest roles' ORDER BY seq DESC LIMIT 1");
+    step("a training plant's guests take up a role they lack once a change is executed, audited; nothing more when they lack none",
+        followed.some(([o, r]) => o === "lot" && r === "viewer") && back && followedAgain.length === 0 && JSON.stringify(said?.after ?? null).includes("viewer"), { followed, followedAgain, said });
 } catch (error) {
     step("the test ran to the end", false, { error: error.stack ?? error.message });
 } finally {

@@ -8,14 +8,16 @@ import { rulesFor } from "./rules-client.js";
 import { dbDown, noteFailure, outcomeUnknown, NO_ANSWER } from "./db-status.js";
 import { normalizeForm } from "./form-layout.js";
 import { evaluate, referencesOf } from "./expr.js";
-import { confirmDialog } from "./dialog.js";
+import { confirmDialog, askDialog } from "./dialog.js";
 import { reasonFor, sentWords } from "./requests.js";
-import { needsApproval, recordRoute } from "./definition.js";
-import { plant } from "./format.js";
+import { needsApproval, recordRoute, isHidden, lengthOf } from "./definition.js";
+import { plant, noun as nounOf } from "./format.js";
 import { icon } from "./icons.js";
 import { stateBadgeClass } from "./theme.js";
-import { flowRunMap, useRunMap } from "./flow-picture.js";
+import { useRunMap, routeMaps } from "./flow-picture.js";
 
+// A text box that grows with what is typed (its layout's maxRows), up to its largest height (app.css .grows).
+const grow = (el) => { if (!el?.classList?.contains("grows")) return; el.style.height = "auto"; el.style.height = `${el.scrollHeight + 2}px`; };
 const REASONS = {
     state: "not in this state",
     role: "not your role",
@@ -28,6 +30,14 @@ const REASONS = {
     managed: "kept in People & departments",
 };
 
+// Where a derived field (§6.11) comes from, in words: "kept from Product → control" (a path), or
+// "worked out from its references" (an expression).
+function derivedWords(def, derived) {
+    if (typeof derived !== "string") return "worked out from its references";
+    const [head, ...rest] = derived.split(".");
+    return `kept from ${[def.fields?.[head]?.label ?? head, ...rest.map((p) => p.replace(/_/g, " "))].join(" → ")}`;
+}
+
 // What a form holds that its object's design says waits for approval (§28): the fields changed (a new
 // record: the fields filled in) and whether they wait, read leaf by leaf so the form follows each edit.
 // → { changed: [names], spec, waits } (waits false: a plain save).
@@ -39,9 +49,12 @@ function pendingOf(api, f, def, rec) {
     const value = (n) => api.getState(`${f}.data.${n}`, null);
     const blank = (v) => v === undefined || v === null || v === "" || (Array.isArray(v) && !v.length);
     const changed = rec
-        ? names.filter((n) => JSON.stringify(value(n) ?? null) !== JSON.stringify(rec[n] ?? null))
+        ? names.filter((n) => JSON.stringify(value(n) ?? null) !== JSON.stringify(baseOf(api, f, rec, n) ?? null))
         : names.filter((n) => !blank(value(n)));
-    const spec = rec ? { op: "edit", state: rec.state, changed } : { op: "create", changed };
+    // The record's value that says who approves (§28.3a), as it is and as edited.
+    const by = def.approval?.by?.field;
+    const asked = by ? { [by]: value(by) } : null;
+    const spec = rec ? { op: "edit", state: rec.state, changed, now: rec, asked } : { op: "create", changed, asked };
     return { changed, spec, waits: changed.length > 0 && needsApproval(def, spec) };
 }
 
@@ -49,12 +62,25 @@ function pendingOf(api, f, def, rec) {
 const requestWords = (r) => {
     const a = r.after ?? {};
     const kind = r.action.slice("request:".length);
-    if (kind === "edit" || kind === "create" || kind === "action") return `${kind === "create" ? "New record" : kind === "action" ? `${a.action}` : "Change"} sent for approval by ${(a.route ?? []).join(", ")}`;
+    if (kind === "edit" || kind === "create" || kind === "action" || kind === "archive" || kind === "restore") return `${kind === "create" ? "New record" : kind === "action" ? `${a.action}` : kind === "archive" ? "Archiving" : kind === "restore" ? "Restoring" : "Change"} sent for approval by ${(a.route ?? []).join(", ")}`;
     if (kind === "approve") return `Approved for ${a.department}${a.step && a.step !== "Approver" ? ` (${a.step})` : ""}`;
     if (kind === "reject") return `Rejected for ${a.department}`;
     return { applied: "Approved change applied", void: "Approved change void: not applied", rejected: "Change rejected", withdrawn: "Change withdrawn" }[kind] ?? r.action;
 };
+// A value in the history: a sensitive one (§6.10) as hidden; the audit trail never holds it.
+const historyValue = (v) => (v === undefined || v === null || v === "" ? "—" : isHidden(v) ? "hidden" : v);
 const newKey = () => (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
+
+// What a form's field held when it was read: a sensitive one (§6.10) shown on this page, its value as
+// shown (`${f}.shown`); otherwise the record's, its marker for one not shown.
+const baseOf = (api, f, rec, name) => {
+    const shown = api.peek(`${f}.shown`);
+    return shown && Object.hasOwn(shown, name) ? shown[name] : rec?.[name];
+};
+const HIDDEN_WORDS = "Hidden: sensitive";
+// The form's sensitive fields are drawn hidden or shown by what its data holds: told to look again
+// whenever that changes as a whole (read, shown, saved, discarded), never on each key typed.
+const rehide = (api, f) => api.setValue(`${f}.shownAt`, (api.peek(`${f}.shownAt`) ?? 0) + 1);
 
 // A list (one state, no actions): its records have no lifecycle, so no state is shown.
 export const isList = (def) => (def?.states?.list?.length ?? 0) <= 1 && !(def?.states?.transitions ?? []).length;
@@ -63,12 +89,14 @@ function display(def, row, name) {
     const field = def?.fields?.[name];
     const value = row?.[name];
     if (value === undefined || value === null || value === "") return "—";
+    if (isHidden(value)) return HIDDEN_WORDS;
     if (field?.type === "ref") return row.$titles?.[name] ?? "(not visible to you)";
     if (Array.isArray(value)) return value.length ? value.join(", ") : "—";
     if (field?.type === "boolean") return value ? "yes" : "no";
     if (field?.type === "decimal" || field?.type === "integer") return plant().number(value);
     if (field?.type === "date") return plant().date(value);
     if (field?.type === "image") return "picture";
+    if (field?.type === "file") return "file";
     return String(value);
 }
 
@@ -91,7 +119,12 @@ function parseInput(field, raw) {
 
 // One field's input, drawn with its widget (form-layout.js WIDGETS). Every widget writes through
 // onChange (as typed) and onCommit (a finished edit), as the plain input always did.
-function control(api, { id, f, name, field, entry, disabled, value, onChange, onCommit }) {
+function control(api, { id, f, name, field, entry, disabled, value, onChange, onCommit, record = null, form = null }) {
+    // A reference whose choices come from a named query (§23.1): searched among the query's rows, whatever its widget.
+    if (field.type === "ref" && field.options?.query && entry.widget !== "scan") {
+        const source = form?.transaction ? { transaction: form.transaction, name } : { object: form?.object, name };
+        return { RefSearch: { id, f, name, to: field.to, noun: field.label, disabled, placeholder: entry.placeholder ?? "Pick one of its choices…", minChars: 0, source, onPick: (v) => { onChange(name, v); onCommit(name); } } };
+    }
     const set = (v) => { onChange(name, v); onCommit(name); };
     const choice = (v) => (Array.isArray(value(name)) ? value(name) : []).includes(v);
     const toggle = (v, on) => {
@@ -115,7 +148,7 @@ function control(api, { id, f, name, field, entry, disabled, value, onChange, on
         case "yesno":
             return { div: { id, className: "choice-list inline", role: "radiogroup", children: [[true, "Yes"], [false, "No"]].map(([v, l]) => ({ label: { key: l, children: [{ input: { type: "radio", name: id, disabled, checked: () => value(name) === v, onchange: () => set(v) } }, { span: ` ${l}` }] } })) } };
         case "search":
-            return { RefSearch: { id, f, name, to: field.to, noun: field.label, disabled, placeholder: entry.placeholder, onPick: (v) => set(v) } };
+            return { RefSearch: { id, f, name, to: field.to, noun: field.label, disabled, placeholder: entry.placeholder, minChars: entry.minChars, onPick: (v) => set(v) } };
         case "scan":
             return { ScanField: { id, f, name, to: field.to, noun: field.label, disabled, placeholder: entry.placeholder, onPick: (v) => set(v) } };
         case "stepper": {
@@ -137,11 +170,17 @@ function control(api, { id, f, name, field, entry, disabled, value, onChange, on
     if (field.type === "ref") return { RefField: { id, f, name, to: field.to, disabled, onPick: (v) => set(v) } };
     // A picture (§35): shown, and uploaded to the picture store by whoever may write the field.
     if (field.type === "image") return { ImageField: { id, f, name, disabled, onPick: (v) => set(v) } };
+    // A file (§35.4): shown small (or here, on asking), uploaded, replaced or taken off; read through its record once saved.
+    if (field.type === "file") return { FileField: { id, f, name, field, record, disabled, onPick: (v) => set(v) } };
     // A date, written and typed the plant's way (§27.6), kept as YYYY-MM-DD.
     if (field.type === "date") return { DateField: { id, f, name, disabled, onPick: (v) => set(v) } };
-    if (field.type === "text") return { textarea: { id, rows: entry.rows ?? 3, placeholder: entry.placeholder ?? "", disabled, value: () => value(name) ?? "", oninput: (e) => onChange(name, parseInput(field, e.target.value)), onchange: () => onCommit(name) } };
+    // A long text: as high as its layout's rows at least, growing with what is typed up to maxRows, then
+    // scrolling; no longer than the field allows (lengthOf), the count shown under it once it nears that.
+    if (field.type === "text") return { div: { className: "text-box", children: [{ textarea: { id, rows: entry.rows ?? 3, maxLength: lengthOf(field), placeholder: entry.placeholder ?? "", disabled,
+        className: entry.maxRows ? "grows" : "", style: entry.maxRows ? { "--max-rows": String(entry.maxRows), "--rows": String(entry.rows ?? 3) } : undefined,
+        value: () => value(name) ?? "", oninput: (e) => { grow(e.target); onChange(name, parseInput(field, e.target.value)); }, onfocus: (e) => grow(e.target), onchange: (e) => { if (typeof e.target.value === "string" && e.target.value && !e.target.value.trim()) onChange(name, parseInput(field, "")); onCommit(name); } } }, { span: { className: "small muted text-count", textContent: () => { const n = String(value(name) ?? "").length; return n >= lengthOf(field) * 0.8 ? `${n} / ${lengthOf(field)}` : ""; } } }] } };
     const type = { decimal: "number", integer: "number", date: "date" }[field.type] ?? "text";
-    return { input: { id, type, step: field.type === "decimal" ? "any" : undefined, placeholder: entry.placeholder ?? "", disabled, value: () => (value(name) ?? "").toString(), oninput: (e) => onChange(name, parseInput(field, e.target.value)), onchange: () => onCommit(name) } };
+    return { input: { id, type, step: field.type === "decimal" ? "any" : undefined, maxLength: type === "text" ? lengthOf(field) : undefined, placeholder: entry.placeholder ?? "", disabled, value: () => (value(name) ?? "").toString(), oninput: (e) => onChange(name, parseInput(field, e.target.value)), onchange: (e) => { if (typeof e.target.value === "string" && e.target.value !== e.target.value.trim()) onChange(name, parseInput(field, e.target.value.trim())); onCommit(name); } } };
 }
 
 // The record page's guide, before its fields (§33): its head, its buttons, where it is on a route.
@@ -150,11 +189,60 @@ const recordLead = () => [{ title: "The record", items: [
     { label: "Live", words: "Shown while what you see follows every change as it is made, by anyone.", highlight: ".record-head .live-badge, .record-head .live" },
     { label: "Its buttons", words: "The actions you may take on it now, and the transactions that appear on it in this state. One missing? The … button says why.", highlight: ".record-head .actions" },
     { label: "Where it is on its route", words: "The flow template it goes along, the step it is at, and its way there. Stopped: why, and what to do.", highlight: ".flow-position-box:not(.none) .flow-position" },
-    { label: "Show the route", words: "The route as it was designed, with this record's way on it: the steps it went through filled in, the wires it took marked, where it is now outlined, a step set by hand shown off route. Point at a step for when it was there.", highlight: ".flow-position-box:not(.none) .flow-map-toggle, .flow-position-box .flow-run-map" },
+    { label: "Show the route", words: "The route as it was designed, with this record's way on it: the steps it went through filled in, the wires it took marked, where it is now outlined, a step set by hand shown off route. Point at a step for when it was there; click a sub flow to open its own map, and the line above it to go back up.", highlight: ".flow-position-box:not(.none) .flow-map-toggle, .flow-position-box .flow-run-map" },
     { label: "Details, timeline, history", words: "Its fields; its states over time; every change made to it, by whom and when.", highlight: ".subtabs" },
 ] }];
 
 export function registerRecords(juris, { args }) {
+    // A sensitive field's value (§6.10): "Hidden: sensitive" and Show, which asks why and then shows it
+    // here while this stays on the page (records.reveal records each showing, with who and why). With
+    // `onShown(value)` the caller takes it instead (a form, to edit it). Used by lists, forms, screens.
+    juris.registerComponent("SensitiveValue", ({ object, id, field, label = field, type = "string", onShown = null }, api) => {
+        // Kept by the record and field it is of, never by the component's place on the page (a list's
+        // rows move, and a value must never be drawn on another record's row), and gone with it.
+        const path = `sv.${object}.${id}.${field}`;
+        const value = () => api.getState(path, undefined);
+        const setValue = (v) => api.setValue(path, v);
+        api.onCleanup(() => api.deleteState(path));
+        const [busy, setBusy] = api.useState("busy", false);
+        const [error, setError] = api.useState("error", "");
+        const show = async (e) => {
+            e?.preventDefault?.();
+            e?.stopPropagation?.();
+            const reason = await askDialog(api, {
+                title: `Show ${label}?`,
+                message: `${label} is sensitive. Say why you need to see it: who saw it, when and why is recorded. It is shown on this page only, until you leave it.`,
+                label: "Why", required: true, multiline: true, confirm: "Show",
+                check: (v) => (String(v ?? "").trim().length < 4 ? "Say why, in a few words." : null),
+            });
+            if (reason === null) return;
+            setBusy(true);
+            setError("");
+            try {
+                const out = await api.call("records.reveal", { object, id, field, reason });
+                if (onShown) onShown(out?.value ?? null);
+                else setValue(out?.value ?? null);
+            } catch (failure) {
+                noteFailure(api, failure);
+                setError(failure?.message ?? "It could not be shown.");
+            } finally {
+                setBusy(false);
+            }
+        };
+        return {
+            span: {
+                className: "sensitive-value",
+                children: () => (value() !== undefined
+                    ? [{ span: { key: "v", textContent: display({ fields: { [field]: { type } } }, { [field]: value() }, field) } }]
+                    : [
+                        { span: { key: "h", className: "muted icon-text", children: [icon("lock"), { span: HIDDEN_WORDS }] } },
+                        { button: { key: "b", type: "button", className: "linkish", textContent: () => (busy() ? "Showing…" : "Show"), disabled: () => busy(), title: `Show ${label}: you will be asked why`, onclick: show } },
+                        { span: { key: "e", className: "field-error", textContent: () => error() } },
+                    ]),
+            },
+        };
+    });
+
     // A date field (§27.6): typed in the plant's format (DD.MM.YYYY, MM/DD/YYYY, …) or as YYYY-MM-DD,
     // or chosen on the browser's calendar (📅); stored as YYYY-MM-DD. What does not read as a real
     // date in that format is said so, and kept as typed until it does.
@@ -225,10 +313,45 @@ export function registerRecords(juris, { args }) {
         const [loaded, setLoaded] = api.useState("loaded", 1);
         const [gen, setGen] = api.useState("gen", 0);
         const pathOf = (k) => `d.${object}.list.g${gen()}.p${k}`;
+        // A new filter or order asks again from page 1, but the answer it replaces stays on screen until
+        // the new one arrives, then they swap at once: no empty table, no button or count that blinks out
+        // and back at every pause in typing. `was`: the generation shown meanwhile.
+        const [was, setWas] = api.useState("was", 0);
+        const prevOf = (k) => `d.${object}.list.g${was()}.p${k}`;
+        const arrived = () => api.getState(`${pathOf(1)}.rows`, null) !== null;
+        const shownOf = (k) => (arrived() ? pathOf(k) : prevOf(k));
+        const [wasAsked, setWasAsked] = api.useState("wasAsked", "");
+        const again = () => { setWas(gen()); setLoaded(1); setGen(gen() + 1); };
         let timer = null;
-        const typed = (text) => { setQuery(text); clearTimeout(timer); timer = setTimeout(() => api.batch(() => { setAsked(text.trim()); setLoaded(1); setGen(gen() + 1); }), 300); };
+        const typed = (text) => { setQuery(text); clearTimeout(timer); timer = setTimeout(() => api.batch(() => { setWasAsked(asked()); setAsked(text.trim()); again(); }), 300); };
         api.onCleanup(() => clearTimeout(timer));
         const [showArchived, setShowArchived] = api.useState("archived", false);
+        // The person's own order (a column's head clicked: ascending, descending, then the design's again),
+        // remembered in this browser per list; the database sorts it, over every record (records.list).
+        const sortKey = `mes.sort.${object}`;
+        const remembered = (() => { try { const v = JSON.parse(globalThis.localStorage?.getItem(sortKey) ?? "null"); return v && typeof v.field === "string" ? v : null; } catch { return null; } })();
+        const [sortBy, setSortBy] = api.useState("sort", api.isServer ? null : remembered);
+        const sortOn = (field) => {
+            const now = sortBy();
+            const next = now?.field !== field ? { field, dir: "asc" } : now.dir === "asc" ? { field, dir: "desc" } : null;
+            try { if (next) globalThis.localStorage?.setItem(sortKey, JSON.stringify(next)); else globalThis.localStorage?.removeItem(sortKey); } catch { /* private window: not remembered */ }
+            api.batch(() => { setWasAsked(asked()); setSortBy(next); again(); });
+        };
+        // A column's head: a button that sorts by it (not a sensitive field, a picture or a file), its arrow
+        // saying how the list is sorted now (the person's order, else the design's).
+        const sortHead = (def, field, label) => {
+            const f = def.fields?.[field];
+            const can = field === "state" || (f && !f.sensitive && !["image", "file"].includes(f.type));
+            if (!can) return { th: label };
+            const now = sortBy() ?? (def.list?.sort?.field ? { field: def.list.sort.field, dir: def.list.sort.dir ?? "asc" } : null);
+            const on = now?.field === field;
+            return { th: { key: field, "aria-sort": on ? (now.dir === "desc" ? "descending" : "ascending") : "none", children: [{ button: {
+                type: "button", className: `sort-head${on ? " on" : ""}`,
+                title: on ? (now.dir === "asc" ? `Sorted by ${label}, A to Z (lowest first): click for Z to A` : `Sorted by ${label}, Z to A (highest first): click for the list's own order`) : `Sort by ${label}`,
+                onclick: () => sortOn(field),
+                children: [{ span: label }, on ? icon(now.dir === "desc" ? "arrowDown" : "arrowUp", { className: "sort-arrow" }) : icon("arrowDown", { className: "sort-arrow idle" })],
+            } }] } };
+        };
         // Search first (the design's list.searchFirst): nothing until something is typed, except where
         // lists are simple (development, the demo, test instances).
         const searchFirst = (def) => Boolean(def?.list?.searchFirst) && !asked() && !api.getState("simpleLists", false);
@@ -245,15 +368,24 @@ export function registerRecords(juris, { args }) {
                             className: "view-head",
                             children: [
                                 { h1: () => api.getState(`${defPath}.label`, object) },
-                                () => ({ LiveBadge: { key: `lb${gen()}`, path: pathOf(1) } }),
-                                { span: { className: "muted", textContent: () => api.getState(`${defPath}.description`, "") } },
+                                () => ({ LiveBadge: { key: `lb${arrived() ? gen() : was()}`, path: shownOf(1) } }),
+                                { p: { className: "muted view-about", textContent: () => api.getState(`${defPath}.description`, "") } },
+                            ],
+                        },
+                    },
+                    // The list's own bar, under what it is: find first (where the eye starts), what it shows, then
+                    // what can be done with it, the new record last and most visible.
+                    {
+                        div: {
+                            className: "list-bar",
+                            children: [
+                                { input: { type: "search", className: "filter", placeholder: () => { const n = nounOf(api.getState(`${defPath}.label`, object) ?? object); return `Find ${/^[aeiou]/i.test(n) ? "an" : "a"} ${n}…`; }, "aria-label": "Find in this list", value: () => query(), oninput: (e) => typed(e.target.value) } },
+                                { label: { className: "muted small", children: [{ input: { type: "checkbox", checked: () => showArchived(), onchange: (e) => setShowArchived(e.target.checked) } }, { span: " Show archived" }] } },
                                 { span: { className: "spacer" } },
-                                { input: { type: "search", className: "filter", placeholder: "Filter…", value: () => query(), oninput: (e) => typed(e.target.value) } },
                                 { Link: { to: `/o/${object}/analytics`, className: "btn ghost", textContent: "Analytics" } },
                                 // Excel (§24): this model and the records it refers to, as the file's own download.
                                 { a: { href: `/transfer/export.xlsx?objects=${object}&related=1`, download: "", className: "btn ghost", textContent: "Export" } },
-                                { label: { className: "muted small", children: [{ input: { type: "checkbox", checked: () => showArchived(), onchange: (e) => setShowArchived(e.target.checked) } }, { span: " Show archived" }] } },
-                                () => (api.getState(`${pathOf(1)}.canCreate`, false) ? { Link: { to: `/o/${object}/new`, className: "btn primary", textContent: "New" } } : { span: {} }),
+                                () => (api.getState(`${shownOf(1)}.canCreate`, false) ? { Link: { to: `/o/${object}/new`, className: "btn primary", textContent: "New" } } : { span: {} }),
                             ],
                         },
                     },
@@ -261,7 +393,17 @@ export function registerRecords(juris, { args }) {
                     () => {
                         const def = api.getState(defPath);
                         if (!def) return { p: { className: "muted", textContent: "Loading…" } };
-                        if (searchFirst(def)) return { p: { className: "muted search-first", textContent: `Type in Filter to find a ${String(def.label ?? object).toLowerCase()}: a name, or any value in its columns.` } };
+                        // Search first: say plainly that the list waits for a search, and what to type (an empty page reads as "none").
+                        if (searchFirst(def)) {
+                            const noun = nounOf(def.label ?? object);
+                            return { div: { className: "search-first", role: "status", children: [
+                                icon("info"),
+                                { div: { children: [
+                                    { strong: `Search to see ${noun} records.` },
+                                    { p: `Type in Filter, above, any part of a value in its columns${(def.list?.columns ?? []).length ? ` (${def.list.columns.map((c) => def.fields?.[c]?.label ?? c).join(", ")})` : ""}. This list waits for a search, so that it stays quick when there are thousands of them.` },
+                                ] } },
+                            ] } };
+                        }
                         const plain = isList(def);
                         const columns = def.list.columns;
                         const g = gen();
@@ -269,8 +411,8 @@ export function registerRecords(juris, { args }) {
                             table: {
                                 className: "grid",
                                 children: [
-                                    { thead: { children: [{ tr: { children: [...columns.map((c) => ({ th: def.fields[c]?.label ?? c })), ...(plain ? [] : [{ th: "State" }])] } }] } },
-                                    ...Array.from({ length: loaded() }, (_, k) => ({ ListPage: { key: `g${g}p${k + 1}`, object, defPath, page: k + 1, q: asked(), pathOf: (j) => `d.${object}.list.g${g}.p${j}` } })),
+                                    { thead: { children: [{ tr: { children: [...columns.map((c) => sortHead(def, c, def.fields[c]?.label ?? c)), ...(plain ? [] : [sortHead(def, "state", "State")])] } }] } },
+                                    ...Array.from({ length: loaded() }, (_, k) => ({ ListPage: { key: `g${g}p${k + 1}`, object, defPath, page: k + 1, q: asked(), sort: sortBy(), pathOf: (j) => `d.${object}.list.g${g}.p${j}`, stand: k === 0 && g > 0 ? prevOf : null } })),
                                 ],
                             },
                         };
@@ -278,12 +420,14 @@ export function registerRecords(juris, { args }) {
                     // How many, and more as the bottom comes into view.
                     () => {
                         if (searchFirst(api.getState(defPath))) return { span: {} };
-                        const last = pathOf(loaded());
+                        // Until the new answer arrives, the count of what is on screen (the one it replaces).
+                        const at = arrived() ? pathOf : prevOf;
+                        const last = at(loaded());
                         const more = api.getState(`${last}.more`, false);
-                        const total = api.getState(`${pathOf(1)}.total`, null);
-                        const shown = Array.from({ length: loaded() }, (_, k) => (api.getState(`${pathOf(k + 1)}.rows.length`, 0) ?? 0)).reduce((a, b) => a + b, 0);
-                        const capped = api.getState(`${pathOf(1)}.capped`, false);
-                        const text = `${total !== null && total !== undefined ? `${shown} of ${total}` : `${shown}${more ? "+" : ""}`} ${asked() ? `matching “${asked()}”` : "records"}${capped && !more ? " (the 5 000 changed last: filter to find older ones)" : ""}`;
+                        const total = api.getState(`${at(1)}.total`, null);
+                        const shown = Array.from({ length: loaded() }, (_, k) => (api.getState(`${at(k + 1)}.rows.length`, 0) ?? 0)).reduce((a, b) => a + b, 0);
+                        const capped = api.getState(`${at(1)}.capped`, false);
+                        const text = `${total !== null && total !== undefined ? `${shown} of ${total}` : `${shown}${more ? "+" : ""}`} ${(arrived() ? asked() : wasAsked()) ? `matching “${arrived() ? asked() : wasAsked()}”` : "records"}${capped && !more ? " (the 5 000 changed last: filter to find older ones)" : ""}`;
                         return {
                             div: { className: "pager", children: [
                                 { span: { className: "muted small", textContent: text } },
@@ -300,26 +444,73 @@ export function registerRecords(juris, { args }) {
 
     // One page of an object's list (records.list with `page`): its rows, as a part of the table. A
     // row that moved up to an earlier page since (it changed) is shown there, not twice.
-    juris.registerComponent("ListPage", ({ object, defPath, page, q, pathOf }, api) => {
+    // `stand` (page 1 of a new filter or order): where the answer it replaces is, shown dimmed until its own arrives.
+    // Fine-grained (§10.1): each record of the answer is kept under its own id (`d.rec.<object>.<id>`), written
+    // leaf by leaf (assign: only what differs is written, so only its readers wake); the page draws its
+    // records' ids, in order, and redraws only when they change (a row moved, came or went: keyed, so moved,
+    // not drawn again); each row reads its own record and each cell its one field. A value that changes
+    // rewrites its cell alone, wherever the record moved in the list.
+    juris.registerComponent("ListPage", ({ object, defPath, page, q, sort = null, pathOf, stand = null }, api) => {
         const as = api.getState("me.id", null, { track: false });
         const path = pathOf(page);
-        api.live(path, "records.list", args.listPage(object, as, page, q));
+        api.live(path, "records.list", args.listPage(object, as, page, q, sort));
+        // The ids in order, beside the answer, not in it: the live layer writes each answer over its path
+        // whole (assign deletes what the answer does not have).
+        const orderOf = (p) => p.replace(".list.", ".listOrder.");
+        const take = () => {
+            const rows = api.peek(`${path}.rows`);
+            if (!Array.isArray(rows)) return;
+            api.batch(() => {
+                for (const r of rows) api.assign(recordPath(object, r.id), r);
+                api.assign(orderOf(path), rows.map((r) => r.id).join(","));
+            });
+        };
+        take();
+        if (!api.isServer) api.onCleanup(api.bindState(() => api.getState(`${path}.stamp`), take));
         return {
             tbody: {
+                className: () => (stand && api.getState(orderOf(path), null) === null ? "refreshing" : ""),
                 children: () => {
-                    api.getState(`${path}.stamp`); // moves whenever any row on it changes
-                    // …and so do the earlier pages': a row moving between pages is shown once, on the
-                    // page it is on now, whichever page's answer arrives first.
-                    for (let j = 1; j < page; j++) api.getState(`${pathOf(j)}.stamp`);
+                    // A row moving between pages is shown once, on the page it is on now.
+                    const own = api.getState(orderOf(path), null);
+                    const order = own ?? (stand ? api.getState(orderOf(stand(1)), null) : null);
+                    for (let j = 1; j < page; j++) api.getState(orderOf(pathOf(j)));
                     const def = api.peek(defPath);
-                    const rows = api.peek(`${path}.rows`);
-                    if (!def || !rows) return page === 1 ? [{ tr: { key: "loading", children: [{ td: { className: "muted", textContent: "Loading…" } }] } }] : [];
+                    if (!def || order === null) return page === 1 ? [{ tr: { key: "loading", children: [{ td: { className: "muted", textContent: "Loading…" } }] } }] : [];
                     const earlier = new Set();
-                    for (let j = 1; j < page; j++) for (const r of api.peek(`${pathOf(j)}.rows`) ?? []) earlier.add(r.id);
-                    const mine = rows.filter((r) => !earlier.has(r.id));
+                    for (let j = 1; j < page; j++) for (const id of String(api.peek(orderOf(pathOf(j))) ?? "").split(",")) if (id) earlier.add(id);
+                    const mine = order.split(",").filter((id) => id && !earlier.has(id));
                     if (page === 1 && !mine.length) return [{ tr: { key: "none", children: [{ td: { colSpan: def.list.columns.length + (isList(def) ? 0 : 1), className: "muted", textContent: q ? `Nothing matches “${q}”.` : "No records you can see." } }] } }];
-                    return mine.map((row) => gridRow(api, object, def, row));
+                    return mine.map((id) => ({ ListRow: { key: id, object, defPath, id } }));
                 },
+            },
+        };
+    });
+
+    // One row of an object's list, reading its own record (ListPage): each cell its field, the state badge
+    // the state, so a change rewrites only what changed.
+    juris.registerComponent("ListRow", ({ object, defPath, id }, api) => {
+        const rec = recordPath(object, id);
+        const def = api.peek(defPath);
+        const columns = def?.list?.columns ?? [];
+        const cell = (c, first) => ({ td: { children: () => {
+            const value = api.getState(`${rec}.${c}`);
+            if (def.fields?.[c]?.type === "ref") api.getState(`${rec}.$titles.${c}`);
+            const row = api.peek(rec) ?? {};
+            if (isHidden(value)) return [{ SensitiveValue: { object, id, field: c, label: def.fields?.[c]?.label ?? c, type: def.fields?.[c]?.type ?? "string" } }];
+            return [first ? { Link: { to: `/o/${object}/${id}`, textContent: display(def, row, c) } } : { span: { textContent: display(def, row, c) } }];
+        } } });
+        return {
+            tr: {
+                className: "row",
+                onclick: () => api.navigate(`/o/${object}/${id}`),
+                children: [
+                    ...columns.map((c, i) => cell(c, i === 0)),
+                    ...(isList(def) ? [] : [{ td: { children: [{ span: {
+                        className: () => stateBadgeClass(api.getState(`${rec}.state`, ""), def.states?.tones),
+                        textContent: () => String(api.getState(`${rec}.state`, "")).replace(/_/g, " "),
+                    } }] } }]),
+                ],
             },
         };
     });
@@ -376,11 +567,22 @@ export function registerRecords(juris, { args }) {
                 const rec = api.peek(recPath);
                 const def = api.peek(defPath);
                 if (!rec || !def) return;
-                if (!api.peek(`${f}.dirty`)) api.setValue(`${f}.data`, pickData(def, rec));
+                // A sensitive value shown here (§6.10) is hidden again once the record moves on: it may
+                // have changed, and the page keeps nothing it was not asked for.
+                if (!api.peek(`${f}.dirty`)) api.batch(() => { api.deleteState(`${f}.shown`); api.setValue(`${f}.data`, pickData(def, rec)); rehide(api, f); });
                 titleTab(api, `/o/${object}/${id}`, rec.$title ?? def.label);
             },
         );
         api.onCleanup(stop);
+        // Leaving the page: what was shown of its sensitive fields goes with it (a form left with unsaved
+        // changes keeps them, as it keeps every edit).
+        api.onCleanup(() => {
+            if (api.peek(`${f}.dirty`)) return;
+            api.deleteState(`${f}.shown`);
+            const def = api.peek(defPath);
+            const rec = api.peek(recPath);
+            if (def && rec) api.batch(() => { api.setValue(`${f}.data`, pickData(def, rec)); rehide(api, f); });
+        });
 
         const form = formController(api, { object, f, defPath, record: () => api.peek(recPath) });
 
@@ -408,7 +610,8 @@ export function registerRecords(juris, { args }) {
             const rec = api.peek(recPath);
             const def = api.peek(defPath);
             const data = api.peek(`${f}.data`) ?? {};
-            const changed = Object.fromEntries(Object.keys(def.fields).filter((n) => JSON.stringify(data[n]) !== JSON.stringify(rec[n])).map((n) => [n, data[n] ?? null]));
+            // Against what was read (a sensitive value as shown); a marker is never sent back as a value.
+            const changed = Object.fromEntries(Object.keys(def.fields).filter((n) => !isHidden(data[n]) && JSON.stringify(data[n]) !== JSON.stringify(baseOf(api, f, rec, n))).map((n) => [n, data[n] ?? null]));
             // A change its object's design says waits for approval (§28): summed up on the form (Changes
             // to submit for approval), with why, and submitted from there.
             const waits = needsApproval(def, { op: "edit", state: rec.state, changed: Object.keys(changed) });
@@ -420,14 +623,18 @@ export function registerRecords(juris, { args }) {
                     api.setValue(`${f}.reason`, "");
                     // Waiting: the form shows the record as it is; the banner, what waits.
                     api.setValue(`${f}.data`, pickData(def, saved.$request ? api.peek(recPath) : saved));
+                    api.deleteState(`${f}.shown`);
+                    rehide(api, f);
                     api.setValue(`${f}.notice`, saved.$request ? sentWords(saved.$request) : "Saved.");
                 });
             });
         };
         const discard = () => api.batch(() => {
+            api.deleteState(`${f}.shown`);
             api.setValue(`${f}.dirty`, false);
             api.setValue(`${f}.reason`, "");
             api.setValue(`${f}.data`, pickData(api.peek(defPath), api.peek(recPath)));
+            rehide(api, f);
             api.setValue(`${f}.ruleErrors`, {});
             api.setValue(`${f}.serverErrors`, {});
             api.setValue(`${f}.notice`, null);
@@ -439,7 +646,7 @@ export function registerRecords(juris, { args }) {
             const rec = api.peek(recPath);
             const def = api.peek(defPath);
             const label = def.states.transitions.find((t) => t.action === action)?.label ?? action;
-            const reason = await reasonFor(api, def, { op: "action", state: rec.state, action }, label);
+            const reason = await reasonFor(api, def, { op: "action", state: rec.state, action, now: rec }, label);
             if (reason === null) return;
             await form.submit((key) => api.call("records.action", { object, id, action, rowVersion: rec.row_version, key, ...(reason ? { reason } : {}) }), (done) => api.setValue(`${f}.notice`, done?.$request ? sentWords(done.$request) : `Done: ${action}.`));
         };
@@ -451,9 +658,14 @@ export function registerRecords(juris, { args }) {
             const kind = restore ? "restore" : "archive";
             const clean = await form.check({ kind });
             if (!clean) return;
-            if (!restore && !(await confirmDialog(api, { title: `Archive ${api.peek(recPath)?.$title ?? "this record"}?`, message: "It leaves the lists and becomes read-only until it is restored. Nothing is deleted.", confirm: "Archive", danger: true }))) return;
             const rec = api.peek(recPath);
-            await form.submit((key) => api.call(`records.${kind}`, { object, id, rowVersion: rec.row_version, key }), () => api.setValue(`${f}.notice`, restore ? "Restored." : "Archived."));
+            const def = api.peek(defPath);
+            // Waiting for approval (§28: the design may say archiving and restoring wait), asked why instead.
+            const waits = needsApproval(def, { op: kind, state: rec.state });
+            if (!waits && !restore && !(await confirmDialog(api, { title: `Archive ${rec?.$title ?? "this record"}?`, message: "It leaves the lists and becomes read-only until it is restored. Nothing is deleted.", confirm: "Archive", danger: true }))) return;
+            const reason = waits ? await reasonFor(api, def, { op: kind, state: rec.state, now: rec }, restore ? "Restoring it" : "Archiving it (it leaves the lists and becomes read-only; nothing is deleted)") : "";
+            if (reason === null) return;
+            await form.submit((key) => api.call(`records.${kind}`, { object, id, rowVersion: rec.row_version, key, ...(reason ? { reason } : {}) }), (done) => api.setValue(`${f}.notice`, done?.$request ? sentWords(done.$request) : restore ? "Restored." : "Archived."));
         };
 
         const tab = () => api.getState(`${f}.tab`, "details");
@@ -477,7 +689,7 @@ export function registerRecords(juris, { args }) {
                             div: {
                                 className: "record-head",
                                 children: [
-                                    { div: { className: "title", children: [{ GuideToggle: { key: `guide-${object}`, title: `${def.label}: this record`, make: () => formGuide(api.peek(defPath), { intro: `A ${String(def.label).toLowerCase()} record: what it is now, what you may do with it, and each of its fields.`, lead: recordLead() }) } }, { span: { className: "kind", textContent: def.label } }, { h1: () => api.getState(`${recPath}.$title`, "") }, isList(def) ? { span: {} } : { span: { className: () => stateBadgeClass(api.getState(`${recPath}.state`), def.states?.tones), textContent: () => String(api.getState(`${recPath}.state`, "")).replace(/_/g, " ") } }] } },
+                                    { div: { className: "title", children: [{ GuideToggle: { key: `guide-${object}`, title: `${def.label}: this record`, make: () => formGuide(api.peek(defPath), { intro: `A ${nounOf(def.label)} record: what it is now, what you may do with it, and each of its fields.`, lead: recordLead() }) } }, { span: { className: "kind", textContent: def.label } }, { h1: () => api.getState(`${recPath}.$title`, "") }, isList(def) ? { span: {} } : { span: { className: () => stateBadgeClass(api.getState(`${recPath}.state`), def.states?.tones), textContent: () => String(api.getState(`${recPath}.state`, "")).replace(/_/g, " ") } }] } },
                                     { LiveBadge: { path: recPath } },
                                     { ActionBar: { object, defPath, recPath, onAction: act, onArchive: archive, onWhy: (target) => why(target), blocked: form.held } },
                                 ],
@@ -576,7 +788,7 @@ export function registerRecords(juris, { args }) {
         api.live(defPath, "defs.get", args.def(object, as));
         api.live(listPath, "records.list", args.list(object, as));
         if (!api.isServer) {
-            const stop = api.bindState(() => api.getState(`${defPath}.label`), (label) => label && titleTab(api, `/o/${object}/new`, `New ${label.toLowerCase()}`));
+            const stop = api.bindState(() => api.getState(`${defPath}.label`), (label) => label && titleTab(api, `/o/${object}/new`, `New ${nounOf(label)}`));
             api.onCleanup(stop);
         }
         const form = formController(api, { object, f, defPath, record: () => ({}) });
@@ -649,6 +861,7 @@ export function registerRecords(juris, { args }) {
         };
         const shown = (field, v, rec) => {
             if (v === undefined || v === null || v === "") return "—";
+            if (isHidden(v)) return HIDDEN_WORDS;
             if (field.type === "ref") return rec && rec[field.name] === v && rec.$titles?.[field.name] ? rec.$titles[field.name] : titleOf(field.to, v);
             if (Array.isArray(v)) return v.join(", ") || "—";
             if (field.type === "boolean") return v ? "yes" : "no";
@@ -674,7 +887,7 @@ export function registerRecords(juris, { args }) {
                         key: n,
                         children: [
                             { td: { className: "cs-field", textContent: field.label ?? n } },
-                            ...(rec ? [{ td: { className: "muted", textContent: shown(field, rec[n], rec) } }, { td: { className: "muted", children: [icon("arrowRight")] } }] : []),
+                            ...(rec ? [{ td: { className: "muted", textContent: shown(field, baseOf(api, f, rec, n), rec) } }, { td: { className: "muted", children: [icon("arrowRight")] } }] : []),
                             { td: { className: "cs-after", textContent: shown(field, after, null) } },
                             rec ? { td: { children: [{ span: { className: controlled(n) ? "approval-tag" : "muted small", textContent: controlled(n) ? "needs approval" : "goes with it" } }] } } : { td: {} },
                         ],
@@ -685,7 +898,7 @@ export function registerRecords(juris, { args }) {
                 section: {
                     className: "change-summary", "aria-label": "Changes to submit for approval",
                     children: [
-                        { div: { className: "cs-head", children: [{ strong: rec ? `Changes to submit for approval (${p.changed.length})` : `A new ${String(def.label).toLowerCase()} to submit for approval` }, { span: { className: "muted small", textContent: ` · approved by ${route.join(", ") || "its stewards"}` } }] } },
+                        { div: { className: "cs-head", children: [{ strong: rec ? `Changes to submit for approval (${p.changed.length})` : `A new ${nounOf(def.label)} to submit for approval` }, { span: { className: "muted small", textContent: ` · approved by ${route.join(", ") || "its stewards"}` } }] } },
                         { p: { className: "muted small", textContent: rec ? "Nothing changes until they approve. Check each change; the ones marked “goes with it” are sent with the others and decided together." : "It is created once they approve." } },
                         { table: { className: "cs-table", children: [{ tbody: { children: rows } }] } },
                         waiting ? { p: { className: "error small", textContent: "A change to this record already waits for approval (above): it is decided or withdrawn before another is submitted." } } : { span: {} },
@@ -694,7 +907,7 @@ export function registerRecords(juris, { args }) {
                                 className: "cs-why",
                                 children: [
                                     { span: "Why *" },
-                                    { textarea: { rows: 2, placeholder: rec ? "What these changes are for (the approvers read it)" : `What this ${String(def.label).toLowerCase()} is for (the approvers read it)`, value: () => api.getState(`${f}.reason`, "") ?? "", oninput: (e) => api.setValue(`${f}.reason`, e.target.value), disabled: () => api.getState(`${f}.saving`, false) } },
+                                    { textarea: { rows: 2, placeholder: rec ? "What these changes are for (the approvers read it)" : `What this ${nounOf(def.label)} is for (the approvers read it)`, value: () => api.getState(`${f}.reason`, "") ?? "", oninput: (e) => api.setValue(`${f}.reason`, e.target.value), disabled: () => api.getState(`${f}.saving`, false) } },
                                 ],
                             },
                         },
@@ -754,16 +967,26 @@ export function registerRecords(juris, { args }) {
                                         { span: `${field.label}${required ? " *" : ""}` },
                                         // A field whose changes wait for approval here (§28): said before it is edited.
                                         () => (approvalState && !preview && writable && needsApproval(def, { op: "edit", state: approvalState(), changed: [name] })
-                                            ? { span: { className: "approval-tag", title: `A change to ${field.label} waits for approval by ${recordRoute(def, { op: "edit", state: approvalState(), changed: [name] }).map((r) => r.department).join(", ")}`, textContent: "needs approval" } }
+                                            ? { span: { className: "approval-tag", title: `A change to ${field.label} waits for approval by ${recordRoute(def, { op: "edit", state: approvalState(), changed: [name], now: permPath ? api.peek(String(permPath).replace(/\.\$perm$/, "")) ?? null : null }).map((r) => r.department).join(", ")}`, textContent: "needs approval" } }
                                             : { span: {} }),
                                     ],
                                 },
                             },
-                            control(api, { id, f, name, field, entry, disabled, value, onChange, onCommit }),
+                            // A sensitive field (§6.10): hidden until shown (records.reveal), then its control.
+                            () => {
+                                api.getState(`${f}.shownAt`, 0);
+                                const rec = permPath ? api.peek(permPath.replace(/\.\$perm$/, "")) : null;
+                                if (!isHidden(api.peek(`${f}.data.${name}`)) || !rec?.id) return control(api, { id, f, name, field, entry, disabled, value, onChange, onCommit, record: rec?.id ? { object: def.object, id: rec.id, value: rec[name] ?? null } : null, form: { object: def.object, transaction: def.transaction ?? null } });
+                                return { SensitiveValue: { key: `sv-${name}`, object: def.object, id: rec.id, field: name, label: field.label ?? name, type: field.type, onShown: (v) => api.batch(() => {
+                                    api.setValue(`${f}.shown.${name}`, v ?? null);
+                                    api.setValue(`${f}.data.${name}`, v ?? null);
+                                    rehide(api, f);
+                                }) } };
+                            },
                             entry.help ? { div: { className: "field-help", textContent: entry.help } } : { span: {} },
                             () => (level(name) !== "w" && !preview
                                 ? { div: { className: "lock", children: [
-                                    { span: { className: "icon-text", children: [icon("lock"), { span: `${level(name) ? "read only" : "hidden"}: ${REASONS[reason(name)] ?? reason(name)}` }] } },
+                                    { span: { className: "icon-text", children: [icon("lock"), { span: `${level(name) ? "read only" : "hidden"}: ${reason(name) === "derived" && field.derived ? derivedWords(def, field.derived) : REASONS[reason(name)] ?? reason(name)}` }] } },
                                     onWhy ? { button: { type: "button", className: "linkish", textContent: "Why?", onclick: () => onWhy(name) } } : { span: {} },
                                 ] } }
                                 : { span: {} }),
@@ -800,31 +1023,139 @@ export function registerRecords(juris, { args }) {
         };
     });
 
-    // A reference: a pick-list of the records the user may see, loaded in the browser.
-    // A reference by searching: type a few letters of the record's title, pick from the suggestions
-    // (the records the user may see); for a long list, where a dropdown is too long to scroll.
-    juris.registerComponent("RefSearch", ({ id, f, name, to, noun = null, disabled, placeholder, onPick }, api) => {
-        const [options, setOptions] = api.useState("options", null);
-        const [typed, setTyped] = api.useState("typed", null);
+    // A reference by searching (§10.4): type some letters of the record's title (its lot number, a tool's
+    // id) and pick among the matches. Nothing is asked of the server until `minChars` letters are typed
+    // (the field's layout says how many; 2 if it does not), and then only the matches, at most 20, as the
+    // person may see them (records.pick): a plant's thousands of lots are never sent to fill a list.
+    juris.registerComponent("RefSearch", ({ id, f, name, to, noun = null, disabled, placeholder, minChars = 2, source = null, onPick }, api) => {
+        // From a query (§23.1): its choices, listed at once (a query's are few), narrowed as typed.
+        const least = source ? 0 : Number.isInteger(minChars) && minChars >= 1 && minChars <= 6 ? minChars : 2;
+        const S = `${f}.pick.${name}`;
+        const typed = () => api.getState(`${S}.typed`, null);
+        const found = () => api.getState(`${S}.found`, null);
+        const [title, setTitle] = api.useState("title", null);
         const as = api.getState("me.id", null, { track: false });
+        const what = String(noun ?? to.replace(/_/g, " ")).toLowerCase();
+        let timer = null;
+        let asked = 0;
         if (!api.isServer) {
-            api.onMount(() => {
-                api.call("records.list", { object: to, as }).then((list) => setOptions(list.rows.map((r) => ({ id: r.id, title: String(r.$title ?? r.id.slice(0, 8)), state: r.state }))), () => setOptions([]));
+            // The current value's title, whoever set it (a pick, the record the screen was opened from).
+            const stop = api.bindState(() => api.getState(`${f}.data.${name}`, null), (value) => {
+                if (!value) { setTitle(null); return; }
+                const hit = (found()?.rows ?? []).find((o) => o.id === value);
+                if (hit) { setTitle(hit.title); return; }
+                api.call("records.get", { object: to, id: value, as }).then((r) => setTitle(r?.$title ?? "(not visible to you)"), () => setTitle(null));
             });
+            api.onCleanup(() => { stop(); clearTimeout(timer); });
         }
-        const listId = `${id}-options`;
-        const titleOf = (v) => (options() ?? []).find((o) => o.id === v)?.title ?? "";
+        const search = (text) => {
+            api.batch(() => { api.setValue(`${S}.typed`, text); api.setValue(`${S}.open`, true); api.setValue(`${S}.at`, -1); });
+            clearTimeout(timer);
+            const q = text.trim();
+            // A suggestion picked (it fills the whole title in): taken at once, nothing asked again.
+            const exact = (found()?.rows ?? []).find((o) => o.title.toLowerCase() === q.toLowerCase());
+            if (exact && q.length >= least) { commit(q); return; }
+            if (q.length < least) { api.setValue(`${S}.found`, null); return; }
+            const mine = ++asked;
+            timer = setTimeout(() => {
+                (source ? api.call("records.choices", { ...source, values: api.peek(`${f}.data`) ?? {}, q, as }) : api.call("records.pick", { object: to, q, as })).then((r) => { if (mine === asked) api.setValue(`${S}.found`, { q, ...r }); }, () => { if (mine === asked) api.setValue(`${S}.found`, { q, rows: [], more: false, failed: true }); });
+            }, 220);
+        };
         const commit = (text) => {
-            const hit = (options() ?? []).find((o) => o.title === text.trim());
-            if (hit) { setTyped(null); onPick(hit.id); } else if (!text.trim()) { setTyped(null); onPick(null); } else setTyped(text);
+            const q = String(text ?? "").trim();
+            if (!q) { api.batch(() => { api.setValue(`${S}.typed`, null); api.setValue(`${S}.found`, null); }); onPick(null); return; }
+            const hit = (found()?.rows ?? []).find((o) => o.title.toLowerCase() === q.toLowerCase());
+            if (hit) { api.batch(() => { api.setValue(`${S}.typed`, null); setTitle(hit.title); }); onPick(hit.id); }
+        };
+        const listId = `${id}-options`;
+        // Its suggestions, drawn by the page under the field (not the browser's datalist, which some browsers, kiosks
+        // and embedded ones among them, draw elsewhere on the screen): open while typing finds some; the arrows move,
+        // Enter or a click picks, Escape closes.
+        const open = () => api.getState(`${S}.open`, false);
+        const at = () => api.getState(`${S}.at`, -1);
+        const shown = () => {
+            const t = typed();
+            const r = found();
+            if (!open() || t === null || !r?.rows?.length) return [];
+            return r.rows.some((o) => o.title.toLowerCase() === t.trim().toLowerCase()) ? [] : r.rows;
+        };
+        const close = () => api.batch(() => { api.setValue(`${S}.open`, false); api.setValue(`${S}.at`, -1); });
+        const pick = (o, el) => {
+            api.batch(() => { api.setValue(`${S}.typed`, null); setTitle(o.title); });
+            close();
+            onPick(o.id);
+            el?.dispatchEvent(new CustomEvent("mes-advance", { bubbles: true }));
+        };
+        const hint = () => {
+            const t = typed();
+            if (t === null) return "";
+            const q = t.trim();
+            if (!q) return "";
+            if (q.length < least) return `Type ${least - q.length} more ${least - q.length === 1 ? "letter" : "letters"} to search.`;
+            const r = found();
+            if (!r || r.q !== q) return "Searching…";
+            if (r.failed) return "The search did not answer: try again.";
+            if (!r.rows.length) return `No ${what} "${q}" that you can see.`;
+            if (r.rows.some((o) => o.title.toLowerCase() === q.toLowerCase())) return "";
+            return `${r.rows.length}${r.more ? "+" : ""} found: pick one${r.more ? ", or type more to narrow them" : ""}.`;
         };
         return {
             span: {
                 className: "ref-search",
                 children: [
-                    { input: { id, list: listId, disabled, placeholder: placeholder ?? "Type to search…", autocomplete: "off", value: () => typed() ?? titleOf(api.getState(`${f}.data.${name}`, null)), onchange: (e) => commit(e.target.value) } },
-                    { datalist: { id: listId, children: () => (options() ?? []).map((o) => ({ option: { key: o.id, value: o.title, textContent: o.state.replace(/_/g, " ") } })) } },
-                    { div: { className: "field-error", hidden: () => !typed(), textContent: () => (typed() ? `No ${String(noun ?? to.replace(/_/g, " ")).toLowerCase()} "${typed()}" that you can see.` : "") } },
+                    { input: { id, disabled, type: "search", role: "combobox", "aria-autocomplete": "list", "aria-controls": listId, "aria-expanded": () => String(shown().length > 0), "aria-activedescendant": () => (at() >= 0 && shown()[at()] ? `${listId}-${at()}` : ""), onblur: () => setTimeout(close, 150), placeholder: placeholder ?? `Type ${least} or more letters to search…`, autocomplete: "off", value: () => typed() ?? title() ?? "", oninput: (e) => search(e.target.value), onchange: (e) => commit(e.target.value),
+                        // A label or an id typed and Enter (a scanner's, a badge's sign-in id): the record it names, by its title or
+                        // the fields its design scans by (records.lookup), picked, and the form told to move on. Held until then; not
+                        // found, it stays, the hint saying what was found. (Choices from a query are picked from its own rows.)
+                        onkeydown: (e) => {
+                            const list = shown();
+                            if (list.length && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+                                e.preventDefault();
+                                api.setValue(`${S}.at`, (at() + (e.key === "ArrowDown" ? 1 : list.length - 1 + (at() < 0 ? 1 : 0))) % list.length);
+                                return;
+                            }
+                            if (e.key === "Escape" && list.length) { e.preventDefault(); e.stopPropagation(); close(); return; }
+                            if (e.key !== "Enter") return;
+                            // One moved to with the arrows: that one.
+                            if (list.length && at() >= 0 && list[at()]) { e.preventDefault(); e.stopPropagation(); pick(list[at()], e.target); return; }
+                            const q = e.target.value.trim();
+                            const rows = found()?.rows ?? [];
+                            if (!q || q === title() || rows.some((o) => o.title.toLowerCase() === q.toLowerCase())) return;
+                            const el = e.target;
+                            // One suggestion beginning with what was scanned ("T-J750-01" for "T-J750-01 · Bay 1"): that one.
+                            const starts = rows.filter((o) => o.title.toLowerCase().startsWith(q.toLowerCase()));
+                            if (starts.length === 1) {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                api.batch(() => { api.setValue(`${S}.typed`, null); setTitle(starts[0].title); });
+                                onPick(starts[0].id);
+                                el.dispatchEvent(new CustomEvent("mes-advance", { bubbles: true }));
+                                return;
+                            }
+                            if (source) return;
+                            e.preventDefault();
+                            e.stopPropagation();
+                            api.call("records.lookup", { object: to, key: q }).then((hit) => {
+                                if (!hit) return;
+                                api.batch(() => { api.setValue(`${S}.typed`, null); setTitle(hit.title); });
+                                onPick(hit.id);
+                                el.dispatchEvent(new CustomEvent("mes-advance", { bubbles: true }));
+                            }, () => {});
+                        },
+                        // From a query: its choices fetched as the field is entered, for the form as it is filled now.
+                        onfocus: () => { if (source) api.call("records.choices", { ...source, values: api.peek(`${f}.data`) ?? {}, q: "", as }).then((r) => api.setValue(`${S}.found`, { q: "", ...r }), () => {}); } } },
+                    () => {
+                        const list = shown();
+                        return list.length
+                            ? { ul: { id: listId, className: "ref-options", role: "listbox", children: list.map((o, k) => ({ li: {
+                                key: o.id, id: `${listId}-${k}`, role: "option", "aria-selected": () => String(at() === k), classList: { active: () => at() === k },
+                                // Picked on the press, before the field loses the cursor (and the list with it).
+                                onmousedown: (e) => { e.preventDefault(); pick(o, globalThis.document?.getElementById(id)); },
+                                children: [{ span: { className: "ref-option-title", textContent: o.title } }, { span: { className: "muted small", textContent: String(o.state ?? "").replace(/_/g, " ") } }],
+                            } })) } }
+                            : { span: {} };
+                    },
+                    { div: { className: () => `small ${/^No |did not/.test(hint()) ? "field-error" : "muted"}`, hidden: () => !hint(), textContent: () => hint() } },
                 ],
             },
         };
@@ -856,7 +1187,7 @@ export function registerRecords(juris, { args }) {
                             { button: { type: "button", className: "btn ghost small flow-map-toggle", hidden: () => !api.getState(`${P}.map`, null), "aria-expanded": () => String(map.open()), onclick: map.toggle, children: [icon("branch"), { span: { textContent: () => (map.open() ? "Hide the route" : "Show the route") } }] } },
                         ],
                     } },
-                    () => { const r = api.getState(P, null); return map.open() && r?.map ? flowRunMap({ map: r.map, steps: r.steps, node: r.node, state: r.state, key: `route-${id}`, api }) : { span: {} }; },
+                    () => { const r = api.getState(P, null); return map.open() && r?.map ? routeMaps(api, r, { view: `ui.routeView.${object}.${id}`, key: `route-${id}` }) : { span: {} }; },
                 ],
             },
         };
@@ -1120,58 +1451,85 @@ export function registerRecords(juris, { args }) {
         };
     });
 
+    // A record's history (§10.10), in words: one entry per transaction or flow run (its writes together), by
+    // what made it (Track in · Wade Tanaka; Entered Oxidation, CMOS route), each field by its label. What the
+    // design leaves unsaid is counted, and Show every change lists it.
     juris.registerComponent("HistoryPanel", ({ object, id }, api) => {
         const [rows, setRows] = api.useState("rows", null);
-        if (!api.isServer) api.onMount(() => { api.call("records.history", { object, id }).then(setRows, () => setRows([])); });
+        const [every, setEvery] = api.useState("every", false);
+        const load = (all) => { setRows(null); api.call("records.history", { object, id, ...(all ? { every: true } : {}) }).then(setRows, () => setRows([])); };
+        if (!api.isServer) api.onMount(() => load(false));
+        const words = (v) => String(v ?? "").replace(/_/g, " ");
+        const diffOf = (r) => Object.keys({ ...(r.before ?? {}), ...(r.after ?? {}) }).filter((k) => k !== "state")
+            .map((k) => `${r.labels?.[k] ?? words(k)}: ${historyValue(r.before?.[k])} → ${historyValue(r.after?.[k])}`);
+        const stateOf = (r) => (r.after && Object.hasOwn(r.after, "state") && r.before?.state !== r.after.state ? `${words(r.before?.state ?? "new")} → ${words(r.after.state)}` : null);
+        // Newest first; a run's writes (a transaction's update and its transition) told as one.
+        const grouped = (list) => {
+            const out = [];
+            for (const r of list) {
+                const last = out[out.length - 1];
+                if (last && r.via?.run && last.via?.run === r.via.run && !r.step && !last.step && !r.action.startsWith("request:")) last.parts.push(r);
+                else out.push({ ...r, parts: [r] });
+            }
+            return out;
+        };
+        const headOf = (g) => {
+            if (g.action.startsWith("request:")) return requestWords(g);
+            if (g.action === "read:sensitive") return `Shown: ${g.after?.label ?? g.after?.field}`;
+            if (g.step) return `Entered ${g.step.label} (${g.step.route})`;
+            const made = g.parts.some((p) => p.action === "create");
+            if (g.via) return `${g.via.label}${made ? ": made" : ""}`;
+            if (made) return "Made";
+            const t = g.parts.find((p) => p.action.startsWith("transition:"));
+            if (t) return words(t.action.slice("transition:".length));
+            return { update: "Changed", archive: "Archived", restore: "Restored" }[g.action] ?? words(g.action);
+        };
         return {
             div: {
                 className: "history",
                 children: () => {
                     const list = rows();
                     if (list === null) return [{ p: { className: "muted", textContent: "Loading the audit trail…" } }];
-                    if (!list.length) return [{ p: { className: "muted", textContent: "No history." } }];
-                    return list.map((r) => ({
-                        div: {
-                            key: r.seq,
-                            className: "event",
-                            children: [
-                                { div: { className: "when", textContent: `${plant().dateTime(r.at, { seconds: true })} · ${r.actor}` } },
-                                { div: { className: "what", textContent: r.action.startsWith("request:") ? requestWords(r) : r.action } },
-                                {
-                                    div: {
-                                        className: "diff",
-                                        textContent: r.action.startsWith("request:")
-                                            ? [r.after?.values && Object.entries(r.after.values).map(([k, v]) => `${k} → ${v ?? "—"}`).join(" · "), r.after?.reason && `“${r.after.reason}”`, r.after?.note && `“${r.after.note}”`, r.after?.outcome].filter(Boolean).join(" · ")
-                                            : Object.keys({ ...(r.before ?? {}), ...(r.after ?? {}) }).map((k) => `${k}: ${r.before?.[k] ?? "—"} → ${r.after?.[k] ?? "—"}`).join(" · "),
-                                    },
-                                },
-                                r.rules?.length ? { div: { className: "rules small muted", textContent: `rules: ${r.rules.map((t) => `${t.script} ${t.outcome}`).join(", ")}` } } : { span: {} },
-                            ],
-                        },
-                    }));
+                    const omitted = list.reduce((n, r) => n + (r.omitted ?? 0), 0);
+                    const toggle = omitted || every()
+                        ? [{ label: { key: "every", className: "small history-every", children: [{ input: { type: "checkbox", checked: () => every(), onchange: (e) => { setEvery(e.target.checked); load(e.target.checked); } } }, { span: every() ? " Every change (the design says fewer)" : ` Show every change (${omitted} more not said here)` }] } }]
+                        : [];
+                    if (!list.length) return [...toggle, { p: { key: "none", className: "muted", textContent: "No history." } }];
+                    return [...toggle, ...grouped(list).map((g) => {
+                        const request = g.action.startsWith("request:");
+                        const lines = request
+                            ? [[g.after?.values && Object.entries(g.after.values).map(([k, v]) => `${g.labels?.[k] ?? words(k)} → ${historyValue(v)}`).join(" · "), g.after?.reason && `“${g.after.reason}”`, g.after?.note && `“${g.after.note}”`, g.after?.outcome].filter(Boolean).join(" · ")]
+                            : g.action === "read:sensitive" ? [`“${g.after?.reason ?? ""}”`]
+                                : [g.parts.map(stateOf).find(Boolean) && `State: ${g.parts.map(stateOf).find(Boolean)}`, ...g.parts.flatMap(diffOf)].filter(Boolean);
+                        return {
+                            div: {
+                                key: g.seq,
+                                className: "event",
+                                children: [
+                                    { div: { className: "when", textContent: `${plant().dateTime(g.at, { seconds: true })} · ${g.actorName ?? g.actor}` } },
+                                    { div: { className: "what", textContent: headOf(g) } },
+                                    { div: { className: "diff", textContent: lines.join(" · ") } },
+                                    g.parts.some((p) => p.rules?.length) ? { div: { className: "rules small muted", textContent: `rules: ${[...new Set(g.parts.flatMap((p) => p.rules ?? []).map((t) => `${t.script} ${t.outcome}`))].join(", ")}` } } : { span: {} },
+                                ],
+                            },
+                        };
+                    })];
                 },
             },
         };
     });
 }
 
-// A list of records as a table: the definition's columns and the state.
-// One row of a list: its columns (the first links to the record) and, unless it is a list, its state.
-function gridRow(api, object, def, row) {
-    const columns = def.list.columns;
-    return {
-        tr: {
-            key: row.id,
-            className: "row",
-            onclick: () => api.navigate(`/o/${object}/${row.id}`),
-            children: [
-                ...columns.map((c, i) => ({ td: i === 0 ? { children: [{ Link: { to: `/o/${object}/${row.id}`, textContent: display(def, row, c) } }] } : display(def, row, c) })),
-                ...(isList(def) ? [] : [{ td: { children: [{ span: { className: stateBadgeClass(row.state, def.states?.tones), textContent: row.state.replace(/_/g, " ") } }] } }]),
-            ],
-        },
-    };
+// One cell of a list: the first links to the record; a sensitive value (§6.10) is hidden, with Show.
+function cellOf(object, def, row, c, first) {
+    if (isHidden(row[c])) return { td: { children: [{ SensitiveValue: { object, id: row.id, field: c, label: def.fields[c]?.label ?? c, type: def.fields[c]?.type ?? "string" } }] } };
+    return { td: first ? { children: [{ Link: { to: `/o/${object}/${row.id}`, textContent: display(def, row, c) } }] } : display(def, row, c) };
 }
 
+// Where a list keeps one record by its id (ListPage, ListRow).
+const recordPath = (object, id) => `d.rec.${object}.${id}`;
+
+// A list of records as a table: the definition's columns and the state.
 function grid(api, object, def, all, query, empty = "No records you can see.") {
     if (!def) return { p: { className: "muted", textContent: "Loading…" } };
     const columns = def.list.columns;
@@ -1191,7 +1549,7 @@ function grid(api, object, def, all, query, empty = "No records you can see.") {
                                 className: "row",
                                 onclick: () => api.navigate(`/o/${object}/${row.id}`),
                                 children: [
-                                    ...columns.map((c, i) => ({ td: i === 0 ? { children: [{ Link: { to: `/o/${object}/${row.id}`, textContent: display(def, row, c) } }] } : display(def, row, c) })),
+                                    ...columns.map((c, i) => cellOf(object, def, row, c, i === 0)),
                                     ...(plain ? [] : [{ td: { children: [{ span: { className: stateBadgeClass(row.state, def.states?.tones), textContent: row.state.replace(/_/g, " ") } }] } }]),
                                 ],
                             },

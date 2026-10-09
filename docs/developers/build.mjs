@@ -5,47 +5,23 @@
 // token scopes, schedule values) are read from the code that checks them, so they never drift.
 //   node docs/developers/build.mjs          → docs/developers/developers-guide.html
 //   node docs/developers/build.mjs --pdf    → and .pdf (headless Chrome; CHROME=<path> if not on macOS)
-import { writeFileSync, mkdtempSync } from "node:fs";
-import { spawn } from "node:child_process";
-import { tmpdir } from "node:os";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+import { printable, esc, code, list, pre, table, kv, note, h3 } from "../lib/printable.mjs";
 import { RECORD_EVENTS, SERVICE_OPS, AUTH_KINDS, HTTP_METHODS, RUN_AS, FIELD_TYPES, SERVICE_TEMPLATE } from "../../app/mes/client/definition.js";
 import { DAYS, MISSED, OVERLAP, MAX_CATCH_UP } from "../../app/mes/client/schedule.js";
 import { SCOPES } from "../../app/mes/server/ai-api.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DOC = "OMES-DEV-001";
-const REVISION = "D";
-const ISSUED = "2026-10-05";
+const REVISION = "H";
+const ISSUED = "2026-10-06";
 const NAME = "developers-guide";
 
 // ---- helpers ----
-const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-const code = (s) => `<code${String(s ?? "").length <= 26 ? ' class="n"' : ""}>${esc(s)}</code>`;
-const list = (xs) => xs.map(code).join(", ");
-const pre = (s, lang = "") => `<pre class="${lang}">${esc(s.replace(/^\n/, ""))}</pre>`;
-const table = (head, rows) => `<table><thead><tr>${head.map((h) => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c ?? ""}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
-const kv = (pairs) => `<table class="kv"><tbody>${pairs.filter(Boolean).map(([k, v]) => `<tr><th>${k}</th><td>${v ?? "—"}</td></tr>`).join("")}</tbody></table>`;
-const note = (html, kind = "note") => `<div class="callout ${kind}"><strong>${{ note: "Note", warn: "Caution", planned: "Planned" }[kind]}.</strong> ${html}</div>`;
-const toc = [];
-let part = 0;
-let section = 0;
-function h1(title, id) { part++; section = 0; toc.push({ level: 1, id, title: `${part}. ${title}` }); return `<h1 id="${id}" class="part">${part}. ${esc(title)}</h1>`; }
-function h2(title, id) { section++; toc.push({ level: 2, id, title: `${part}.${section} ${title}` }); return `<h2 id="${id}">${part}.${section} ${esc(title)}</h2>`; }
-const h3 = (title) => `<h3>${esc(title)}</h3>`;
-// A reference to a section or procedure is written [[see:<its id>]]: resolved to its number, as a
-// link, once every heading is in (numbered, below).
-function proc({ id, title, who, purpose, before = [], steps, after = "" }) {
-    toc.push({ level: 3, id: `p-${id}`, title: `${id} ${title}` });
-    return `<section class="proc" id="p-${id}">
-  <div class="proc-head"><span class="proc-id">${id}</span><span class="proc-title">${esc(title)}</span></div>
-  ${kv([["Purpose", purpose], ["Done by", who], before.length ? ["Before you start", `<ul>${before.map((b) => `<li>${b}</li>`).join("")}</ul>`] : null])}
-  <table class="steps"><thead><tr><th class="n">#</th><th>Do this</th><th>You should see</th><th class="ok">Done</th></tr></thead><tbody>
-  ${steps.map(([a, r], i) => `<tr><td class="n">${i + 1}</td><td>${a}</td><td>${r ?? ""}</td><td class="ok"></td></tr>`).join("")}
-  </tbody></table>${after ? `<div class="proc-after">${after}</div>` : ""}
-</section>`;
-}
+// The page, its numbering, procedures and PDF: the shared template of the printable documents.
+const doc = printable();
+const { h1, h2, proc, toc } = doc;
 
 // ---- the worked example: an ERP integration on the seed's work orders and lots ----
 // (the same designs app/mes/test/integration.mjs proves end to end, against a fake ERP)
@@ -124,8 +100,7 @@ export default async function erp_orders_pull(ctx) {
   return ctx;
 }`;
 
-const body = [];
-const add = (...xs) => body.push(...xs);
+const add = doc.add;
 
 // ---- 1 ----
 add(h1("About this guide", "about"));
@@ -133,6 +108,8 @@ add(h2("Who it is for", "who"), `<p>For IT, who installs OpenCore MES; for devel
 <p>The ground rule: <b>integration is designed, not deployed.</b> A web service, a trigger, a schedule and the outside systems they reach are design elements, drafted in a change request, reviewed, approved by the stewards of everything they reach, and live the moment the change executes: no build, no deploy, no restart. Nothing reaches the plant around that lifecycle, and every record a service reads or writes goes through the same policies, rule pipe and audit trail as a person at a form.</p>`);
 add(h2("What is built, and what is planned", "status"), table(["Way in or out", "What", "Status"], [
     ["Web services", `Outside systems call ${code("POST /svc/v1/<service>")} with a bearer token; ${code("GET /svc/v1/openapi.json")} describes what the token's user may call`, "built"],
+    ["Transactions and queries over the web", `A transaction (${code("POST /svc/v1/<name>")}, its preview) and a named query (${code("GET /svc/v1/<name>")}) published over HTTP under their own names, as the token's person`, "built"],
+    ["Calls counted", "Every call of a service, transaction and named query, by how it came (a page, the web, a route), with who called, why refused and the statements it sent: the Database area", "built"],
     ["Connections", "Outside systems services call, with only the requests their design allows, credentials kept as server secrets", "built"],
     ["Record triggers", `A record event (${RECORD_EVENTS.join(", ")}, or a transition) sets a service off after its commit, retried while the other system is down`, "built"],
     ["Schedules", "The clock sets a service off: every N minutes or hours, at times of day, in a window, on days, or at the times a kind of schedule an installed suite adds works out; catch-up and overlap rules", "built"],
@@ -142,6 +119,7 @@ add(h2("What is built, and what is planned", "status"), table(["Way in or out", 
     ["Authentication", "Single sign-on (OpenID Connect), the plant's directory (LDAP, Active Directory), or a password of OpenCore MES's own; lockout; only people in People & departments ([[see:sign-in]])", "built"],
     ["Versioned HTTP APIs", `${code("/svc/v1")} and ${code("/ai/v1")} written down as a contract (${code("docs/contracts/http-apis")}): ${code("API-Version")} on every answer, notice before a change (Deprecation, Sunset), the API kit; a plant's web services held to notice before they break their callers ([[see:versions]])`, "built"],
     ["The equipment adapter contract", `What an adapter for one machine protocol implements (${code("docs/contracts/equipment-adapter")}): its specification, schema and conformance kit (§31.4)`, "built"],
+    ["The embedding contract", `A site the plant names (${code("EMBED_ORIGINS")}) shows OpenCore MES in a frame and talks to it by window messages: where the person is, and outlines by visible name (${code("docs/contracts/embedding")}): specification, schema, kit (§37)`, "built"],
     ["The extension API", "A narrow, versioned surface for suites, with its conformance kit (§31.3)", "planned"],
     ["Equipment data collection", "High-rate machine data handled outside the MES, which receives only derived events (§15.1)", "planned"],
 ]));
@@ -156,42 +134,58 @@ add(h2("What you need", "needs"), table(["What", "Version", "Why"], [
     ["Google Chrome or Chromium", "any recent", "only to build the printable guides (<code>--pdf</code>)"],
 ]));
 add(proc({
-    id: "IN-01", title: "Install for development", who: "Developer",
+    id: "IN-01", title: "Install from npm", who: "IT or a developer",
+    purpose: "A running instance from the published package, with nothing to check out: to try OpenCore MES, or to run it as a plant's.",
+    before: ["Node 24 and PostgreSQL are installed; your user can create databases over the local socket (or <code>DATABASE_URL</code> names one it may)."],
+    steps: [
+        ["Install the package.", "The <code>opencore-mes</code> command. The package holds the code only, and nothing writes to it.", ["npm install -g @opencore-mes/server"]],
+        ["Make a plant folder, and go into it.", "A plant folder: <code>.env</code> (its settings, commented: the database, the port, sign-in, the copilot), <code>suites/</code>, <code>.local/</code> (the event log). An existing <code>.env</code> is left as it is.", ["opencore-mes init my-plant", "cd my-plant"]],
+        ["Set the database in <code>.env</code> (<code>DATABASE_URL</code>, by default <code>postgres:///opencore_mes</code>), then make it, with the sample plant to try it:", "The database is made, its schema loaded and the seed loaded (sample people, to try it). Without <code>--yes</code> it refuses: a reset loses everything in the database.", ["opencore-mes db reset --yes"], "It makes the database named in .env again: everything in it is lost."],
+        ["For the plant's own installation instead, an empty database and its first administrator (replace what is between &lt; &gt;):", "Nobody is in it but that first administrator: designer, reviewer and sign-in administrator, approver for the department that governs. A one-time link to set their password is printed (<code>--no-password</code> when they sign in through SSO or the directory). Setup is open: they add the plant's people and end setup. Refused once anybody is in People & departments.", ["opencore-mes db reset --yes --empty", 'opencore-mes admin <id> "<Full name>" --url https://<this site>'], "The first line makes the database again (everything in it is lost); the second runs once per installation: check the id and name first."],
+        ["Start it, from inside the plant folder.", "“listening on http://127.0.0.1:9090”, with the folder's <code>.env</code>, suites and event log.", ["opencore-mes start"]],
+        ["Open it and pick a person to sign in as.", "The navigator, the designer, the screens. For production, set <code>PROD=1</code> and a way to sign in ([[see:settings]], [[see:sign-in]])."],
+    ],
+    after: `${code("opencore-mes db migrate")} migrates without starting; ${code("opencore-mes token <user> \"<name>\"")} and ${code("opencore-mes password <user> --url <site>")} are the token and password tools of [[see:sign-in]] and the tutorial. To upgrade, ${code("npm install -g @opencore-mes/server@latest")} and restart: the server migrates at start. Suites go in the plant folder's <code>suites/</code>: ${code("opencore-mes suite install <name>")} from the suites registry, with the plant's licence token (${code("opencore-mes suite login")}; the store at suites.opencoremes.com is <b>planned</b>), or ${code("--from <file>.tgz")} for a plant with no way out; every version a plant ran is kept in <code>suites/.versions/</code> (${code("suite list")}, ${code("suite use <name>@<version>")}). The contracts are packages too, with their kits: ${code("@opencore-mes/equipment-adapter")} and ${code("@opencore-mes/http-apis")}.`,
+}));
+add(proc({
+    id: "IN-02", title: "Install for development", who: "Developer",
     purpose: "A working instance on your machine, with the seed's plant to try things on.",
     before: ["Node 24 and PostgreSQL are installed; your user can create databases over the local socket."],
     steps: [
-        ["Get the code and run <code>npm install</code>.", "Two packages installed."],
-        ["<code>npm run db:reset</code>", "The database <code>openmes_poc</code> is made (when missing), its schema loaded and migrated, and the seed loaded: people, departments, objects, records. It says what it loaded."],
+        ["Get the code, and install its dependencies.", "Its packages installed.", ["git clone https://github.com/opencore-mes/opencore-mes.git", "cd opencore-mes", "npm install"]],
+        ["Make the development database.", "The database <code>openmes_poc</code> is made (when missing), its schema loaded and migrated, and the seed loaded: people, departments, objects, records. It says what it loaded.", ["npm run db:reset"], "It makes the development database openmes_poc again: everything in it is lost. For tests, name the test database instead: DATABASE_URL=postgres:///openmes_test."],
         ["Optionally, copy <code>.env.example</code> to <code>.env</code> and set what you need (the copilot's provider, a port).", "<code>.env</code> is never committed."],
-        ["<code>npm run dev</code>", "“listening on http://127.0.0.1:9090”. It restarts when a file under <code>app/mes</code> or <code>src</code> changes, and every open page reloads."],
+        ["Start it; it restarts by itself on a change.", "“listening on http://127.0.0.1:9090”. It restarts when a file under <code>app/mes</code> or <code>src</code> changes, and every open page reloads.", ["npm run dev"]],
         ["Open it and pick a person to sign in as (Dana designs; Olga works the floor).", "The navigator, the designer, the screens."],
-        ["<code>npm run test:all</code>", "Every stage passes. It resets <code>openmes_test</code> (<code>TEST_DATABASE_URL</code>) and refuses any database whose name lacks “test”, so your development database is safe."],
+        ["Run the whole test pipeline.", "Every stage passes. It resets <code>openmes_test</code> (<code>TEST_DATABASE_URL</code>) and refuses any database whose name lacks “test”, so your development database is safe.", ["npm run test:all"]],
     ],
     after: `${code("DATABASE_URL")} names another database; ${code("npm run db:reset -- --blank")} makes one with people only (every model designed from nothing), as the training instance does (${code("npm run training:reset")}, ${code("npm run training")}, port 9091).`,
 }));
 add(proc({
-    id: "IN-02", title: "Install on a server", who: "IT",
+    id: "IN-03", title: "Install on a server", who: "IT",
     purpose: "One instance behind HTTPS, run by systemd, as the public demo is (ops/demo).",
     before: ["A fresh Ubuntu 24.04 server, root access, a DNS name pointing at it."],
     steps: [
-        ["As root, run <code>ops/demo/provision.sh</code> (safe to run again).", "PostgreSQL, Caddy, Node (its checksum checked); the system user <code>openmes</code>; its database role over the local socket (peer authentication, no password); the role <code>mes_query</code> the query page reads as, granted to <code>openmes</code>."],
-        ["Unpack a release in <code>/srv/open-mes/releases/&lt;build&gt;</code>, owned by <code>openmes</code>, and run <code>npm ci --omit=dev</code> there.", "—"],
-        [`Write its settings in an environment file (as <code>ops/demo/demo.env</code>): ${code("PROD=1")}, ${code("HOST=127.0.0.1")}, ${code("PORT=3000")}, ${code("DATABASE_URL=postgres:///openmes")}, ${code("PGHOST=/var/run/postgresql")}, ${code("PLANT_TZ")}, ${code("EVENT_LOG_DIR=/var/lib/open-mes/events")}. Secrets (the copilot's key, ${code("MES_SECRET_…")}) go in a file of their own under <code>/etc/open-mes</code>, mode 0640, root:openmes.`, "No secret is in the release or its settings file."],
-        ["The first time only, as <code>openmes</code> with those settings: <code>node app/mes/db/reset.mjs</code> (add <code>--blank</code> for people only).", "The database is made and seeded. Later releases migrate it at start."],
-        ["Point <code>/srv/open-mes/current</code> at the release; install the systemd unit (as <code>ops/demo/open-mes.service</code>: <code>ExecStart=/usr/local/bin/node app/mes/server.mjs</code>, the environment files, <code>ProtectSystem=strict</code>, <code>ReadWritePaths=/var/lib/open-mes</code>); <code>systemctl enable --now open-mes</code>.", "<code>systemctl status open-mes</code> shows it running."],
+        ["As root, run <code>ops/demo/provision.sh</code> (safe to run again).", "PostgreSQL, Caddy, Node (its checksum checked); the system user <code>opencore</code>; its database role over the local socket (peer authentication, no password); the role <code>mes_query</code> the query page reads as, granted to <code>opencore</code>."],
+        ["Unpack a release in <code>/srv/opencore-mes/releases/&lt;build&gt;</code>, owned by <code>opencore</code>, and install its dependencies there:", "—", ["cd /srv/opencore-mes/releases/<build>", "sudo -u opencore npm ci --omit=dev"]],
+        [`Write its settings in an environment file (as <code>ops/demo/demo.env</code>): ${code("PROD=1")}, ${code("HOST=127.0.0.1")}, ${code("PORT=3000")}, ${code("DATABASE_URL=postgres:///opencore_mes")}, ${code("PGHOST=/var/run/postgresql")}, ${code("PLANT_TZ")}, ${code("EVENT_LOG_DIR=/var/lib/opencore-mes/events")}. Secrets (the copilot's key, ${code("MES_SECRET_…")}) go in a file of their own under <code>/etc/opencore-mes</code>, mode 0640, root:opencore.`, "No secret is in the release or its settings file."],
+        ["The first time only, as <code>opencore</code> with those settings loaded: an empty database and its first administrator (without <code>--empty</code>: the sample people and plant, to try it; <code>--blank</code>: the sample people only). The installation procedure (OMES-INS-001, IN-15) gives every step.", "An empty database and its first administrator, with a one-time link to set their password; setup is open for them. Later releases migrate it at start.", ["node app/mes/db/reset.mjs --empty", 'node app/mes/db/admin.mjs <id> "<Full name>" --url https://<name>'], "The first line makes the database again (everything in it is lost: a new installation only); the second runs once per installation: check the id and name first."],
+        [`Only when the plant's engineers will set up an installation that was not made empty (the sample people) before anyone reviews their work: add ${code("SETUP=1")} to the environment file before the first start (the first administrator of an empty one opens setup already).`, "At start the event log says <code>setup.opened</code>; the designer shows <b>Setup is open</b>. Each designer's change then executes on their signature, until People & departments ends setup. Write in the handover that it was opened."],
+        ["Point <code>/srv/opencore-mes/current</code> at the release; install the systemd unit (as <code>ops/demo/opencore-mes.service</code>: <code>ExecStart=/usr/local/bin/node app/mes/server.mjs</code>, the environment files, <code>ProtectSystem=strict</code>, <code>ReadWritePaths=/var/lib/opencore-mes</code>), and start it:", "<code>systemctl status opencore-mes</code> shows it running.", ["systemctl enable --now opencore-mes"]],
         ["Put Caddy in front (as <code>ops/demo/Caddyfile</code>: your name, <code>reverse_proxy 127.0.0.1:3000</code>, HSTS), and reload it.", "Caddy fetches the certificate by itself."],
-        ["<code>curl -fsS http://127.0.0.1:3000/healthz</code>, then open <code>https://&lt;name&gt;/</code>.", "The health answer; the sign-in page over HTTPS."],
+        ["Ask it how it is, then open <code>https://&lt;name&gt;/</code>.", "The health answer; the sign-in page over HTTPS.", ["curl -fsS http://127.0.0.1:3000/healthz"]],
     ],
-    after: "<code>ops/demo/deploy.sh</code> does all of this from a workstation for the public demo (<code>--provision</code> the first time), runs the test pipeline on the server before switching, and keeps the last five releases. It is the demo's: it also installs the timer that erases the demo's database every night, and the landing page. Take the steps from it for a plant, not the script as it is.",
+    after: "For a plant's own server, with its keys, the first administrator, backups, hardening and the checks before go-live, follow the installation procedure (OMES-INS-001, <code>docs/installation/</code>). <code>ops/demo/deploy.sh</code> does all of this from a workstation for the public demo (<code>--provision</code> the first time), runs the test pipeline on the server before switching, and keeps the last five releases. It is the demo's: it also installs the timer that erases the demo's database every night, and the landing page. Take the steps from it for a plant, not the script as it is.",
 }));
 add(proc({
-    id: "IN-03", title: "Upgrade to a new release", who: "IT",
+    id: "IN-04", title: "Upgrade to a new release", who: "IT",
     purpose: "A new version of OpenCore MES, with its database changes.",
     steps: [
-        ["Unpack the release beside the current one and run <code>npm ci --omit=dev</code>.", "—"],
+        ["Unpack the release beside the current one, and install its dependencies there:", "—", ["cd /srv/opencore-mes/releases/<new build>", "sudo -u opencore npm ci --omit=dev"]],
         ["Optionally run the pipeline there against a test database: <code>TEST_DATABASE_URL=postgres:///openmes_test npm run test:all</code>.", "Every stage passes."],
         ["Point <code>current</code> at it and restart the service.", "At start the server runs every new or changed migration, in order, under one lock: several instances starting together run each once. Nothing is run by hand."],
         ["<code>/healthz</code>, and the event log.", "<code>db.migrated</code> names what ran."],
+        ["The first upgrade to a release with the data integrity review: an integrity reviewer (People & departments, Roles, Data integrity) opens Design → Data integrity and signs <b>Take the baseline</b>.", "What was there is sealed as it stands; from then on a change made around the platform is found. Changes written by hand are kept by the database from the upgrade on."],
     ],
     after: "Designs are never part of a release: they live in the database and change only through change requests, so an upgrade leaves the plant's designs as they were. <code>npm run db:migrate</code> migrates without starting a server.",
 }));
@@ -207,16 +201,18 @@ add(h2("Settings", "settings"), table(["Setting", "What"], [
     [code("OIDC_ISSUER") + ", " + code("LDAP_URL") + ", " + code("PASSWORDS=0") + ", " + code("PICKER=1"), "how people sign in ([[see:sign-in]])"],
     [code("AI_PROVIDER") + " …", "the copilot: <code>anthropic</code> (Claude: <code>ANTHROPIC_API_KEY</code>, <code>AI_MODEL</code>, <code>AI_EFFORT</code>) or <code>openai</code> (any OpenAI-compatible model: <code>AI_BASE_URL</code>, <code>AI_API_KEY</code>, <code>AI_MODEL</code>); unset, no copilot"],
     [code("MES_SECRET_<NAME>"), "a connection's secret ([[see:ref-security]])"],
+    [code("SETUP=1"), "a new installation being set up by its engineers: at its first start, a designer's change executes on their signature, without review or approval, until People & departments ends setup (once someone besides the designers can review); every such change is marked and audited. Ignored, and said in the event log, where a change was already reviewed and approved; left set after setup ends, it changes nothing"],
+    [code("INTEGRITY_KEY") + ", " + code("INTEGRITY_FULL_HOURS"), "the data integrity review: 64 hex characters (<code>openssl rand -hex 32</code>, or <code>INTEGRITY_KEY_FILE</code>), kept with the environment, never in the database or its backups; every record is sealed under it, and a record, design, person or role changed straight in the database is found and reported to the plant's integrity reviewers (Design → Data integrity). Without it the seals are plain digests. Set it before the first start; changed later, a reviewer seals everything again, signed. How often every record is read (168 hours; what was written, every 15 minutes)"],
     [code("SCRIPT_RUNNER_WRAP") + ", " + code("SCRIPT_ISOLATION=required"), "the script runner's operating-system walls (<code>ops/script-runner-sandbox.sh</code>, Linux), and refusing to start without them ([[see:ref-security]])"],
     [code("OUTBOX=0") + ", " + code("SCHEDULER=0") + ", " + code("NODE_TAGS") + ", " + code("PLANT_TZ"), "what this node runs for integration ([[see:ref-ops]])"],
     [code("EVENT_LOG_DIR"), "where the event log is written (default <code>.local/events</code>)"],
-    [code("SEED_BLANK=1"), "for <code>db/reset.mjs</code>: people only"],
+    [code("SEED_BLANK=1") + ", " + code("SEED_EMPTY=1"), "for <code>db/reset.mjs</code>: the sample people only; nobody at all (a plant's own installation, entered by the first administrator)"],
 ]));
 add(h2("Sign-in", "sign-in"), `<p>Who may sign in is People & departments' to say: a person active there, nobody else. Someone the plant's identity provider or directory knows, but People & departments does not, is refused by name and told to ask whoever keeps it. How people prove who they are is any of these, together:</p>`
     + table(["Way", "Settings", "Notes"], [
         ["Single sign-on (OpenID Connect)", `${code("OIDC_ISSUER")}, ${code("OIDC_CLIENT_ID")}, ${code("OIDC_CLIENT_SECRET")}`, `Register <code>https://&lt;this site&gt;/login/sso/callback</code> with the provider, or set ${code("OIDC_REDIRECT_URI")}. The authorization code flow with PKCE; the ID token's signature, issuer, audience, expiry and nonce are checked. The sign-in id is the <code>preferred_username</code> claim, or ${code("OIDC_CLAIM")}. ${code("OIDC_LABEL")} names the button. Multi-factor is the provider's.`],
         ["The plant's directory (LDAP, Active Directory)", `${code("LDAP_URL")}, ${code("LDAP_USER_DN")}`, `A bind as the person with the password they typed: <code>ldaps://dc.plant:636</code>, and <code>{user}@plant.local</code> (AD) or <code>uid={user},ou=people,dc=plant,dc=example</code>. ${code("LDAP_CA_FILE")} for a plant CA. <code>ldap://</code> sends passwords in the clear: the server warns.`],
-        ["A password of OpenCore MES's own", `on unless ${code("PASSWORDS=0")}`, `For plants without either. IT gives a one-time link, valid 72 hours: <code>node app/mes/db/password.mjs olga --url https://mes.plant</code>. The person sets it there (12 characters at least) and changes it from their name at the top right; a change signs them out elsewhere.`],
+        ["A password of OpenCore MES's own", `on unless ${code("PASSWORDS=0")}`, `For plants without either. IT gives a one-time link, valid 3 days unless <code>PASSWORD_LINK_DAYS</code> or <code>--days</code> says (up to 14): <code>node app/mes/db/password.mjs olga --url https://mes.plant</code>. The person sets it there (12 characters at least) and changes it from their name at the top right; a change signs them out elsewhere.`],
         ["The picker", `development, ${code("DEMO=1")}, or ${code("PICKER=1")}`, "Anyone as anyone, no password. Never on an instance others can reach."],
     ])
     + `<p>A person with a password here signs in with it, anyone else through the directory. Five wrong passwords in a row lock the sign-in id for 15 minutes. Sign-ins (and the way), refusals (and why), sign-outs, links and passwords set are in the audit trail under <code>$auth</code>. At start, the server prints the ways that are on. Planned: password ageing, SAML.</p>`);
@@ -255,7 +251,7 @@ add(proc({
     purpose: "ERP calls as an integration user; its token says who is calling.",
     before: [`The user ${code("erp")} exists and is active (People &amp; departments). The seed has one.`],
     steps: [
-        [`On the server: ${code('node app/mes/db/token.mjs erp "ERP production"')} (with ${code("DATABASE_URL")} set to the plant's database).`, `A token ${code("mes_…")}, scope ${code("service:call")}, printed once. Only its hash is kept.`],
+        [`On the server, with ${code("DATABASE_URL")} set to the plant's database:`, `A token ${code("mes_…")}, scope ${code("service:call")}, printed once. Only its hash is kept.`, ['node app/mes/db/token.mjs erp "ERP production"']],
         ["Give the token to ERP's administrators through your secrets process.", "—"],
     ],
     after: "The token only says who calls. Which services that user may call is each service's design (its callers), approved like any change.",
@@ -325,7 +321,7 @@ add(proc({
     purpose: "The inbound call, the outbound confirmation, and where to see both.",
     steps: [
         [`${code("GET /svc/v1/openapi.json")} with ERP's token.`, "An OpenAPI 3.1 description of exactly the services this user may call."],
-        [`Call it:<br>${code('curl -X POST https://mes.plant.local/svc/v1/erp_work_order_in -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -H "Idempotency-Key: order-2001" -d \'{"wo_no":"WO-2001","item":"PA66","qty":10,"line":"L1"}\'')}`, `200 ${code('{ "output": { "id": "…", "wo_no": "WO-2001", "state": "planned" } }')}.`],
+        [`Call it (in a shell where ${code("TOKEN")} holds the token):`, `200 ${code('{ "output": { "id": "…", "wo_no": "WO-2001", "state": "planned" } }')}.`, [`curl -X POST https://mes.plant.local/svc/v1/erp_work_order_in -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -H "Idempotency-Key: order-2001" -d '{"wo_no":"WO-2001","item":"PA66","qty":10,"line":"L1"}'`]],
         ["Send the same request again, same <code>Idempotency-Key</code>.", "The first answer again; no second work order."],
         ["Release a lot (a person, a transaction, anything).", "Within seconds ERP receives <code>POST /confirmations</code>, with the bearer credential."],
         ["Open <b>Design → Integration monitor</b>, and the services' <b>Activity</b> tabs.", "The inbound calls, the outbound requests, the trigger's runs. A failed one can be <b>Send again</b> once ERP is back."],
@@ -375,7 +371,7 @@ ${table(["ctx", "What"], [
     [code("ctx.http(connection, { method, path, query, body })"), `a request; answers ${code("{ status, ok, body }")} whatever the status (the script decides what a 404 means)`],
     [code("ctx.transactions.run(name, input, { key })"), `a transaction its design lists in ${code("uses.transactions")}, run as ${code("ctx.user")}: its callers (the service in ${code("callers.services")}, when it runs as its own role), its checks, its steps through each object's policies and rule pipe, all or nothing; answers ${code("{ run, changes, records }")}. A refusal throws with the transaction's words and fields. ${code("key")} (at most 60 characters: the lot's number, the event's id) makes a retried run answer the first. A transaction a person signs is never run by a service. In a dry run it is planned, not run`],
 ])}
-<p>Every record call goes through the object's policies and rule pipe as <code>ctx.user</code>, and is audited. A refused write throws with the object's own words. About <code>ctx.http</code>:</p>
+<p>Every record call goes through the object's policies and rule pipe as <code>ctx.user</code>, is audited, and seals the record. Write records only this way: one written straight in the database (an import by SQL, a fix by hand) is found by the data integrity review, with the database user it came from, and stays a finding until someone closes it with a signed non-conformance report. A refused write throws with the object's own words. About <code>ctx.http</code>:</p>
 <ul><li>The path is relative to the connection's base URL, starts with /, has no <code>..</code>, <code>//</code>, <code>?</code>, <code>#</code> or backslash; parameters go in <code>query</code>.</li><li>The body is sent as JSON (not with GET); the answer is parsed when it says it is JSON. Answers over 1 MB are refused.</li><li>Redirects are never followed. The connection's credential is added on the server; the script never sees it.</li><li>An unreachable system or a timeout throws a fault that asks for a retry.</li></ul>`);
 add(h2("Refusals, faults and retries", "ref-errors"), table(["The script…", "It is", "A caller gets", "A trigger's run is"], [
     [`throws ${code('new Error("words")')}, optionally with ${code("field")} or ${code("fields")}`, "a refusal", "422 with the words and fields", "<b>rejected</b>: retrying would say the same"],
@@ -406,8 +402,10 @@ ${table(["Key", "Values"], [
 ${pre(pollScript)}`);
 add(h2("The web service API", "ref-http"), kv([
     ["Call", `${code("POST /svc/v1/<service>")}, ${code("Content-Type: application/json")}, the input as the body (at most 256 KB)`],
-    ["Authenticate", `${code("Authorization: Bearer mes_…")}: a token with the scope ${code("service:call")}`],
-    ["Describe", `${code("GET /svc/v1/openapi.json")}: OpenAPI 3.1, only the web services this token's user may call; it changes as changes execute`],
+    ["Run a transaction", `${code("POST /svc/v1/<transaction>")} (scope ${code("transaction:run")}), one its design publishes over HTTP: its inputs by name, a reference as its record's id or title; ${code("POST /svc/v1/<transaction>/preview")} says what it would change, writing nothing. Answers ${code('{ "ok", "run", "transaction", "changes", "records" }')}`],
+    ["Read a named query", `${code("GET /svc/v1/<query>?<parameter>=…")} (scope ${code("query:run")}, read only), one its design publishes over HTTP to named callers; ${code("offset")}, ${code("limit")}, ${code("sort")}, ${code("dir")} page it. Answers ${code('{ "columns", "rows": [{ column: value }], "next" }')}`],
+    ["Authenticate", `${code("Authorization: Bearer mes_…")}: a token with the scope ${code("service:call")}, ${code("transaction:run")} or ${code("query:run")} (${code("node app/mes/db/token.mjs <user> \"<name>\" --scope …")})`],
+    ["Describe", `${code("GET /svc/v1/openapi.json")}: OpenAPI 3.1, only what this token's user may call, as its scopes allow; it changes as changes execute`],
     ["Retry safely", `${code("Idempotency-Key")}: 8 to 100 characters. The same key from the same caller answers the first successful answer again, without running it`],
     ["Answer", `${code('{ "output": … }')}; refused: ${code('{ "error", "fields"?, "code" }')}`],
 ]), table(["Status", "Means", "code"], [
@@ -415,10 +413,13 @@ add(h2("The web service API", "ref-http"), kv([
     ["400", "bad input (each field named), or a body that is not JSON", code("service.input")],
     ["401", "no token, or a token that is not valid", code("token.missing")],
     ["403", "the token lacks <code>service:call</code>, or its user is not among the service's callers", `${code("scope.missing")}, ${code("service.denied")}`],
-    ["404", "no such web service (not published, or not a web service)", "—"],
+    ["404", "no such web service, transaction or query published over HTTP", "—"],
+    ["405", "the wrong method: a query is read (GET), a service or a transaction is called (POST); <code>Allow</code> says which", code("method")],
+    ["409", "the first request with this key still runs (ask again), or a record a transaction read changed meanwhile (run it again)", `${code("idempotency.running")}, ${code("stale")}`],
     ["413 · 415", "the body is over 256 KB · not <code>application/json</code>", "—"],
     ["422", "refused by the script, a rule or a policy: its words, and the fields", code("service.rejected") + " or the rule's"],
     ["500 · 502", "the service failed · a system it depends on could not be reached", code("service.fault")],
+    ["503", "busy, or the database out of reach: nothing changed; ask again after <code>Retry-After</code>", `${code("db.busy")}, ${code("db.unavailable")}`],
 ]));
 add(h2("Limits", "ref-limits"), table(["What", "Limit"], [
     ["A web service request body", "256 KB"],
@@ -438,7 +439,7 @@ add(h2("Security", "ref-security"), `<ul>
 <li><b>Secrets</b> are set on the server (${code("MES_SECRET_<NAME>")}), never in a design, a review, the copilot's context or the audit. Changing a value is operations; changing which secret a connection uses is a design change.</li>
 <li><b>Tokens</b> are shown once and kept as a hash; a designer revokes an AI token in <b>AI access</b>.</li>
 <li><b>Public demos and sandboxes</b> reach no outside system: a call is refused, saying so.</li></ul>
-<p><b>The operating system's walls are each installation's to turn on.</b> What the product does everywhere stops at Node's walls and the script's context. On Linux, add the kernel's: install bubblewrap (<code>apt-get install bubblewrap</code>) and, on Ubuntu 23.10 and later, its AppArmor profile (<code>install -m 0644 ops/script-runner-sandbox.apparmor /etc/apparmor.d/open-mes-bwrap &amp;&amp; apparmor_parser -r /etc/apparmor.d/open-mes-bwrap</code>: those versions refuse user namespaces without one, which is also why <code>unshare -r -n</code> fails there); then set ${code("SCRIPT_RUNNER_WRAP=ops/script-runner-sandbox.sh")}. The runner then has a network namespace with loopback only, a read-only file system of the libraries, Node and the app's code, and no capabilities.</p>
+<p><b>The operating system's walls are each installation's to turn on.</b> What the product does everywhere stops at Node's walls and the script's context. On Linux, add the kernel's: install bubblewrap (<code>apt-get install bubblewrap</code>) and, on Ubuntu 23.10 and later, its AppArmor profile (<code>install -m 0644 ops/script-runner-sandbox.apparmor /etc/apparmor.d/opencore-mes-bwrap &amp;&amp; apparmor_parser -r /etc/apparmor.d/opencore-mes-bwrap</code>: those versions refuse user namespaces without one, which is also why <code>unshare -r -n</code> fails there); then set ${code("SCRIPT_RUNNER_WRAP=ops/script-runner-sandbox.sh")}. The runner then has a network namespace with loopback only, a read-only file system of the libraries, Node and the app's code, and no capabilities.</p>
 <p><b>Check it by what the runner finds.</b> At start it reports whether it sees any network and the sandbox it is in: the start log says <code>scripts: isolated (bwrap): no network, …</code>, and <code>/healthz</code> shows <code>"scripts": {"network": "none", "sandbox": "bwrap", …}</code>. <code>"network": "host"</code> means the walls are not there (a production instance also writes <code>scripts.unisolated</code> to its event log). Once they hold, set ${code("SCRIPT_ISOLATION=required")}: the instance refuses to start without them.</p>
 ${note("Until <code>SCRIPT_RUNNER_WRAP</code> is set, and <code>/healthz</code> shows <code>\"network\": \"none\"</code>, a script that found a way out of its context would have the host's network (though no credentials). Off Linux there is no wrapper.", "warn")}`);
 add(h2("Testing", "ref-testing"), `<ul>
@@ -468,6 +469,7 @@ add(h1("Other ways in", "other"));
 add(h2("The AI design API", "ai"), `<p>An AI works in the designer as the person whose token it holds (§16.8): it reads, drafts, checks, tests and dry-runs, and never reviews or approves. Tokens are issued in <b>Designer → AI access</b>, with scopes of ${list(SCOPES.filter((s) => s !== "service:call"))} (submitting is optional). ${code("GET /ai/v1/openapi.json")} describes it; ${code("node app/mes/test/ai-agent.mjs")} is an agent's whole loop.</p>
 ${table(["Route", "Does"], [
     ["GET /me · /contract · /catalog", "who the token is; the design contract (and the published contracts' names); the plant's model"],
+    ["GET /suites", "the installed suites: their versions and a newer one, what each gives designs, its design pack against what is live, its set-up guide, every version run here and what each gave; suites removed; what every live design needs from suites, given or not and why, with the version that last gave it and the command back"],
     ["GET /contracts/{name}", "a published contract (<code>docs/contracts</code>: <code>equipment-adapter</code>), its specification, schema and conformance kit"],
     ["GET /objects/{name} · /scripts/{name} · /flows/{name}", "a live design"],
     ["GET · POST /changes; GET · PUT /changes/{id}", "list and start changes; read and save a draft"],
@@ -478,7 +480,7 @@ ${table(["Route", "Does"], [
     ["POST /changes/{id}/fitness · /changes/{id}/submit", "run the fitness test; submit (with the scope)"],
 ])}<p>Requests are JSON; a token sending too many is answered 429.</p>`);
 add(h2("Versions and notice", "versions"), `<p>${code("/ai/v1")} and ${code("/svc/v1")} keep what they promise for as long as ${code("/v1")} runs: the contract ${code("docs/contracts/http-apis")} writes it down (every ${code("/ai/v1")} operation with its scope and the fields it reads; the ${code("/svc/v1")} envelope, its statuses and its error body ${code("{ error, code?, fields? }")}). A new version may add; nothing promised leaves ${code("/v1")} (that is ${code("/v2")}, beside it).</p>
-<ul><li><b>Every answer</b> carries ${code("API-Version: 1.0")}.</li>
+<ul><li><b>Every answer</b> carries ${code("API-Version: 1.3")}.</li>
 <li><b>Notice first.</b> What ${code("/v1")} will lose is marked deprecated at least 180 days before it goes; each answer to it then carries ${code("Deprecation")} (when it was deprecated), ${code("Sunset")} (the date after which it may go) and ${code("Link")} (its successor). Log them, and move before the sunset. Nothing is deprecated today.</li>
 <li><b>A plant's web services</b> are the plant's promise to you. A change that would break a caller who called in the last 30 days is refused at the plant's review unless the plant gave notice first: the service then answers you with the same headers until its sunset, and its OpenAPI description says until when and what to use instead.</li></ul>
 <p>Check an instance yourself, changing nothing: ${code("node docs/contracts/http-apis/kit.mjs --url <the MES> --token <a token>")} (add ${code("--service <name> --input <json>")} to try a call and its retry; ${code("--json")} for a program).</p>`);
@@ -509,86 +511,7 @@ add(h2("Where it is in the code", "code-map"), table(["File", "What"], [
     ["app/mes/db/token.mjs", "issuing an integration user's token"],
     ["app/mes/test/integration.mjs, scheduler.mjs", "the end-to-end proof"],
 ]));
-add(h2("Revision history", "history"), table(["Revision", "Date", "What changed"], [["A", "2026-10-02", "First issue: services and integration."], ["B", "2026-10-03", "Installing OpenCore MES: development, a server, upgrades, settings, scaling."], ["C", "2026-10-03", "A service's ctx.records.list(object, where) finds matching records among all of them, not only the 200 changed last."], [REVISION, ISSUED, "OpenCore MES is no longer described as a proof of concept: the guide applies to the platform as built."]]));
+add(h2("Revision history", "history"), table(["Revision", "Date", "What changed"], [["A", "2026-10-02", "First issue: services and integration."], ["B", "2026-10-03", "Installing OpenCore MES: development, a server, upgrades, settings, scaling."], ["C", "2026-10-03", "A service's ctx.records.list(object, where) finds matching records among all of them, not only the 200 changed last."], ["E", "2026-10-06", "OpenCore MES is no longer described as a proof of concept: the guide applies to the platform as built."], ["F", "2026-10-06", "The data integrity review: INTEGRITY_KEY, the baseline after an upgrade, records written only through the platform."], ["G", "2026-10-06", "Setup: SETUP=1 for a new installation set up by its engineers (IN-03)."], [REVISION, ISSUED, "A plant's own installation starts empty and is entered by its first administrator: reset --empty, opencore-mes admin (IN-01, IN-03)."]]));
 
 // ---- the page ----
-const tocHtml = `<nav class="toc"><h2>Contents</h2><ol>${toc.filter((t) => t.level < 3).map((t) => `<li class="l${t.level}"><a href="#${t.id}">${esc(t.title)}</a></li>`).join("")}</ol>
-<h3>Procedures</h3><ol class="procs">${toc.filter((t) => t.level === 3).map((t) => `<li><a href="#${t.id}">${esc(t.title)}</a></li>`).join("")}</ol></nav>`;
-const cover = `<section class="cover">
-  <p class="doc-no">${DOC} · Revision ${REVISION}</p>
-  <h1 class="title">OpenCore MES</h1>
-  <p class="subtitle">Developer's guide<br>Installation, services and integration</p>
-  ${kv([["Document", DOC], ["Revision", `${REVISION}, issued ${ISSUED}`], ["Applies to", "OpenCore MES, the platform as built on the issue date"]])}
-</section>`;
-const css = `
-@page { size: A4; margin: 16mm 14mm 18mm; }
-:root { --ink: #141821; --muted: #5b6474; --line: #d6dbe3; --soft: #f3f5f8; --accent: #2b303a; --warn: #8a4b00; --warn-soft: #fff4e0; }
-* { box-sizing: border-box; }
-body { margin: 0 auto; max-width: 900px; padding: 24px 16px; color: var(--ink); background: #fff; font: 10.5pt/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
-h1.part { font-size: 20pt; margin: 0 0 10px; padding-top: 4px; border-bottom: 2px solid var(--ink); break-before: page; }
-h2 { font-size: 14pt; margin: 22px 0 8px; break-after: avoid; }
-h3 { font-size: 12pt; margin: 18px 0 6px; break-after: avoid; }
-p, ul { margin: 0 0 8px; }
-li { margin: 2px 0; }
-code { font: 8.6pt/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--soft); padding: 0 3px; border-radius: 3px; overflow-wrap: anywhere; }
-code.n { white-space: nowrap; overflow-wrap: normal; }
-pre { font: 8.4pt/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; white-space: pre-wrap; break-inside: avoid; margin: 6px 0 10px; }
-a { color: var(--accent); text-decoration: none; }
-table { width: 100%; border-collapse: collapse; margin: 4px 0 10px; font-size: 9pt; }
-th, td { border: 1px solid var(--line); padding: 4px 6px; text-align: left; vertical-align: top; }
-thead th { background: var(--soft); }
-tr { break-inside: avoid; }
-table.kv th { width: 24%; background: var(--soft); font-weight: 600; }
-.callout { border-left: 4px solid var(--accent); background: var(--soft); padding: 6px 10px; margin: 8px 0; font-size: 9.5pt; break-inside: avoid; }
-.callout.warn, .callout.planned { border-left-color: var(--warn); background: var(--warn-soft); }
-.flow { display: grid; gap: 6px; margin: 6px 0 12px; }
-.flow div { border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 4px; padding: 6px 10px; font-size: 9.5pt; background: var(--soft); }
-.proc { border: 1.5px solid var(--ink); border-radius: 6px; padding: 10px 12px; margin: 14px 0; }
-.proc-head { display: flex; gap: 10px; align-items: baseline; margin-bottom: 6px; break-after: avoid; }
-.proc-id { font-weight: 700; background: var(--ink); color: #fff; padding: 1px 8px; border-radius: 4px; font-size: 9.5pt; }
-.proc-title { font-weight: 700; font-size: 12pt; }
-table.steps td.n, table.steps th.n { width: 26px; text-align: center; }
-table.steps td.ok, table.steps th.ok { width: 52px; }
-.proc-after { font-size: 9.5pt; }
-.cover { min-height: 250mm; display: flex; flex-direction: column; justify-content: center; }
-.cover .doc-no { color: var(--muted); letter-spacing: .06em; }
-.cover .title { font-size: 34pt; margin: 6px 0; border: 0; break-before: auto; }
-.cover .subtitle { font-size: 15pt; color: var(--muted); margin-bottom: 26px; }
-.toc { break-before: page; }
-.toc ol { padding-left: 18px; }
-.toc li.l1 { font-weight: 700; margin-top: 6px; }
-.toc li.l2 { margin-left: 14px; font-weight: 400; }
-@media screen { body { padding-top: 32px; } h1.part { margin-top: 48px; } }
-@media print { a { color: var(--ink); } }
-`;
-const numbered = (text) => text.replace(/\[\[see:([\w-]+)\]\]/g, (_, id) => { const t = toc.find((x) => x.id === id); if (!t) throw new Error(`see(${id}): no such section`); return `<a href="#${id}">${esc(t.title.split(" ")[0].replace(/\.$/, ""))}</a>`; });
-const html = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenCore MES developer's guide</title><style>${css}</style></head>
-<body>${cover}${tocHtml}${numbered(body.join("\n"))}</body></html>`;
-const out = path.join(HERE, `${NAME}.html`);
-writeFileSync(out, html);
-console.log(`${out}: ${(html.length / 1024).toFixed(0)} KB, ${toc.filter((t) => t.level === 3).length} procedures`);
-
-if (process.argv.includes("--pdf")) {
-    const chromePath = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-    const port = 9700 + Math.floor(Math.random() * 200);
-    const chrome = spawn(chromePath, ["--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${mkdtempSync(path.join(tmpdir(), "devguide-"))}`, "--no-first-run", "about:blank"], { stdio: "ignore" });
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    let target = null;
-    for (let i = 0; i < 50 && !target; i++) { await sleep(200); try { target = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find((t) => t.type === "page"); } catch {} }
-    const ws = new WebSocket(target.webSocketDebuggerUrl);
-    await new Promise((r) => ws.addEventListener("open", r, { once: true }));
-    let seq = 0; const pending = new Map();
-    ws.addEventListener("message", (e) => { const m = JSON.parse(e.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); } });
-    const cdp = (method, params = {}) => new Promise((resolve, reject) => { const id = ++seq; pending.set(id, (m) => (m.error ? reject(new Error(`${method}: ${m.error.message}`)) : resolve(m.result))); ws.send(JSON.stringify({ id, method, params })); });
-    try {
-        await cdp("Page.enable");
-        await cdp("Page.navigate", { url: pathToFileURL(out).href });
-        await sleep(1500);
-        const footer = `<div style="font: 7.5pt sans-serif; color: #666; width: 100%; padding: 0 14mm; display: flex; justify-content: space-between;"><span>${DOC} rev. ${REVISION} · OpenCore MES developer's guide</span><span>Page <span class="pageNumber"></span> of <span class="totalPages"></span></span></div>`;
-        const pdf = await cdp("Page.printToPDF", { printBackground: true, preferCSSPageSize: true, displayHeaderFooter: true, headerTemplate: "<div></div>", footerTemplate: footer });
-        writeFileSync(path.join(HERE, `${NAME}.pdf`), Buffer.from(pdf.data, "base64"));
-        console.log(`${path.join(HERE, `${NAME}.pdf`)}: ${(Buffer.from(pdf.data, "base64").length / 1024).toFixed(0)} KB`);
-    } finally { ws.close(); chrome.kill(); }
-}
+await doc.write({ dir: HERE, name: NAME, doc: DOC, revision: REVISION, issued: ISSUED, title: "OpenCore MES developer's guide", subtitle: "Developer's guide<br>Installation, services and integration", appliesTo: "OpenCore MES, the platform as built on the issue date", footerTitle: "OpenCore MES developer's guide", pdf: process.argv.includes("--pdf") });

@@ -4,16 +4,34 @@
 //     definitions: [object bodies], transactions: [bodies], screens: [bodies], flows: [bodies],
 //     scripts: { name: source }, tests: { script: [cases] },
 //     roles: { object: { role: ["group:<id>" | "user:<id>"] } },        who gets which role, suggested
-//     records: [{ key, object, data, actions? } | { ref, set } | { object, find, set }],   sample records
+//     records: [{ key, object, data, actions? } | { ref, set } | { object, find, set, key? }],   samples
 //                                                                       (find: a record already there, by
-//                                                                       its fields: a Person by its user)
+//                                                                       its fields: a Person by its user;
+//                                                                       keyed, later ones name it "@key")
 //     prefix: "semi_",                                                  its own names' start (needed to extend)
 //     extends: { object: { fields: { name: field }, policies?: [policy], form?: { label } } },
 //                                                                       fields it adds to an object it does not
 //                                                                       bring (the built-in Person), each named
 //                                                                       with its prefix, marked as the suite's
-//     locks: { object: { fields?, states?, transitions?, rules?, policies?, keep?, why? } } }
+//     locks: { object: { fields?, states?, transitions?, rules?, policies?, keep?, why? } },
 //                                                                       what it relies on (builtins.js)
+//     certifications: { id: { name, description? } },                  certifications its designs require
+//                                                                       (§27.9), suggested like its roles: those
+//                                                                       the organization lacks join the change
+//     groups: { id: { name, seedMembers? } },                          groups its designs name (a screen's callers,
+//                                                                       a role): those the organization lacks join
+//                                                                       the change with nobody in them, for the plant
+//                                                                       to fill (a tool crib's keepers); seedMembers:
+//                                                                       the seed's people a seeding reset (a demo, a
+//                                                                       suite's development instance) puts in it,
+//                                                                       never a plant's change
+//     onlyWith: { <suite>: { <kind>: [names] } },                      elements offered only where that suite is
+//                                                                       installed (a bridge to its capabilities):
+//                                                                       elsewhere the rest of the pack, without them
+//     files: [{ path: a file: URL, name? }] }                           the files its designs and samples name
+//                                                                       by their SHA-256 (a guide's PDF, §35.4),
+//                                                                       kept in the file store when a change is
+//                                                                       started from it or its samples load
 // A designer starts a change request from it (design.fromPack): every element that is new or differs
 // from what is live, and the roles, through review and approval like any change. Once live, its
 // designs are the plant's own: they work with the suite removed, because they are only designs.
@@ -21,8 +39,11 @@
 // created, then takes its `actions` in turn; `@key` in data names a record created before it, and
 // `{ ref, set }` sets fields of one created before (a cycle: a route and its first step). A record
 // whose title is already there is left as it is, so loading again adds nothing.
-import { fail } from "../../../src/errors.js";
+import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { fail } from "@opencore-mes/juris-kit/errors.js";
 import { canonical } from "./audit.js";
+import { fileType, limitOf } from "./blobs.js";
 
 const isPlain = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 
@@ -32,7 +53,7 @@ export function packProblems(pack) {
     if (!isPlain(pack)) return ["designs is { label, version, definitions, transactions, screens, scripts, roles, records }"];
     if (typeof pack.label !== "string" || !pack.label.trim()) out.push("designs.label: a name for the pack");
     if (typeof pack.version !== "string" || !pack.version.trim()) out.push("designs.version: its version, a string");
-    for (const [kind, key] of [["definitions", "object"], ["connections", "name"], ["services", "name"], ["transactions", "name"], ["screens", "name"], ["flows", "name"], ["layouts", "name"], ["elements", "name"]]) {
+    for (const [kind, key] of [["definitions", "object"], ["connections", "name"], ["services", "name"], ["transactions", "name"], ["screens", "name"], ["flows", "name"], ["layouts", "name"], ["queries", "name"], ["elements", "name"]]) {
         if (pack[kind] !== undefined && !(Array.isArray(pack[kind]) && pack[kind].every((b) => isPlain(b) && typeof b[key] === "string"))) out.push(`designs.${kind}: a list of bodies, each with its ${key}`);
     }
     for (const kind of ["scripts", "tests", "roles"]) if (pack[kind] !== undefined && !isPlain(pack[kind])) out.push(`designs.${kind}: an object`);
@@ -50,18 +71,48 @@ export function packProblems(pack) {
         }
     }
     if (pack.locks !== undefined && !(isPlain(pack.locks) && Object.values(pack.locks).every(isPlain))) out.push("designs.locks: { object: { fields?, states?, transitions?, rules?, policies?, keep?, why? } }");
+    if (pack.certifications !== undefined && !(isPlain(pack.certifications) && Object.entries(pack.certifications).every(([id, c]) => /^[a-z][a-z0-9_]{0,47}$/.test(id) && isPlain(c) && typeof c.name === "string" && c.name.trim() && c.name.length <= 80 && (c.description === undefined || (typeof c.description === "string" && c.description.length <= 500))))) out.push("designs.certifications: { id: { name (at most 80 characters), description? } }, each id lower case letters, digits and _");
+    if (pack.groups !== undefined && !(isPlain(pack.groups) && Object.entries(pack.groups).every(([id, g]) => /^[a-z][a-z0-9_]{0,47}$/.test(id) && isPlain(g) && typeof g.name === "string" && g.name.trim() && g.name.length <= 80 && (g.seedMembers === undefined || (Array.isArray(g.seedMembers) && g.seedMembers.every((m) => typeof m === "string" && m)))))) out.push("designs.groups: { id: { name (at most 80 characters), seedMembers?: [the seed's people] } }, each id lower case letters, digits and _");
+    if (pack.onlyWith !== undefined && !(isPlain(pack.onlyWith) && Object.entries(pack.onlyWith).every(([suite, kinds]) => /^[a-z][a-z0-9-]{0,39}$/.test(suite) && isPlain(kinds) && Object.entries(kinds).every(([k, names]) => ONLY_KINDS.includes(k) && Array.isArray(names) && names.every((n) => typeof n === "string" && n))))) out.push(`designs.onlyWith: { suite: { kind (${ONLY_KINDS.join(", ")}): [names] } }`);
+    if (pack.files !== undefined && !(Array.isArray(pack.files) && pack.files.every((f) => isPlain(f) && f.path instanceof URL && (f.name === undefined || (typeof f.name === "string" && f.name.trim() && f.name.length <= 120))))) out.push("designs.files: a list of { path: a file: URL, name? } (at most 120 characters)");
     const keys = new Set();
     for (const [i, r] of (pack.records ?? []).entries()) {
         if (isPlain(r) && typeof r.ref === "string") {
             if (!keys.has(r.ref) || !isPlain(r.set)) out.push(`designs.records[${i}]: { ref, set } names a record listed before it`);
         } else if (isPlain(r) && r.find !== undefined) {
-            if (typeof r.object !== "string" || !isPlain(r.find) || !Object.keys(r.find).length || !isPlain(r.set)) out.push(`designs.records[${i}]: { object, find: { field: value }, set } changes a record already there`);
+            if (typeof r.object !== "string" || !isPlain(r.find) || !Object.keys(r.find).length || !isPlain(r.set)) out.push(`designs.records[${i}]: { object, find: { field: value }, set, key? } changes a record already there`);
+            // Keyed, later samples name it ("@key"): a Person found by its user, whom a certification is for.
+            else if (r.key !== undefined) { if (typeof r.key !== "string" || keys.has(r.key)) out.push(`designs.records[${i}]: the key "${r.key}" twice, or not a string`); else keys.add(r.key); }
         } else if (!isPlain(r) || typeof r.key !== "string" || typeof r.object !== "string" || !isPlain(r.data) || (r.actions !== undefined && !Array.isArray(r.actions))) {
             out.push(`designs.records[${i}]: { key, object, data, actions? }`);
         } else if (keys.has(r.key)) out.push(`designs.records[${i}]: the key "${r.key}" twice`);
         else keys.add(r.key);
     }
     return out;
+}
+
+// A pack's files (§35.4): each read, its kind told by its bytes as an upload's is (a picture, a PDF, a video, a
+// spreadsheet) and within its limit, and named by its SHA-256, the name its designs give it. Read when the
+// suites load, so a file that is missing or of another kind stops the start, naming it. → [{ sha256, type,
+// size, name, path }]; throws words.
+export async function packFiles(pack, where = "designs") {
+    const out = [];
+    for (const [i, f] of (pack?.files ?? []).entries()) {
+        let bytes;
+        try { bytes = await readFile(f.path); } catch { throw new Error(`${where}.files[${i}]: ${f.path.pathname} cannot be read`); }
+        const type = fileType(bytes);
+        if (!type) throw new Error(`${where}.files[${i}]: ${f.path.pathname} is not a picture, a PDF, a video (MP4, WebM), a CSV file or an Excel workbook`);
+        if (bytes.length > limitOf(type)) throw new Error(`${where}.files[${i}]: ${f.path.pathname} is more than ${limitOf(type) / 1_000_000} MB`);
+        out.push({ sha256: createHash("sha256").update(bytes).digest("hex"), type, size: bytes.length, name: f.name ?? f.path.pathname.split("/").pop(), path: f.path });
+    }
+    return out;
+}
+// Kept in the file store, where they are not already (content-addressed: kept once, whoever brings them).
+export async function keepPackFiles(db, files = [], by = "platform") {
+    for (const f of files) {
+        if ((await db.query("SELECT 1 FROM mes.blobs WHERE sha256 = $1", [f.sha256])).length) continue;
+        await db.query("INSERT INTO mes.blobs (sha256, type, size, bytes, created_by, name) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (sha256) DO NOTHING", [f.sha256, f.type, f.size, await readFile(f.path), by, f.name.slice(0, 120)]);
+    }
 }
 
 // An object the pack extends, as it would be with the suite's fields: the live definition, its fields
@@ -97,6 +148,8 @@ export function packElements(pack, live = null) {
         screens: Object.fromEntries((pack.screens ?? []).map((b) => [b.name, b])),
         flows: Object.fromEntries((pack.flows ?? []).map((b) => [b.name, b])),
         layouts: Object.fromEntries((pack.layouts ?? []).map((b) => [b.name, b])),
+        // Named queries (§23.1): a reference's choices, a screen's rows (a tester fit for a board).
+        queries: Object.fromEntries((pack.queries ?? []).map((b) => [b.name, b])),
         // Design elements of the suites' own kinds (§30.11): carried as they are, whichever suite's.
         elements: Object.fromEntries((pack.elements ?? []).map((b) => [b.name, b])),
         scripts: { ...(pack.scripts ?? {}) },
@@ -123,12 +176,42 @@ export function missingRoles(pack, org) {
         for (const [role, subjects] of Object.entries(roles ?? {})) {
             for (const subject of subjects ?? []) {
                 const [kind, id] = String(subject).split(":");
-                const exists = kind === "group" ? Boolean(org.groups?.[id] ?? org.departments?.[id]) : kind === "user" ? Boolean(org.users?.[id]) : false;
+                // A group the pack brings exists once its change does (missingGroups).
+                const exists = kind === "group" ? Boolean(org.groups?.[id] ?? org.departments?.[id] ?? pack.groups?.[id]) : kind === "user" ? Boolean(org.users?.[id]) : false;
                 if (exists && !(org.roles?.[object]?.[role] ?? []).includes(subject)) out.push([object, role, subject]);
             }
         }
     }
     return out;
+}
+
+// What of a pack is offered here (§29.6): an element it lists under `onlyWith: { <suite>: { <kind>: [names] } }` only
+// where that suite is installed (a service bridging to that suite's capability, its script and tests); everything
+// else everywhere. `installed`: the names of the suites installed.
+const ONLY_KINDS = ["definitions", "connections", "services", "transactions", "screens", "flows", "layouts", "queries", "elements", "scripts", "tests", "records"];
+export function forInstalled(pack, installed = []) {
+    if (!isPlain(pack?.onlyWith)) return pack;
+    const have = new Set(installed);
+    const drop = {};
+    for (const [suite, kinds] of Object.entries(pack.onlyWith)) if (!have.has(suite)) for (const [kind, names] of Object.entries(isPlain(kinds) ? kinds : {})) for (const n of Array.isArray(names) ? names : []) (drop[kind] ??= new Set()).add(n);
+    if (!Object.keys(drop).length) return pack;
+    const out = { ...pack };
+    for (const k of ["definitions", "connections", "services", "transactions", "screens", "flows", "layouts", "queries", "elements"]) if (drop[k] && Array.isArray(pack[k])) out[k] = pack[k].filter((b) => !drop[k].has(k === "definitions" ? b?.object : b?.name));
+    for (const k of ["scripts", "tests"]) if (drop[k] && isPlain(pack[k])) out[k] = Object.fromEntries(Object.entries(pack[k]).filter(([n]) => !drop[k].has(n)));
+    if (drop.records && Array.isArray(pack.records)) out.records = pack.records.filter((r) => !drop.records.has(r?.key));
+    return out;
+}
+
+// The groups a pack brings that the organization has neither as a group nor as a department: [[id, { name }]].
+// One the plant has already, under the same id, is the plant's: left as it is, its people with it.
+export function missingGroups(pack, org) {
+    return Object.entries(pack.groups ?? {}).filter(([id]) => !Object.hasOwn(org?.groups ?? {}, id) && !Object.hasOwn(org?.departments ?? {}, id));
+}
+
+// The certifications a pack suggests that the organization does not list (§27.9): [[id, { name, description? }]].
+// One the plant lists already, under the same id, is the plant's: left as it is.
+export function missingCertifications(pack, org) {
+    return Object.entries(pack.certifications ?? {}).filter(([id]) => !Object.hasOwn(org?.certifications ?? {}, id));
 }
 
 // The state a record reaches from its object's initial state by taking `actions` in turn (the seed's
@@ -158,6 +241,8 @@ export function createSamples({ store, records, packs }) {
             if (!(await store.rolesFor(person.id, "design")).length) fail("The designer is not shared with you.", { status: 403 });
             const pack = packs()[suite];
             if (!pack) fail(`No suite named "${suite}" with designs is installed.`, { status: 404 });
+            // The files its samples name (a work instruction's PDF), kept before they are written.
+            await keepPackFiles(store.db, pack.$files, `suite:${suite}`);
             const ids = {};
             let made = 0;
             let there = 0;
@@ -168,6 +253,7 @@ export function createSamples({ store, records, packs }) {
                     const where = Object.entries(r.find);
                     const [found] = await store.db.query(`SELECT id FROM mes.records WHERE object = $1 AND archived_at IS NULL AND ${where.map((_, i) => `data->>$${i * 2 + 2} = $${i * 2 + 3}`).join(" AND ")} LIMIT 1`, [r.object, ...where.flatMap(([k, v]) => [k, String(v)])]);
                     if (!found) continue;
+                    if (typeof r.key === "string") ids[r.key] = found.id;
                     const current = await call(this, "records.get", { object: r.object, id: found.id });
                     const set = resolveRefs(r.set, ids);
                     if (Object.entries(set).every(([k, v]) => JSON.stringify(current[k] ?? null) === JSON.stringify(v))) { there++; continue; }

@@ -23,7 +23,7 @@
 //   DATABASE_URL=postgres:///openmes_test node app/mes/test/reports.mjs   (after a reset)
 import pg from "pg";
 import { randomBytes } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 import { reportProblems, blockView, scaleOf, validateReportLayout, layoutDepartures } from "../client/report.js";
 

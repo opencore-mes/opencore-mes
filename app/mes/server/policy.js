@@ -14,7 +14,7 @@
 // An archived record (`archived_at` set) is read-only: no field may be written and no action taken,
 // whatever the rules grant (reason "archived"). Archiving and restoring it take `record.archive`.
 import { explain as explainExpression } from "../client/expr.js";
-import { READ_ALL_ROLE } from "../client/definition.js";
+import { READ_ALL_ROLE, hiddenValue, isSensitive, isDerived } from "../client/definition.js";
 import { managedOf } from "../client/builtins.js";
 
 // Who reads every record (§27.7) holds READ_ALL_ROLE on every object: as if each object had this rule.
@@ -48,10 +48,37 @@ export function transitionsFrom(definition, state) {
     return (definition.states?.transitions ?? []).filter((t) => t.from.includes(state));
 }
 
+// ---- what an object's access requires (§9.9) -------------------------------------------------------
+// `access: { requires: [{ certification, when? }] }`: a record is anyone's at all only when they hold each
+// certification whose condition holds for it (none: always). It comes before every policy and is never
+// granted around: not by a role, not by reading every record (§27.7). The plant's own automation (a plan,
+// a suite's machine) is not held to it (`unrestricted`): it shows nothing to anyone. → the certifications
+// the record requires that the user does not hold ([] : none).
+export const requirementsOf = (definition) => (Array.isArray(definition?.access?.requires) ? definition.access.requires.filter((r) => r && typeof r.certification === "string") : []);
+export function accessMissing(definition, user, record) {
+    const requires = requirementsOf(definition);
+    if (!requires.length || user?.unrestricted) return [];
+    const held = new Set(Array.isArray(user?.certifications) ? user.certifications : []);
+    const missing = [];
+    for (const r of requires) {
+        if (held.has(r.certification) || missing.includes(r.certification)) continue;
+        let holds = true;
+        if (r.when !== undefined) try { holds = explainExpression(r.when, { record }).value === true; } catch { holds = true; }
+        if (holds) missing.push(r.certification);
+    }
+    return missing;
+}
+
 // The decision for one user on one record (a would-be record for create): what they may read and
 // write, which actions they may take, and a short reason code for everything they may not (§9.7).
 export function decide(definition, user, record) {
     const fieldNames = Object.keys(definition.fields);
+    // Reserved to a certification they do not hold: nothing at all, whatever their roles.
+    const missing = accessMissing(definition, user, record);
+    if (missing.length) {
+        const why = Object.fromEntries([...fieldNames.map((n) => [n, "restricted"]), ...(definition.states?.transitions ?? []).map((t) => [`action:${t.action}`, "restricted"]), ["record:archive", "restricted"]]);
+        return { read: false, create: false, archive: false, fields: Object.fromEntries(fieldNames.map((n) => [n, null])), actions: [], why, evaluations: [], restricted: missing };
+    }
     const grants = { read: false, create: false, archive: false, fields: {}, actions: new Set() };
     const denied = { fields: new Set(), actions: new Set(), read: new Set() };
     const evaluations = rulesFor(definition, user).map((rule) => ({ rule, ...ruleMatches(rule, user, record) }));
@@ -86,6 +113,8 @@ export function decide(definition, user, record) {
         if (archived && level === "w") { level = "r"; why[name] = "archived"; }
         // What the platform alone keeps on a built-in object (builtins.js): read only, whatever the grants.
         if (level === "w" && managed.has(name)) { level = "r"; why[name] = "managed"; }
+        // A derived field (§6.11) is the platform's to keep, from what it reads through references.
+        if (level === "w" && isDerived(definition, name)) { level = "r"; why[name] = "derived"; }
         fields[name] = level;
         if (level !== "w" && !why[name]) why[name] = denied.fields.has(name) ? "deny" : reasonFor(evaluations, (rule) => grantsField(rule, name, "write"));
     }
@@ -168,13 +197,19 @@ function reasonFor(evaluations, grants) {
 }
 
 // The record as this user may see it: readable fields only, the system columns, and $perm.
+// A sensitive field's value (§6.10) goes out as the marker, even to who may read it: they see it by
+// asking (records.reveal), with a reason. `$perm` still says they may read (and write) it.
 export function mask(definition, user, row) {
     const record = { ...row.data, id: row.id, state: row.state, type: row.type, archived_at: row.archived_at ?? null };
     const decision = decide(definition, user, record);
     if (!decision.read) return null;
     const out = {};
     for (const name of SYSTEM_FIELDS) if (row[name] !== undefined) out[name] = row[name];
-    for (const [name, level] of Object.entries(decision.fields)) if (level && row.data[name] !== undefined) out[name] = row.data[name];
+    for (const [name, level] of Object.entries(decision.fields)) {
+        const value = row.data[name];
+        if (!level || value === undefined) continue;
+        out[name] = isSensitive(definition, name) && value !== null && value !== "" ? hiddenValue() : value;
+    }
     out.$perm = { fields: decision.fields, actions: decision.actions, archive: decision.archive, why: decision.why };
     return out;
 }

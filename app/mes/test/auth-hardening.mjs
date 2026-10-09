@@ -16,7 +16,7 @@
 //   DATABASE_URL=postgres:///openmes_test node app/mes/test/auth-hardening.mjs   (after a reset)
 import pg from "pg";
 import { createHash, randomBytes } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 import { hashPassword, hotp, timeStep, LOCK_AFTER, SPRAY } from "../server/sign-in.js";
 import { startSsoSimulator } from "../sso-sim.mjs";
@@ -70,7 +70,7 @@ const codeNext = (secret) => hotp(secret, timeStep() + 1);
 try {
     const users = ["olga", "sam", "quinn", "dana", "eli", "vera", "ivan", "ines", "iris"].map((id) => ({ id, name: id }));
     sim = await startSsoSimulator({ port: 0, users, password: `sso ${tag}` });
-    const policy = { passwords: true, sso: { issuer: sim.issuer, clientId: "open-mes" }, signWithPassword: true, passwordMaxDays: 90, passwordHistory: 3, mfa: "optional", idleMinutes: 30 };
+    const policy = { passwords: true, sso: { issuer: sim.issuer, clientId: "opencore-mes" }, signWithPassword: true, passwordMaxDays: 90, passwordHistory: 3, mfa: "optional", idleMinutes: 30 };
     const fakeEvents = { emit: (kind, e) => events.push({ kind, ...e }), flush: async () => 0, state: () => ({}), start() {}, stop() {} };
     // (Plain HTTP here: the callback single sign-on returns to is this server's own, http.)
     strict = await createApp({ db, dev: false, secure: false, build: "test", outboxEveryMs: 0, schedulerEveryMs: 0, signIn: policy, events: fakeEvents });
@@ -175,6 +175,11 @@ try {
     const unlocked = await iris.api(S, "auth.admin.unlock", { id: "ivan" });
     const { b: ivanB, r: ivanIn } = await signIn(S, "ivan", PW("ivan"));
     void ivanB;
+    // A link's life: in days (up to 14), the plant's default (3) unless said, never longer.
+    const twoWeeks = await iris.api(S, "auth.admin.link", { id: "sam", days: 14 });
+    const tooLong = await iris.api(S, "auth.admin.link", { id: "sam", days: 15 });
+    const byDefault = await iris.api(S, "auth.admin.link", { id: "sam" });
+    step("a password link lasts the days asked (up to 14), the plant's default (3 days) unless asked, never longer", twoWeeks.days === 14 && twoWeeks.hours === 336 && tooLong.status === 400 && /1 to 14 days/.test(tooLong.error ?? "") && byDefault.days === 3, { twoWeeks: twoWeeks.days, tooLong, byDefault: byDefault.days });
     const link = await iris.api(S, "auth.admin.link", { id: "sam", hours: 24 });
     const [linkAudit] = await db.query("SELECT actor FROM mes.audit_log WHERE object = '$auth' AND action = 'password link' AND after->>'user' = 'sam' ORDER BY seq DESC LIMIT 1");
     const noReason = await iris.api(S, "auth.admin.resetMfa", { id: "olga" });

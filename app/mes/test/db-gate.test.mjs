@@ -96,3 +96,41 @@ test("a full pool is not an outage: while the database answers on a connection o
     await assert.rejects(plain.query("SELECT 1"), (e) => e.code === "db.unavailable");
     plain.stop();
 });
+
+// A pool of `size` connections: a transaction holds one; a query takes one while it runs; past `size`, a call
+// waits for one to come free, and gives up as the pool does after `waitMs`.
+function pooled(size, waitMs = 300) {
+    let free = size;
+    const waiting = [];
+    const take = () => new Promise((resolve, reject) => {
+        if (free > 0) { free--; return resolve(); }
+        const w = { resolve, timer: setTimeout(() => { waiting.splice(waiting.indexOf(w), 1); reject(new Error("timeout exceeded when trying to connect")); }, waitMs) };
+        waiting.push(w);
+    });
+    const give = () => { const w = waiting.shift(); if (w) { clearTimeout(w.timer); w.resolve(); } else free++; };
+    const query = async () => { await take(); try { await sleep(5); return []; } finally { give(); } };
+    return { query, async transaction(fn) { await take(); try { return await fn({ query: async () => { await sleep(5); return []; } }); } finally { give(); } } };
+}
+
+test("transactions that each read through the pool: with every connection in one, all wait out the pool; kept short of it, all go through", async () => {
+    // Ten transactions at once on a pool of four, each reading who the person is through the pool (a second connection).
+    const work = (gate) => Promise.allSettled(Array.from({ length: 10 }, () => gate.transaction(async () => { await sleep(10); await gate.query("SELECT roles"); return "saved"; })));
+    const unbounded = gateDb(pooled(4), { log: quiet, reaches: async () => true });
+    const stuck = await work(unbounded);
+    assert.ok(stuck.some((r) => r.status === "rejected" && r.reason.code === "db.busy"), "every connection in a transaction waiting for one more: refused as busy");
+    const bounded = gateDb(pooled(4), { log: quiet, reaches: async () => true, transactions: 2 });
+    const went = await work(bounded);
+    assert.deepEqual(went.map((r) => r.value ?? r.reason?.message), Array(10).fill("saved"), "two short of the pool, each waits its turn and goes through");
+    assert.deepEqual(bounded.state().transactions, { holding: 0, waiting: 0, at: 2 });
+});
+
+test("a transaction waits its turn no longer than the pool would, and one begun inside another holds its outer one's turn", async () => {
+    const gate = gateDb(pooled(10), { log: quiet, reaches: async () => true, transactions: 1, waitMs: 50 });
+    let release;
+    const first = gate.transaction(() => new Promise((r) => { release = r; }));
+    await sleep(5);
+    await assert.rejects(gate.transaction(async () => "late"), (e) => e.code === "db.busy");
+    release("first");
+    assert.equal(await first, "first");
+    assert.equal(await gate.transaction(() => gate.transaction(async () => "inner")), "inner", "a transaction inside one does not wait for a turn of its own");
+});

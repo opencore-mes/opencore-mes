@@ -11,8 +11,8 @@
 import http from "node:http";
 import pg from "pg";
 import { randomBytes } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
-import { CALL_KIND } from "../../../src/live-protocol.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
+import { CALL_KIND } from "@opencore-mes/juris-kit/live-protocol.js";
 import { createStore } from "../server/store.js";
 import { createServices } from "../server/services.js";
 import { createDesign } from "../server/design.js";

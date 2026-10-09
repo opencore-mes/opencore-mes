@@ -2,7 +2,7 @@
 // (designer.js), in the same windows on the same working copy. A service or a connection is changed
 // as an object is: every edit is a draft in a change request, checked as it is typed, approved by the
 // stewards of what it reaches, and live once executed.
-import { pickMany } from "./pick.js";
+import { pickMany, tagsInput } from "./pick.js";
 import { noDefault } from "./select.js";
 import { validateService, validateConnection, validateScript, integrationFootprint, serviceIdentity, FIELD_TYPES, HTTP_METHODS, AUTH_KINDS, SERVICE_OPS, RECORD_EVENTS, IDENTIFIER } from "./definition.js";
 import { isSchedule, isSuiteSchedule, suiteOf, scheduleProblems, runsOf, describeSchedule, DAYS, MAX_CATCH_UP } from "./schedule.js";
@@ -11,10 +11,12 @@ import { W, clone, text, labelled, check, compileInPage, draftDefinitions } from
 import { findSyntaxError, callableProblems } from "./code-editor.js";
 import { plant, formatDateTime } from "./format.js";
 import { icon, withIcon } from "./icons.js";
+import { confirmRemove } from "./dialog.js";
+import * as history from "./undo.js";
 
 export const SERVICE_VIEWS = [["copilot", "Copilot", "sparkle"], ["changes", "Changes"], ["general", "General"], ["input", "Input"], ["callers", "Identity"], ["triggers", "Triggers"], ["reaches", "Reaches"], ["script", "Script"], ["try", "Try it"], ["activity", "Activity"], ["stewards", "Stewards"], ["json", "JSON"]];
 export const CONNECTION_VIEWS = [["copilot", "Copilot", "sparkle"], ["changes", "Changes"], ["general", "General"], ["auth", "Authentication"], ["allow", "Allowed requests"], ["activity", "Activity"], ["stewards", "Stewards"], ["json", "JSON"]];
-const SLOT = { service: "sv", connection: "cn", transaction: "tx", screen: "sc", flow: "fl", layout: "ly", element: "el" };
+const SLOT = { service: "sv", connection: "cn", transaction: "tx", screen: "sc", flow: "fl", layout: "ly", query: "qy", element: "el" };
 
 // The working copy's part for one service or connection, and edits to it.
 export function elementOps(api, id, kind, name) {
@@ -28,9 +30,9 @@ export function elementOps(api, id, kind, name) {
     };
     return {
         root,
-        set(path, value, structural = false) { api.setValue(`${root}.${path}`, value); touched(structural); },
-        edit(fn) { const copy = clone(api.peek(root)); fn(copy); api.setValue(root, copy); touched(true); },
-        setScript(script, source) { api.setValue(`${w}.s.${script}`, source); touched(false); },
+        set(path, value, structural = false) { history.before(api, w, structural ? null : `${root}.${path}`); api.setValue(`${root}.${path}`, value); touched(structural); },
+        edit(fn) { history.before(api, w); const copy = clone(api.peek(root)); fn(copy); api.setValue(root, copy); touched(true); },
+        setScript(script, source) { history.before(api, w, `s.${script}`); api.setValue(`${w}.s.${script}`, source); touched(false); },
     };
 }
 
@@ -38,8 +40,8 @@ export function elementOps(api, id, kind, name) {
 // users, groups and departments there will be once the change executes.
 function knownOf(api, w) {
     const home = api.peek("design.home") ?? {};
-    const objects = Object.fromEntries((home.objects ?? []).map((o) => [o.object, { actions: o.actions ?? [], roles: o.roles ?? [], stewards: { object: o.stewards ?? [] } }]));
-    for (const [object, body] of Object.entries(draftDefinitions(api, w))) if (body) objects[object] = { actions: (body.states?.transitions ?? []).map((t) => t.action), roles: body.roles ?? [], stewards: body.stewards ?? {} };
+    const objects = Object.fromEntries((home.objects ?? []).map((o) => [o.object, { actions: o.actions ?? [], roles: o.roles ?? [], stewards: { object: o.stewards ?? [] }, ...(o.approval ? { approval: o.approval } : {}) }]));
+    for (const [object, body] of Object.entries(draftDefinitions(api, w))) if (body) objects[object] = { actions: (body.states?.transitions ?? []).map((t) => t.action), roles: body.roles ?? [], stewards: body.stewards ?? {}, ...(body.approval ? { approval: body.approval } : {}) };
     return {
         objects,
         scripts: [...new Set([...(home.scripts ?? []).map((s) => s.name), ...Object.keys(api.peek(`${w}.s`) ?? {})])],
@@ -87,9 +89,14 @@ export const dryRunError = (api, w, name) => () => {
 };
 
 // A test case from a dry run: what it ran on, and what it did, as the expectation (§5.9).
-function caseFrom(kind, name, given, r, as, me) {
-    // A script a suite runs (§29.4): this input, this output (or this refusal).
-    if (kind === "plain") return { name, run: given, expect: r.ok ? { output: r.output } : { throws: { message: r.error?.message } } };
+export function caseFrom(kind, name, given, r, as, me) {
+    // A script a suite or a flow node runs (§29.4, §32.5): this input, this output (or this refusal). The
+    // dry run's own additions to its output are not the script's: who ran it is left out, and the time it
+    // ran at goes into the input instead, so a script that reads ctx.now gives the same output again.
+    if (kind === "plain") {
+        const { as: _who, now, ...output } = r.output && typeof r.output === "object" && !Array.isArray(r.output) ? r.output : {};
+        return { name, run: { ...given, ...(now !== undefined && given?.now === undefined ? { now } : {}) }, expect: r.ok ? { output } : { throws: { message: r.error?.message } } };
+    }
     if (kind === "rule") {
         const { writes, ...run } = given;
         return { name, run, expect: r.ok ? { data: Object.fromEntries((r.changed ?? []).map((f) => [f, r.data?.[f]])), changed: r.changed ?? [] } : { throws: { message: r.error?.message, ...(r.error?.field ? { field: r.error.field } : {}) } } };
@@ -105,6 +112,7 @@ function addCase(api, id, script, testCase) {
     // A published script's cases travel with it: the script joins the change.
     if (api.peek(`${w}.s.${script}`) === undefined && api.peek(`${w}.viewing`)?.name === script) api.setValue(`${w}.s.${script}`, api.peek(`${w}.viewing`).source);
     const cases = [...(api.peek(`${w}.t.${script}`) ?? []).filter((c) => c.name !== testCase.name), testCase];
+    history.before(api, w);
     api.setValue(`${w}.t.${script}`, cases);
     api.setValue(`${w}.dirty`, true);
     api.setValue(`${w}.vrev`, (api.peek(`${w}.vrev`) ?? 0) + 1);
@@ -156,10 +164,10 @@ function serviceGeneral(ctx) {
     };
 }
 
-// A web service deprecated: its callers' notice. Every call is then answered with Deprecation, Sunset and
-// Link headers, and its OpenAPI operation says so; a change that would break its callers goes through
-// once the sunset has passed (docs/contracts/http-apis).
-function deprecation(ctx) {
+// A design published over HTTP (a web service, a transaction, a named query) deprecated: its callers' notice.
+// Every call is then answered with Deprecation, Sunset and Link headers, and its OpenAPI operation says so; a
+// change that would break its callers goes through once the sunset has passed (docs/contracts/http-apis).
+export function deprecation(ctx) {
     const { body, ops, ro } = ctx;
     const d = body.deprecated;
     const today = new Date().toISOString().slice(0, 10);
@@ -171,7 +179,7 @@ function deprecation(ctx) {
                 ...(d ? [
                     labelled("Since", { input: { type: "date", disabled: ro, value: d.since ?? "", onchange: (e) => ops.set("deprecated.since", e.target.value, true) } }),
                     labelled("Sunset", { input: { type: "date", disabled: ro, value: d.sunset ?? "", onchange: (e) => ops.set("deprecated.sunset", e.target.value, true) } }, "The date after which it may change or go."),
-                    labelled("Successor", text(ctx, "deprecated.successor", { placeholder: "the web service to use instead" })),
+                    labelled("Successor", text(ctx, "deprecated.successor", { placeholder: "what to call instead (its name)" })),
                     labelled("Note for its callers", text(ctx, "deprecated.note", { multiline: true })),
                 ] : []),
             ],
@@ -201,8 +209,8 @@ function inputTab(ctx) {
                                                 { td: { children: [text(ctx, `input.${field}.label`)] } },
                                                 { td: { children: [{ select: { disabled: ro, onchange: (e) => ops.set(`input.${field}.type`, e.target.value, true), children: noDefault(FIELD_TYPES.map((t) => ({ option: { value: t, selected: spec.type === t, textContent: t } }))) } }] } },
                                                 { td: { children: [check(ctx, `input.${field}.required`, "")] } },
-                                                { td: { children: [spec.type === "enum" ? { input: { type: "text", disabled: ro, value: (spec.values ?? []).join(", "), onchange: (e) => ops.set(`input.${field}.values`, e.target.value.split(",").map((v) => v.trim()).filter(Boolean), true) } } : { span: { className: "muted", textContent: "—" } }] } },
-                                                { td: { children: ro() ? [] : [{ button: { type: "button", className: "btn ghost", textContent: "Remove", onclick: () => ops.edit((b) => { delete b.input[field]; }) } }] } },
+                                                { td: { children: [spec.type === "enum" ? tagsInput({ key: `${ctx.w}.svals.${ctx.name}.${field}`, readOnly: ro, placeholder: "Add a value…", value: spec.values ?? [], onChange: (next) => ops.set(`input.${field}.values`, next, true) }) : { span: { className: "muted", textContent: "—" } }] } },
+                                                { td: { children: ro() ? [] : [{ button: { type: "button", className: "btn ghost", textContent: "Remove", onclick: confirmRemove(ctx.api, `input ${field}`, () => ops.edit((b) => { delete b.input[field]; }) )} }] } },
                                             ],
                                         },
                                     })),
@@ -304,7 +312,7 @@ function triggersTab(ctx) {
                                             children: [
                                                 { td: { children: [{ select: { disabled: ro, onchange: (e) => ops.edit((b) => { b.on[i] = { object: e.target.value, event: "create" }; }), children: noDefault(objects.map((o) => ({ option: { value: o.object, selected: o.object === t.object, textContent: o.label } }))) } }] } },
                                                 { td: { children: [{ select: { disabled: ro, onchange: (e) => ops.set(`on.${i}.event`, e.target.value, true), children: noDefault(eventsOf(t.object).map((ev) => ({ option: { value: ev, selected: ev === t.event, textContent: ev } }))) } }] } },
-                                                { td: { children: ro() ? [] : [{ button: { type: "button", className: "btn ghost", textContent: "Remove", onclick: () => ops.edit((b) => { b.on.splice(i, 1); }) } }] } },
+                                                { td: { children: ro() ? [] : [{ button: { type: "button", className: "btn ghost", textContent: "Remove", onclick: confirmRemove(ctx.api, "this trigger", () => ops.edit((b) => { b.on.splice(i, 1); }) )} }] } },
                                             ],
                                         },
                                     })),
@@ -362,7 +370,10 @@ function scheduleCard(ctx, t, i, plantTz, kinds = {}) {
                                     { input: { type: "number", min: 1, max: unit === "hours" ? 24 : 720, disabled: ro, value: String(amount), onchange: (e) => edit((sc) => { sc.every = { [unit]: Number(e.target.value) }; }) } },
                                     { select: { disabled: ro, onchange: (e) => edit((sc) => { sc.every = { [e.target.value]: e.target.value === "hours" ? 1 : 15 }; }), children: noDefault([["minutes", "minutes"], ["hours", "hours"]].map(([v, l]) => ({ option: { value: v, selected: unit === v, textContent: l } }))) } },
                                 ] } }, "counted from midnight")
-                                : labelled("At", { input: { type: "text", disabled: ro, value: (s.at ?? []).join(", "), placeholder: "06:00, 14:00, 22:00", onchange: (e) => edit((sc) => { sc.at = e.target.value.split(",").map((v) => v.trim()).filter(Boolean); }) } }, "times of day, HH:MM"),
+                                : labelled("At", tagsInput({ key: `${ctx.w}.at.${ctx.name}.${i}`, readOnly: ro, placeholder: "Add a time (HH:MM)…", value: s.at ?? [],
+                                    // A time of day, read loosely (6:00 is 06:00), or why not.
+                                    create: (t) => { const m = /^(\d{1,2}):(\d{2})$/.exec(t); return m && Number(m[1]) < 24 && Number(m[2]) < 60 ? `${m[1].padStart(2, "0")}:${m[2]}` : { error: `“${t}” is not a time of day (HH:MM)` }; },
+                                    onChange: (next) => edit((sc) => { sc.at = next; }) }), "times of day, HH:MM"),
                             mode === "every"
                                 ? labelled("Only between", { span: { className: "inline", children: [
                                     time(s.between?.[0], (e) => edit((sc) => { const to = sc.between?.[1] ?? "22:00"; if (e.target.value) sc.between = [e.target.value, to]; else delete sc.between; })),
@@ -389,7 +400,7 @@ function scheduleCard(ctx, t, i, plantTz, kinds = {}) {
                 problems.length
                     ? { ul: { className: "error small", children: problems.map((p, k) => ({ li: { key: k, textContent: p } })) } }
                     : { p: { className: "muted small", textContent: `Next runs (${tz}): ${next.map(show).join(" · ") || "none"}` } },
-                ro() ? { span: {} } : { button: { type: "button", className: "btn ghost", textContent: "Remove schedule", onclick: () => ops.edit((b) => { b.on.splice(i, 1); }) } },
+                ro() ? { span: {} } : { button: { type: "button", className: "btn ghost", textContent: "Remove schedule", onclick: confirmRemove(ctx.api, "this schedule", () => ops.edit((b) => { b.on.splice(i, 1); }) )} },
             ],
         },
     };
@@ -437,7 +448,7 @@ function settingInput(ctx, i, key, type, value) {
     const set = (v) => ops.edit((b) => { if (v === undefined) delete b.on[i].schedule[key]; else b.on[i].schedule[key] = v; });
     if (type === "boolean") return { input: { type: "checkbox", disabled: ro, checked: value === true, onchange: (e) => set(e.target.checked ? true : undefined) } };
     if (type === "number" || type === "integer") return { input: { type: "number", disabled: ro, value: value === undefined || value === null ? "" : String(value), onchange: (e) => set(e.target.value.trim() === "" ? undefined : Number(e.target.value)) } };
-    if (type === "list") return { input: { type: "text", disabled: ro, value: Array.isArray(value) ? value.join(", ") : "", placeholder: "words, separated by commas", onchange: (e) => { const l = e.target.value.split(",").map((v) => v.trim()).filter(Boolean); set(l.length ? l : undefined); } } };
+    if (type === "list") return tagsInput({ key: `${ctx.w}.set.${ctx.name}.${i}.${key}`, readOnly: ro, placeholder: "Add…", value: Array.isArray(value) ? value : [], onChange: (l) => set(l.length ? l : undefined) });
     return { input: { type: "text", disabled: ro, value: value === undefined || value === null ? "" : typeof value === "string" ? value : JSON.stringify(value), onchange: (e) => set(e.target.value === "" ? undefined : e.target.value) } };
 }
 
@@ -472,7 +483,7 @@ function suiteScheduleCard(ctx, t, i, plantTz, kinds) {
                 problems.length
                     ? { ul: { className: "error small", children: problems.map((p, k) => ({ li: { key: k, textContent: p } })) } }
                     : { SchedulePreview: { key: `preview-${JSON.stringify(t)}`, trigger: clone(t), tz } },
-                ro() ? { span: {} } : { button: { type: "button", className: "btn ghost", textContent: "Remove schedule", onclick: () => ops.edit((b) => { b.on.splice(i, 1); }) } },
+                ro() ? { span: {} } : { button: { type: "button", className: "btn ghost", textContent: "Remove schedule", onclick: confirmRemove(ctx.api, "this schedule", () => ops.edit((b) => { b.on.splice(i, 1); }) )} },
             ],
         },
     };
@@ -683,7 +694,7 @@ function allowTab(ctx) {
                                             children: [
                                                 { td: { children: [{ select: { disabled: ro, onchange: (e) => ops.set(`allow.${i}.method`, e.target.value, true), children: noDefault(HTTP_METHODS.map((m) => ({ option: { value: m, selected: a.method === m, textContent: m } }))) } }] } },
                                                 { td: { children: [text(ctx, `allow.${i}.path`, { structural: true })] } },
-                                                { td: { children: ro() ? [] : [{ button: { type: "button", className: "btn ghost", textContent: "Remove", onclick: () => ops.edit((b) => { b.allow.splice(i, 1); }) } }] } },
+                                                { td: { children: ro() ? [] : [{ button: { type: "button", className: "btn ghost", textContent: "Remove", onclick: confirmRemove(ctx.api, "this entry", () => ops.edit((b) => { b.allow.splice(i, 1); }) )} }] } },
                                             ],
                                         },
                                     })),
@@ -881,9 +892,12 @@ export function registerIntegrationEditor(juris) {
         const [asJson, setAsJson] = api.useState("json", false);
         const ro = () => Boolean(typeof readOnly === "function" ? readOnly() : readOnly);
         const setCases = (cases) => {
+            history.before(api, w);
             api.setValue(`${w}.t.${name}`, cases);
             api.setValue(`${w}.dirty`, true);
             api.setValue(`${w}.vrev`, (api.peek(`${w}.vrev`) ?? 0) + 1);
+            // The list below redraws on it: a case removed goes at once, as one added comes (addCase).
+            api.setValue(`${w}.casesRev`, (api.peek(`${w}.casesRev`) ?? 0) + 1);
         };
         return {
             div: {
@@ -918,7 +932,7 @@ export function registerIntegrationEditor(juris) {
                                                 { span: { className: "case-name", textContent: c.name } },
                                                 { span: { className: "muted small", textContent: ` ${c.as ? `as ${c.as} · ` : ""}${c.expect?.throws || c.expect?.ok === false ? "expects a refusal" : "expects it to run"}` } },
                                                 result && !result.passed ? { div: { className: "error small", textContent: result.detail } } : { span: {} },
-                                                ro() ? { span: {} } : { button: { type: "button", className: "linkish", textContent: "remove", onclick: () => setCases(cases.filter((_, j) => j !== i)) } },
+                                                ro() ? { span: {} } : { button: { type: "button", className: "linkish", textContent: "remove", onclick: confirmRemove(api, "this test case", () => setCases(cases.filter((_, j) => j !== i)) )} },
                                             ],
                                         },
                                     };

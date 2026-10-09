@@ -23,6 +23,7 @@ const asFields = (inputs) => Object.fromEntries(Object.entries(inputs ?? {}).map
     label: s.label ?? k, type: s.type, required: Boolean(s.required), values: s.values, to: s.to,
     ...(s.multiple ? { multiple: true } : {}), ...(s.requiredWhen !== undefined ? { requiredWhen: s.requiredWhen } : {}),
     ...(s.type === "rows" ? { fields: s.fields ?? {}, min: s.min, max: s.max } : {}),
+    ...(s.options ? { options: s.options } : {}),
 }]));
 const words = (v) => String(v ?? "").replace(/_/g, " ");
 const shown = (v) => (v === null || v === undefined || v === "" ? "—" : Array.isArray(v) ? v.join(", ") : typeof v === "number" ? plant().number(v) : String(v));
@@ -113,7 +114,7 @@ export function registerTransactionScreen(juris, { args }) {
             const d = api.peek(defPath);
             if (!d) return;
             api.batch(() => {
-                api.setValue(formDef, { object: null, label: d.label, fields: asFields(d.inputs), form: d.form ?? undefined });
+                api.setValue(formDef, { object: null, transaction: d.name, label: d.label, fields: asFields(d.inputs), form: d.form ?? undefined });
                 api.setValue(permPath, {
                     fields: Object.fromEntries(Object.entries(d.inputs).map(([k, s]) => [k, s.from || Object.hasOwn(filled, k) ? "r" : "w"])),
                     why: Object.fromEntries(Object.entries(d.inputs).filter(([k, s]) => s.from || Object.hasOwn(filled, k)).map(([k, s]) => [k, s.from ? "derived" : "screen"])),

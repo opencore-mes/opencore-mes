@@ -8,6 +8,7 @@ import { floorItem, floorLegend } from "./floor-view.js";
 import { uploadPicture, pictureUrl, PICTURE_TYPES } from "./picture.js";
 import { W, labelled } from "./editor-kit.js";
 import { icon } from "./icons.js";
+import { noun } from "./format.js";
 
 const clamp = (v, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, v));
 const round = (v) => Math.round(v * 10000) / 10000;
@@ -169,7 +170,7 @@ export function registerFloorEditor(juris) {
                 ] } },
                 !pictureUrl(b.image?.blob) ? { span: {} } : { div: { children: [
                     can() ? { div: { className: "scope-pick", children: [
-                        { input: { type: "search", placeholder: `Type to find ${(def.label ?? b.object ?? "").toLowerCase()} records, then click one to put it on the floor`, "aria-label": "Find records to place", value: () => api.getState(`${S}.q`, "") ?? "", oninput: (e) => search(e.target.value), onkeydown: (e) => { if (e.key === "Enter") { e.preventDefault(); place(e.target.value.trim()); } } } },
+                        { input: { type: "search", placeholder: `Type to find ${noun(def.label ?? b.object ?? "")} records, then click one to put it on the floor`, "aria-label": "Find records to place", value: () => api.getState(`${S}.q`, "") ?? "", oninput: (e) => search(e.target.value), onkeydown: (e) => { if (e.key === "Enter") { e.preventDefault(); place(e.target.value.trim()); } } } },
                         found.length ? { div: { className: "scope-found", children: found.map((v) => ({ button: { key: v, type: "button", className: "btn ghost", textContent: `+ ${v}`, onclick: () => place(v) } })) } } : { span: {} },
                     ] } } : { span: {} },
                     { div: { className: "floor-wrap", children: [

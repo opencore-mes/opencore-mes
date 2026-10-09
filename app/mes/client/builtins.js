@@ -28,6 +28,8 @@ export const PERSON = {
     object: "person", label: "Person", area: "Organization", builtIn: true,
     description: "Everyone who signs in: one record per person in People & departments, kept in step with it. Who they are (their sign-in id, name, whether active) is People & departments' own; add what else the plant keeps about them (a badge, a shift, skills, certifications) here.",
     titleField: "name",
+    // A badge scanned is its sign-in id: a person picked by scanning is found by it too (§10.4).
+    scanBy: ["user"],
     fields: {
         user: { label: "Sign-in id", type: "string", required: true },
         name: { label: "Name", type: "string", required: true },
@@ -180,7 +182,45 @@ export const REPORT = {
     rules: [{ script: "report_kept", writes: ["owner"] }],
 };
 
-export const BUILT_INS = [PERSON, DESKTOP, REPORT];
+// Certification (§27.9): who holds which of the certifications People & departments recognizes, from when
+// and until when. What a person holds, active and in date, is what their access reads (user.certifications):
+// a record whose object's access requires a certification (§9.9) is shown, and changed, only to those who
+// hold it. Kept by the plant's own process, as its policies and approvals (§28) say: a form, an Excel
+// import, a training suite, a learning system over the HTTP API.
+export const CERTIFICATION = {
+    object: "certification", label: "Certification", area: "Organization", builtIn: true,
+    description: "Who holds which certification, from when and until when: one record per certificate. The certifications themselves (ITAR, a cleanroom grade) are listed in People & departments. Someone whose certification is active and in date sees what an object's access reserves to it; revoked, or out of date, they no longer do.",
+    titleField: "kind",
+    fields: {
+        person: { label: "Person", type: "ref", to: "person", required: true },
+        kind: { label: "Certification", type: "string", required: true },
+        valid_from: { label: "Valid from", type: "date" },
+        valid_until: { label: "Valid until", type: "date" },
+        number: { label: "Certificate number", type: "string" },
+        note: { label: "Note", type: "text" },
+    },
+    states: {
+        initial: "active", list: ["active", "revoked"], tones: { active: "ok", revoked: "danger" },
+        transitions: [{ action: "revoke", label: "Revoke", from: ["active"], to: "revoked" }, { action: "reinstate", label: "Reinstate", from: ["revoked"], to: "active" }],
+    },
+    roles: ["viewer", "editor"],
+    stewards: { object: ["$governance"] },
+    policies: [
+        { id: "certification-read", roles: ["viewer", "editor"], record: { read: true }, fields: { "*": "read" } },
+        { id: "certification-keep", roles: ["editor"], record: { create: true, archive: true }, fields: { "*": "write" }, actions: { revoke: "allow", reinstate: "allow" } },
+    ],
+    list: { columns: ["person", "kind", "valid_from", "valid_until", "number"], sort: { field: "valid_until", dir: "asc" } },
+    form: { sections: [{ label: "Certification", fields: [
+        "person",
+        { field: "kind", help: "One of the certifications People & departments lists, by its id: itar, cleanroom_iso5." },
+        { field: "valid_from", help: "Empty: from when it is recorded." },
+        { field: "valid_until", help: "Empty: until it is revoked. From the day after, it no longer counts." },
+        "number", "note",
+    ] }] },
+    rules: [],
+};
+
+export const BUILT_INS = [PERSON, DESKTOP, REPORT, CERTIFICATION];
 // A report's tags as they are kept: words with commas between them, each trimmed and in lower case,
 // none twice, at most ten of at most thirty characters. → the text kept ("daily, wirebond"), or null.
 export const REPORT_TAGS = { most: 10, length: 30 };
@@ -199,7 +239,7 @@ export function reportTagsProblem(given) {
 // design (the designer role), when the platform first brings the object and nobody holds a role on it.
 // Without it the object is live and in nobody's navigator. Roles after that are People & departments'.
 // (`of`: the holders of another role instead: a report's first authors are the analysts, §23.)
-export const BUILT_IN_FIRST_ROLES = { desktop: "editor", report: { role: "author", of: ["query", "analyst"] } };
+export const BUILT_IN_FIRST_ROLES = { desktop: "editor", report: { role: "author", of: ["query", "analyst"] }, certification: "editor" };
 const MANAGED_WHY = "People & departments keeps it: change it there, through its change request.";
 
 // The platform's own locks, per object.
@@ -216,6 +256,12 @@ export const CORE_LOCKS = {
         keep: true, titleField: "name",
         fields: Object.fromEntries(["address", "opens", "page", "opened_with"].map((k) => [k, { type: DESKTOP.fields[k].type, ...(DESKTOP.fields[k].required ? { required: true } : {}), ...(DESKTOP.fields[k].values ? { values: DESKTOP.fields[k].values } : {}) }])),
         states: ["active"], rules: ["desktop_address"],
+    }],
+    certification: [{
+        by: "core", owner: "the platform", why: "Access reads it: what a person holds, active and in date, opens what an object reserves to it (§9.9).",
+        keep: true,
+        fields: Object.fromEntries(["person", "kind", "valid_from", "valid_until"].map((k) => [k, { type: CERTIFICATION.fields[k].type, ...(CERTIFICATION.fields[k].to ? { to: CERTIFICATION.fields[k].to } : {}), ...(CERTIFICATION.fields[k].required ? { required: true } : {}) }])),
+        states: ["active", "revoked"], transitions: ["revoke", "reinstate"],
     }],
     report: [{
         by: "core", owner: "the platform", why: "The AI Report page reads it: a report's author, whether it is shared, and what it holds.",

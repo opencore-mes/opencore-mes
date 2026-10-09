@@ -98,3 +98,16 @@ test("Desktop: an address is compared as an address; a record names a page of th
     assert.equal(desktopPath({ opens: "transaction", page: " move_in " }), "/t/move_in");
     for (const not of [{ opens: "screen", page: "../admin" }, { opens: "screen", page: "x", opened_with: "a/b" }, { opens: "screen", page: "x", opened_with: "a.b" }, { opens: "page", page: "x" }, { opens: "screen" }, {}, null]) assert.equal(desktopPath(not), null, JSON.stringify(not));
 });
+
+// A badge scanned is a sign-in id (§10.4): Person scans by it; what an object may scan by besides its title, checked.
+test("Person is found by a scan of its sign-in id; scanBy names text or whole-number fields, never a sensitive one", async () => {
+    const { PERSON } = await import("../client/builtins.js");
+    const { validateDefinition } = await import("../client/definition.js");
+    assert.deepEqual(PERSON.scanBy, ["user"]);
+    const base = { object: "t_badge", label: "B", area: "X", titleField: "name", fields: { name: { label: "Name", type: "string", required: true }, badge: { label: "Badge", type: "string" }, secret: { label: "S", type: "string", sensitive: true }, born: { label: "Born", type: "date" } }, states: { initial: "a", list: ["a"], transitions: [] }, roles: ["r"], stewards: { object: ["production"] }, policies: [] };
+    const words = (scanBy) => validateDefinition({ ...base, scanBy }, { objects: ["t_badge"], departments: ["production"] }).filter((p) => p.path === "scanBy").map((p) => p.message).join("\n");
+    assert.equal(words(["badge"]), "");
+    assert.match(words(["secret", "born", "nope"]), /"secret": a scan finds records by a text or whole-number field that is not sensitive[\s\S]*"born"[\s\S]*"nope"/);
+    assert.match(words(["a", "b", "c", "d"]), /at most 3 fields/);
+});
+

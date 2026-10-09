@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scale · OpenCore MES</title>
+<meta name="description" content="Growth means maintenance windows, upgrades and a bigger server. OpenCore MES takes changes while it runs and scales out: 100 lot moves a second on one server, none refused at 150 on four.">
+<meta name="theme-color" content="#2b303a">
+<meta property="og:title" content="Scale · OpenCore MES">
+<meta property="og:description" content="Growth means maintenance windows, upgrades and a bigger server. OpenCore MES takes changes while it runs and scales out: 100 lot moves a second on one server, none refused at 150 on four.">
+<meta property="og:url" content="https://opencoremes.com/scale">
+<meta property="og:type" content="website">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://opencoremes.com/scale">
+<link rel="stylesheet" href="/site.css">
+<script src="/glow.js" defer></script>
+</head>
+<body>
+<div class="bg-bricks" aria-hidden="true"><div class="bgb k1"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k2"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k3"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k4"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k5"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k6"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k7"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div></div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+    <symbol id="i-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></symbol>
+    <symbol id="i-sync" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12a9 9 0 0 1 15.5-6.2"/><path d="M18 2v4h-4"/><path d="M6 22v-4h4"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></symbol>
+  </defs>
+</svg>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="OpenCore MES home">
+      <svg viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="102" fill="#2b303a"/><path fill="#fff" d="M138 374V138h47l71 101 71-101h47v236h-47V222l-71 100-71-100v152z"/></svg>
+      OpenCore MES
+    </a>
+    <nav class="links" aria-label="Main">
+      <a href="/design">Design</a>
+      <a href="/control">Control</a>
+      <a href="/floor">Floor</a>
+      <a href="/ai">AI</a>
+      <a href="/connect">Connect</a>
+      <a href="/scale" aria-current="page">Scale</a>
+      <a href="/editions">Editions</a>
+    </nav>
+    <a class="btn primary" href="https://demo.opencoremes.com/">Try the demo</a>
+    <details class="menu">
+      <summary aria-label="Every page, and the other sites"><svg class="icon"><use href="#i-menu"/></svg></summary>
+      <nav aria-label="Pages">
+          <a href="/">Home</a>
+          <a href="/design"><b>Design</b><small>Changes wait on a vendor</small></a>
+          <a href="/control"><b>Control</b><small>Changes nobody can trace</small></a>
+          <a href="/floor"><b>Floor</b><small>Stale screens and paper</small></a>
+          <a href="/ai"><b>AI</b><small>Answers that take a week</small></a>
+          <a href="/connect"><b>Connect</b><small>Glue for every machine</small></a>
+          <a href="/scale" aria-current="page"><b>Scale</b><small>Growth means downtime</small></a>
+          <a href="/editions"><b>Editions</b><small>Paying for what you skip</small></a>
+          <a href="/about"><b>About</b><small>Who makes it</small></a>
+          <hr>
+          <a href="https://trainings.opencoremes.com/">Courses</a>
+          <a href="https://suites.opencoremes.com/">Suites store</a>
+          <a href="https://github.com/opencore-mes/opencore-mes" rel="noopener">Source on GitHub</a>
+      </nav>
+    </details>
+  </div>
+</header>
+<main>
+  <section class="page-hero hero">
+    <div class="wrap">
+      <span class="eyebrow problem">The problem</span>
+      <h1>Growth means downtime and a bigger server.</h1>
+      <p class="lede">Every change a maintenance window; every new line a hardware purchase; the shift-start burst slows everything down.</p>
+    </div>
+  </section>
+
+  <section class="sol alt" id="running">
+    <div class="wrap">
+      <div class="scale-grid">
+        <div class="card">
+          <svg class="icon"><use href="#i-pulse"/></svg>
+          <span class="eyebrow" style="margin-top:12px">Solution</span>
+          <h3>Changed while it runs</h3>
+          <ul>
+            <li><svg class="icon"><use href="#i-check"/></svg><span>An approved change is live at once: no deploy, no window.</span></li>
+            <li><svg class="icon"><use href="#i-check"/></svg><span>Open screens redraw by themselves; nobody signs out.</span></li>
+            <li><svg class="icon"><use href="#i-check"/></svg><span>The database upgrades itself when a release starts.</span></li>
+          </ul>
+        </div>
+        <div class="card">
+          <svg class="icon"><use href="#i-layers"/></svg>
+          <span class="eyebrow" style="margin-top:12px">Solution</span>
+          <h3>More servers, not a bigger one</h3>
+          <ul>
+            <li><svg class="icon"><use href="#i-check"/></svg><span>Add servers behind a balancer; every screen stays live.</span></li>
+            <li><svg class="icon"><use href="#i-check"/></svg><span>Read replicas take the reads, never showing stale data.</span></li>
+            <li><svg class="icon"><use href="#i-check"/></svg><span>Any server can stop without losing anything.</span></li>
+          </ul>
+        </div>
+      </div>
+      <div class="cluster" role="img" aria-label="Browsers reach several OpenCore MES servers through a balancer; a change bus links the servers; PostgreSQL with a read replica behind them">
+        <div class="node"><b>Balancer</b><small>sticky sessions</small></div>
+        <svg class="icon to"><use href="#i-arrow"/></svg>
+        <div class="nodes">
+          <div class="node"><b>OpenCore MES 1</b><small>Node</small></div>
+          <div class="node"><b>OpenCore MES 2</b><small>Node</small></div>
+          <div class="node"><b>OpenCore MES 3</b><small>Node</small></div>
+          <div class="node new"><b>+ one more</b><small>when needed</small></div>
+        </div>
+        <svg class="icon to"><use href="#i-arrow"/></svg>
+        <div class="node"><b>PostgreSQL</b><small>primary + replicas</small></div>
+        <div class="bus"><svg class="icon"><use href="#i-sync"/></svg>A save on any server updates the screens on all of them</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sol" id="numbers">
+    <div class="wrap">
+      <h2>Measured, not promised.</h2>
+      <div class="stats">
+        <div class="stat"><b>100 lot moves a second</b><span>on one server, along a wafer fab's CMOS route; p95 under 100 ms</span></div>
+        <div class="stat"><b>0 refused</b><span>at 150 moves a second on four servers; no lot lost on its route</span></div>
+        <div class="stat"><b>3 hours, 226,000 moves</b><span>a server's memory flat throughout, at 28 MB</span></div>
+      </div>
+      <div class="stats">
+        <div class="stat"><b>1,000,000 lots</b><span>a page of the list in 3 ms, any lot found in 25 ms</span></div>
+        <div class="stat"><b>12 ms</b><span>a lot moved onto a tool, checks, rules and audit trail included</span></div>
+        <div class="stat"><b>30,000 people</b><span>added in one approved change; one found in 12 ms</span></div>
+      </div>
+      <p class="measured">Measured on one laptop: PostgreSQL 17 at its default memory; the lot moves an open load through the same API the screens use. Your hardware will differ.</p>
+    </div>
+  </section>
+
+  <section class="sol juris alt" id="juris">
+    <div class="wrap">
+      <div>
+        <span class="eyebrow">Solution</span>
+        <h2 style="margin-top:16px">Built on Juris.</h2>
+        <p class="sub">A framework made for real-time, data-driven systems; it ships inside, nothing else to install.</p>
+        <ul class="points">
+          <li><svg class="icon"><use href="#i-layers"/></svg><div><b>Layout is data</b><span>A designed screen is stored, versioned and drawn at once.</span></div></li>
+          <li><svg class="icon"><use href="#i-bolt"/></svg><div><b>Live queries</b><span>Only what changed is sent, once per shared query.</span></div></li>
+          <li><svg class="icon"><use href="#i-file"/></svg><div><b>No build step</b><span>No bundler, no runtime dependencies.</span></div></li>
+          <li><svg class="icon"><use href="#i-shield"/></svg><div><b>Safe by default</b><span>Markup that could run code is refused.</span></div></li>
+        </ul>
+      </div>
+      <div class="stack" role="img" aria-label="A screen as the designer stores it becomes a Juris layout of plain objects; when the lot is saved, only the changed value is sent to the page">
+        <div class="layer">
+          <div class="kind"><span>Screen, as designed</span><em>stored · versioned · approved</em></div>
+<pre>{ <span class="k">"section"</span>: "Quantities",
+  <span class="k">"fields"</span>: ["good", "scrap"] }</pre>
+        </div>
+        <svg class="icon down"><use href="#i-arrow"/></svg>
+        <div class="layer">
+          <div class="kind"><span>Live patch</span><em>only what changed</em></div>
+          <div class="patch"><span>lot 4712 · good</span><span class="was">560 kg</span><svg class="icon" style="width:14px;height:14px"><use href="#i-arrow"/></svg><span class="now">580 kg</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 OpenCore MES. "OpenCore MES" is a trademark of its owner.</span>
+    <span><a href="/design">Design</a> · <a href="/control">Control</a> · <a href="/floor">Floor</a> · <a href="/ai">AI</a> · <a href="/connect">Connect</a> · <a href="/scale">Scale</a> · <a href="/editions">Editions</a> · <a href="/about">About</a></span>
+    <span><a href="https://demo.opencoremes.com/">Live demo</a> · <a href="https://trainings.opencoremes.com/">Courses</a> · <a href="https://suites.opencoremes.com/">Suites store</a> · <a href="https://github.com/opencore-mes/opencore-mes" rel="noopener">Source on GitHub</a> · <a href="mailto:contact@opencoremes.com?subject=OpenCore%20MES">Contact</a></span>
+  </div>
+</footer>
+</body>
+</html>

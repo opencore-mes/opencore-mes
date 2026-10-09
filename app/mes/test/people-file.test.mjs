@@ -49,13 +49,16 @@ test("rows it cannot take are said, by row, and the rest are taken", () => {
     const text = "id,name,active,departments\nMark Lee,x,,\nzoe,,,\nann,Ann,maybe,\nbob,Bob,,quality\nkim,Kim,,\nkim,Kim Again,,\n";
     const { next, changes, problems } = importPeople(org(), text);
     assert.deepEqual(problems.map((p) => p.row), [2, 3, 4, 5, 7]);
-    assert.match(problems[0].message, /is not an id/);
-    assert.match(problems[1].message, /zoe is new: give their name/);
-    assert.match(problems[2].message, /write yes or no/);
-    assert.match(problems[3].message, /no department quality/);
-    assert.match(problems[4].message, /twice/);
+    assert.match(problems[0].message, /is not a sign-in id/);
+    assert.match(problems[1].message, /zoe: Name: required for a new one/);
+    assert.match(problems[2].message, /ann: Active: yes or no, not "maybe"/);
+    assert.match(problems[3].message, /bob: Departments: there is no department "quality" yet \(there are: [a-z, ]+\)\. Add it on the Departments tab/);
+    assert.match(problems[4].message, /Sign-in id: "kim" is in the file twice/);
     assert.deepEqual(changes.added, ["kim"]);
     assert.equal(next.users.kim.name, "Kim");
+    // An employee number is a sign-in id (§27.1a).
+    const numbered = importPeople(org(), "id,name\n104523,Ann Example\n");
+    assert.deepEqual([numbered.problems, numbered.changes.added], [[], ["104523"]]);
     assert.match(importPeople(org(), "name\nMark\n").problems[0].message, /No "id" column/);
     assert.match(importPeople(org(), "").problems[0].message, /empty/);
 });
@@ -79,3 +82,13 @@ test("people are found by search: what this change touches first, then by name; 
     assert.equal(findPeople(o, "nobody here").total, 0);
     assert.deepEqual(findPeople(o, "olga").departmentsOf.get("olga"), ["Production"]);
 });
+
+test("an import that changes nothing says why: every row already as it says, or the rows it could not take", () => {
+    const o = org();
+    const unchanged = importPeople(o, peopleCsv(o));
+    assert.deepEqual([Object.values(unchanged.changes).flat(), unchanged.problems], [[], []]);
+    assert.deepEqual(unchanged.same.sort(), Object.keys(o.users).sort(), "each person in an unedited export is already as it says");
+    const missing = importPeople(o, "id,name,departments\nzed,Zed,nowhere\n");
+    assert.match(missing.problems[0].message, /zed: Departments: there is no department "nowhere" yet .*Add it on the Departments tab, then import again/);
+});
+

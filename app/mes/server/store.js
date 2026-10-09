@@ -48,6 +48,10 @@ export function createStore(db, { read = (sql, params) => db.query(sql, params) 
             return Promise.all(rows.map((row) => store.definition(row.object)));
         },
 
+        // Every published definition's body by its object: what a derived field (§6.11) reads through is
+        // worked out from them, at each write. Kept like the rest, forgotten when a change executes.
+        bodies: () => keep("bodies", () => read("SELECT object, body FROM mes.definitions WHERE status = 'published'").then((rows) => new Map(rows.map((row) => [row.object, row.body])))),
+
         scripts: () => keep("scripts", () => read("SELECT name, version, source FROM mes.scripts WHERE status = 'published'").then((rows) => new Map(rows.map((row) => [row.name, { version: row.version, source: row.source }])))),
 
         // The published services and connections: injected by executing a change, read here on the
@@ -62,6 +66,8 @@ export function createStore(db, { read = (sql, params) => db.query(sql, params) 
         flows: () => keep("flows", () => published("flows")),
         // The published report layouts (§34.5), likewise.
         layouts: () => keep("layouts", () => published("layouts")),
+        // The published named queries (§23.1), likewise.
+        queries: () => keep("queries", () => published("queries")),
         // The published design elements of the suites' kinds (§30.11), likewise.
         elements: () => keep("elements", () => published("elements")),
 
@@ -116,6 +122,24 @@ export function createStore(db, { read = (sql, params) => db.query(sql, params) 
         },
 
         // The user's roles on one object: their own assignments and their groups'.
+        // The certifications a person holds on `day` (§27.9): their certification records active, in use,
+        // in date (valid from on or before it, until on or after it, either empty), of one People &
+        // departments recognizes. → [ids], sorted.
+        async certificationsOf(userId, day) {
+            const rows = await read(
+                `SELECT DISTINCT c.data->>'kind' AS kind
+                   FROM mes.records c
+                   JOIN mes.records p ON p.object = 'person' AND p.id::text = c.data->>'person' AND p.data->>'user' = $1
+                   JOIN mes.organization o ON o.status = 'published' AND o.body->'certifications' ? (c.data->>'kind')
+                  WHERE c.object = 'certification' AND c.state = 'active' AND c.archived_at IS NULL
+                    AND coalesce(c.data->>'valid_from', '') <= $2
+                    AND (coalesce(c.data->>'valid_until', '') = '' OR c.data->>'valid_until' >= $2)
+                  ORDER BY 1`,
+                [userId, day],
+            );
+            return rows.map((r) => r.kind);
+        },
+
         async rolesFor(userId, object) {
             const rows = await read(
                 `SELECT DISTINCT a.role FROM mes.assignments a

@@ -11,7 +11,8 @@ edition is everything in this repository:
 - the platform: the change lifecycle (design → review → approval → execution), the designer, records,
   policies, rules, the audit trail, transactions, screens, approval of record changes, analytics,
   queries, import and export, services and connections, the AI design tools;
-- the Juris web framework it runs on (`src/`);
+- the Juris web framework it runs on, published on its own as `@opencore-mes/juris-kit` (its repository,
+  [opencore-mes/juris-kit](https://github.com/opencore-mes/juris-kit), under the same licence);
 - the documentation, the demo data and the tests.
 
 It is licensed under the **Apache License, Version 2.0** (the full text is in [LICENSE](LICENSE)), which also grants a licence to the contributors' patents that their contributions use. You may use it, study it,

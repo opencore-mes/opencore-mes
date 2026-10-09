@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The public demo's server, from a fresh Ubuntu 24.04 (run as root; safe to run again): PostgreSQL,
 # Caddy, Node (the latest release unless NODE_VERSION says), bubblewrap for the script runner's walls,
-# the openmes user and its database role.
+# the opencore user and its database role.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
@@ -30,13 +30,13 @@ fi
 echo "node $(/usr/local/bin/node -v)"
 
 # The user it runs as, its folders, and its database role (local socket, peer authentication).
-id openmes >/dev/null 2>&1 || useradd --system --home-dir /srv/open-mes --shell /usr/sbin/nologin openmes
-mkdir -p /srv/open-mes/releases /var/lib/open-mes/events
-chown -R openmes:openmes /srv/open-mes /var/lib/open-mes
-sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'openmes'" | grep -q 1 || sudo -u postgres createuser --createdb openmes
-# The role queries run as (query.js: it reads the q views and nothing else). Made here, so openmes
-# needs no right to create roles; openmes may switch to it and grant it.
-sudo -u postgres psql -v ON_ERROR_STOP=1 -qc "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'mes_query') THEN CREATE ROLE mes_query NOLOGIN; END IF; END \$\$; GRANT mes_query TO openmes WITH ADMIN OPTION;"
+id opencore >/dev/null 2>&1 || useradd --system --home-dir /srv/opencore-mes --shell /usr/sbin/nologin opencore
+mkdir -p /srv/opencore-mes/releases /var/lib/opencore-mes/events
+chown -R opencore:opencore /srv/opencore-mes /var/lib/opencore-mes
+sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname = 'opencore'" | grep -q 1 || sudo -u postgres createuser --createdb opencore
+# The role queries run as (query.js: it reads the q views and nothing else). Made here, so opencore
+# needs no right to create roles; opencore may switch to it and grant it.
+sudo -u postgres psql -v ON_ERROR_STOP=1 -qc "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'mes_query') THEN CREATE ROLE mes_query NOLOGIN; END IF; END \$\$; GRANT mes_query TO opencore WITH ADMIN OPTION;"
 
 systemctl enable --now postgresql caddy
 echo "provisioned"

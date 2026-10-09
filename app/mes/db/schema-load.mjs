@@ -2,7 +2,7 @@
 // the change bus's outbox in the public schema (Juris pg-outbox.js). reset.mjs loads it before the
 // seed; a sandbox's template (server/sandbox.js) loads it alone.
 import { readFile } from "node:fs/promises";
-import { SCHEMA as BUS_SCHEMA } from "../../../src/server/bus/pg-outbox.js";
+import { SCHEMA as BUS_SCHEMA } from "@opencore-mes/juris-kit/server/bus/pg-outbox.js";
 
 export async function loadSchema(pool) {
     for (const file of ["schema.sql", "integration.sql", "fitness.sql"]) await pool.query(await readFile(new URL(`./${file}`, import.meta.url), "utf8"));

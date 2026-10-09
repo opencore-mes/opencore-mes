@@ -11,7 +11,7 @@
 //   DATABASE_URL=postgres:///openmes_test node app/mes/test/retire.mjs   (after a reset)
 import pg from "pg";
 import { randomBytes } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL ?? "postgres:///openmes_poc" });
@@ -44,7 +44,7 @@ try {
     await call("dana", "design.withdraw", { id: tx.id });
     const dev = await call("dana", "design.start", { retire: { kind: "definitions", name: "deviation" } });
     change = await call("dana", "design.change", { id: dev.id, as: "dana" });
-    step("retiring an object with records in use is refused: archive them first", change.problems.some((p) => /object deviation: 1 record\(s\) are still in use: archive them first/.test(p.message)), change.problems);
+    step("retiring an object with records in use is refused: archive them first", change.problems.some((p) => /object deviation: \d+ record\(s\) are still in use: archive them first/.test(p.message)), change.problems);
     await call("dana", "design.withdraw", { id: dev.id });
 
     // ---- 2. retire the Shop floor ----

@@ -169,6 +169,11 @@ h4 { margin: 16px 0 6px; font-size: 13px; }
 .flow-prompt { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; padding: 8px 12px; border-radius: 8px; background: var(--accent-soft); color: var(--ink); font-weight: 600; }
 .flow-prompt.bad { background: var(--warn-soft); color: var(--warn); }
 .screen-flow .flow-prompt { position: sticky; top: 0; z-index: 3; }
+/* What the end of the last one said (a one-tab screen back on its scan): what to do with the record just done. */
+.flow-done { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); color: var(--ink); }
+.flow-done svg { width: 15px; height: 15px; color: var(--ok, currentColor); }
+.runs-way { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+.runs-rows td.nowrap { white-space: nowrap; }
 .flow-prompt svg { width: 16px; height: 16px; flex: none; }
 .field.flow-at { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
 /* Copy what a list shows (copy-cell.js): one button at the right edge of the cell under the pointer. */
@@ -185,6 +190,11 @@ h4 { margin: 16px 0 6px; font-size: 13px; }
 .switch-panel { position: absolute; right: 0; top: calc(100% + 8px); width: min(380px, calc(100vw - 24px)); max-height: 70vh; overflow: auto; overscroll-behavior: contain; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 32px rgba(0, 0, 0, .18); padding: 10px; z-index: 50; display: grid; gap: 6px; }
 .switch-panel .login-users { margin-top: 2px; }
 .switch-panel p { margin: 0; }
+/* Who you are, at the top; on a picker instance, anyone else to be; then your password and Sign out. */
+.switch-me { display: flex; align-items: baseline; gap: 8px; padding: 2px 2px 0; }
+.switch-pick { display: grid; gap: 6px; }
+.switch-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.switch-out button { display: inline-flex; align-items: center; gap: 6px; }
 .login-find { width: 100%; box-sizing: border-box; margin-top: 8px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; font: inherit; background: var(--panel); color: var(--ink); }
 .login-user { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; text-align: left; padding: 8px 12px; }
 .login-roles { color: var(--muted); font-size: .85em; text-align: right; }
@@ -208,14 +218,65 @@ h4 { margin: 16px 0 6px; font-size: 13px; }
 .login-enroll-steps { display: grid; gap: 10px; padding-left: 20px; margin: 0; }
 .login-key { font-family: ui-monospace, monospace; font-size: 15px; letter-spacing: 1px; background: var(--chip); padding: 2px 6px; border-radius: 4px; word-break: break-all; }
 .login-codes { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 4px 12px; list-style: none; padding: 8px 0 0; margin: 0; font-family: ui-monospace, monospace; }
-.second-factor, .signing-password { margin-top: 24px; }
+.second-factor, .signing-password, .use-directory { margin-top: 24px; }
+/* A setup code from a slip (§8.2): five capital letters, typed as they are printed. */
+.login-password input.setup-code { text-transform: uppercase; letter-spacing: 3px; font-family: ui-monospace, monospace; }
+.login-password input.setup-code::placeholder { text-transform: none; letter-spacing: normal; font-family: inherit; }
+.login-password .setup-fields { display: contents; }
+.login-setup { text-align: center; margin: 12px 0 0; }
 /* Sign-in administration (§8.2). */
 .signin-admin .signin-find { width: 100%; max-width: 420px; box-sizing: border-box; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; font: inherit; background: var(--panel); color: var(--ink); margin: 12px 0; }
 .signin-alerts ul { margin: 6px 0 0; padding-left: 18px; }
 .signin-link input { width: 100%; box-sizing: border-box; padding: 6px 8px; font-family: ui-monospace, monospace; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); }
 .signin-link .row-actions { display: flex; gap: 8px; margin-top: 8px; }
+.signin-code code { font-family: ui-monospace, monospace; font-size: 22px; letter-spacing: 4px; background: var(--chip); padding: 2px 10px; border-radius: 4px; }
+.signin-admin .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 16px; margin: 12px 0; }
+/* The Database area (§38): statements, proposals, indexes, tables; each list scrolls with the page, its head sorting it. */
+.dbx .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 16px; margin: 0 0 14px; display: grid; gap: 8px; min-width: 0; }
+.dbx .panel h3 { margin: 0; }
+.dbx .filter { max-width: 26em; }
+.dbx-list { overflow-x: auto; }
+.dbx-list td.num, .dbx-list th:not(:first-child) { text-align: right; white-space: nowrap; }
+.dbx-list td.num { font-variant-numeric: tabular-nums; }
+.dbx-sql { max-width: 560px; }
+.dbx-sql code { font-size: 12px; white-space: normal; word-break: break-word; }
+.dbx-pre { margin: 0; padding: 10px 12px; border-radius: 6px; background: var(--code-bg, var(--chip)); font-size: 12px; white-space: pre-wrap; word-break: break-word; max-height: 50vh; overflow: auto; }
+.dbx-refused { color: var(--danger); }
+.dbx-unused { color: var(--warn); font-weight: 600; }
+.dbx-actions { display: flex; gap: 4px; justify-content: flex-end; align-items: center; }
+.dbx-proposal { margin: 0; }
+.dbx-estimate { margin: 0; padding-left: 18px; }
+.dbx-summary { margin: 4px 0 0; }
+/* A call's last 48 hours (§38.1): a bar an hour, as high as its calls, the part refused or failed in the warning tone. */
+.dbx-bars { display: flex; align-items: flex-end; gap: 2px; height: 64px; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.dbx-bar { flex: 1 1 0; min-width: 2px; background: var(--accent); border-radius: 2px 2px 0 0; display: flex; flex-direction: column-reverse; overflow: hidden; }
+.dbx-bar-bad { background: var(--warn); }
+.dbx-list-plain { margin: 0; padding-left: 18px; }
+/* A transaction's or a query's web settings (§25.7, §23.3): one column, as wide as the tab. */
+.ed-web { display: grid; gap: 10px; max-width: 720px; margin-top: 12px; }
+/* A call or a statement opened: room for its statements' text. */
+.dialog-panel:is(#dbx-call, #dbx-statement) { width: min(760px, 100%); }
+.dbx .list-bar .filter { flex: 1 1 14em; }
+.signin-codes h3 { margin: 0 0 4px; }
+.signin-codes-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 16px; margin-top: 8px; }
+.signin-codes-form label { display: grid; gap: 4px; font-size: 13px; }
+.signin-codes-form select, .signin-codes-form input { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; font: inherit; background: var(--bg); color: var(--ink); }
+.signin-codes-form input { width: 80px; }
+.signin-codes-go { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; flex: 1 1 260px; }
 .signin-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .signin-people tr.signin-locked td:first-child { box-shadow: inset 3px 0 0 var(--danger); }
+/* Data retention (§27.8): the periods, the last runs, erasure; the periods' table scrolls on its own on a phone. */
+.retention .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 14px; }
+.retention-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.retention-head h3 { margin: 0; }
+.retention-scroll, .org-retention { overflow-x: auto; }
+.retention-table td { vertical-align: top; }
+.org-retention .retention-table input { width: 9em; }
+.retention-runs, .retention-rows { margin: 6px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.retention-rows li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.retention-find { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.retention-find select, .retention-find input { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; font: inherit; background: var(--panel); color: var(--ink); }
+.retention-find input { flex: 1 1 240px; min-width: 0; }
 .login + .login, .login form + form { margin-top: 16px; }
 
 /* the shell */
@@ -223,7 +284,8 @@ h4 { margin: 16px 0 6px; font-size: 13px; }
    window leaves them (minmax(0, …): a tall page does not stretch the shell). */
 .shell { display: grid; grid-template-columns: 250px minmax(0, 1fr); grid-template-rows: 48px minmax(0, 1fr); height: 100vh; height: 100dvh; overflow: hidden; }
 .topbar { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
-.brand { font-weight: 700; color: var(--ink); }
+/* The plant's name (§10.8) on one line, however long: cut short where the bar is narrow, its whole text in its title. */
+.brand { font-weight: 700; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
 .scope { color: var(--muted); font-size: 12px; }
 .live { font-size: 12px; color: var(--warn); }
 .live.on { color: var(--ok); }
@@ -439,6 +501,10 @@ path.series-7 { fill: var(--series-7); } .rep-swatch.series-7 { background: var(
 .rollback-panel h4 { margin: 6px 0 0; }
 .rollback-lines { margin: 0; padding-left: 18px; }
 .rollback-edited { color: var(--warn); }
+.emergency-panel { display: grid; gap: 6px; }
+.emergency-panel h4 { margin: 6px 0 0; }
+.emergency-panel ul { margin: 0; padding-left: 0; list-style: none; }
+.emergency-panel .actions { display: flex; flex-wrap: wrap; gap: 6px; }
 /* An object's roles and policies at a glance (§9.8). */
 .pm { margin: 10px 0 14px; }
 .pm > summary { cursor: pointer; margin-bottom: 8px; }
@@ -505,6 +571,13 @@ path.series-7 { fill: var(--series-7); } .rep-swatch.series-7 { background: var(
 .view { padding: 20px 24px; }
 .view.narrow { max-width: 560px; }
 .view-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+/* A list's page: what it is (title, then its description on its own line), then its bar: find, then actions. */
+.view-head .view-about { flex: 0 0 100%; margin: -6px 0 0; }
+.list-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: -4px 0 14px; }
+.list-bar > .filter { flex: 1 1 16em; max-width: 26em; min-width: 0; }
+.list-bar > .spacer { flex: 1 1 0; }
+/* The rows a new filter or order replaces, while its answer is on its way. */
+tbody.refreshing { opacity: .55; transition: opacity .15s; }
 .filter { padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); font: inherit; }
 
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 16px; }
@@ -514,6 +587,12 @@ path.series-7 { fill: var(--series-7); } .rep-swatch.series-7 { background: var(
 
 .grid { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .grid th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+/* A list's column head that sorts it: the whole head is the button; its arrow shows the order (faint until used). */
+.sort-head { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; font: inherit; color: inherit; cursor: pointer; text-align: left; }
+.sort-head:hover, .sort-head.on { color: var(--ink); }
+.sort-head .sort-arrow { width: 12px; height: 12px; flex: none; }
+.sort-head .sort-arrow.idle { opacity: 0; }
+.sort-head:hover .sort-arrow.idle, .sort-head:focus-visible .sort-arrow.idle { opacity: .45; }
 .grid td { padding: 8px 12px; border-bottom: 1px solid var(--line); }
 .grid tr.row { cursor: pointer; }
 .grid tr.row:hover { background: var(--hover); }
@@ -618,9 +697,12 @@ path.series-7 { fill: var(--series-7); } .rep-swatch.series-7 { background: var(
 .ed-field input, .ed-field select, .ed-field textarea { width: 100%; color: var(--ink); font-size: 14px; }
 .ed-table td { vertical-align: middle; }
 .ed-table input[type=text] { width: 100%; }
-.add-row { display: flex; gap: 8px; margin: 10px 0; }
-.add-row input { flex: 1; max-width: 360px; }
+.add-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.add-row input { flex: 1 1 140px; min-width: 0; max-width: 360px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+/* A file input inside its button (Upload…, Replace…): kept within the button, never out past the page's edge. */
+label.btn { position: relative; }
+label.btn > .visually-hidden { left: 0; top: 0; }
 .org-people-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; }
 .org-people-bar .add-row { flex: 1 1 420px; flex-wrap: wrap; min-width: 0; margin: 0; }
 .org-people-bar .add-row input { flex: 1 1 140px; min-width: 0; }
@@ -639,6 +721,11 @@ path.series-7 { fill: var(--series-7); } .rep-swatch.series-7 { background: var(
 .win-more .linkish { margin-left: 4px; }
 .org-import-note.bad { background: var(--warn-soft); color: var(--warn); }
 .policy { border: 1px solid var(--line); border-radius: var(--radius); margin: 10px 0; padding: 6px 12px 10px; min-width: 0; }
+/* Reserved to a certification (§9.9): before the policies, each requirement a certification and its records. */
+.access-requires { border-color: var(--warn-line, var(--line)); }
+.requires-row { display: grid; grid-template-columns: minmax(160px, 240px) 1fr auto; gap: 8px 12px; align-items: start; padding: 6px 0; border-top: 1px solid var(--line); }
+.requires-row:first-of-type { border-top: 0; }
+@media (max-width: 640px) { .requires-row { grid-template-columns: 1fr; } }
 /* A policy's grants, as tiles coloured like the overview (§9.8): they wrap, never run under the side panel. */
 .grant-part { display: grid; gap: 4px; margin: 8px 0; }
 .grant-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 6px; }
@@ -663,6 +750,16 @@ path.series-7 { fill: var(--series-7); } .rep-swatch.series-7 { background: var(
 .badge.s-review, .badge.s-approval { background: var(--warn-soft); color: var(--warn); }
 .badge.s-executed, .badge.s-live { background: var(--ok-soft); color: var(--ok); }
 .badge.s-rejected, .badge.s-failed, .badge.s-withdrawn { background: var(--danger-soft); color: var(--danger); }
+/* An emergency change (§5.7): beside its state; overdue for its review afterwards, in the danger tone. */
+.badge.s-emergency { background: var(--warn-soft); color: var(--warn); margin-left: 6px; }
+/* A sentence, not a state name: only its first letter capitalized. */
+.badge.s-emergency { text-transform: none; }
+/* Executed during setup (§5.15), and the banner while setup is open. */
+.badge.s-setup { background: var(--warn-soft); color: var(--warn); margin-left: 6px; }
+.setup-banner { display: flex; gap: 8px; align-items: flex-start; background: var(--warn-soft); color: var(--warn-ink); border-radius: var(--radius); padding: 8px 12px; margin: 0 0 12px; }
+.setup-banner a { color: inherit; text-decoration: underline; }
+.badge.s-emergency::first-letter { text-transform: uppercase; }
+.badge.s-emergency.overdue { background: var(--danger-soft); color: var(--danger); }
 @media (max-width: 1100px) { .change-body { grid-template-columns: minmax(0, 1fr); } .change-side { position: static; } }
 
 /* presence */
@@ -724,7 +821,7 @@ path.series-7 { fill: var(--series-7); } .rep-swatch.series-7 { background: var(
 .add-element input { width: 140px; }
 /* Change also: a live design brought in (§5.12); on a phone it takes the row, its list no wider than it. */
 .include-live select { max-width: 260px; }
-@media (max-width: 760px) { .add-element { flex: 1 1 100%; flex-wrap: wrap; margin-right: 0; } .add-element input { flex: 1; min-width: 0; width: auto; } .include-live { flex-wrap: nowrap; } .include-live select { flex: 1; min-width: 0; max-width: none; } }
+@media (max-width: 760px) { .add-element { flex: 1 1 100%; flex-wrap: wrap; margin-right: 0; } .add-element input { flex: 1; min-width: 0; width: auto; } .include-live { display: flex; flex: 1 1 100%; min-width: 0; gap: 6px; flex-wrap: nowrap; } .include-live select { flex: 1; min-width: 0; max-width: none; } }
 .try-answer { border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin-top: 10px; white-space: pre-wrap; font-size: .85em; }
 .try-answer.ok { border-color: var(--ok); }
 .try-answer.bad { border-color: var(--danger); }
@@ -849,6 +946,56 @@ path.series-7 { fill: var(--series-7); } .rep-swatch.series-7 { background: var(
    change request's side panel moves below the editor when there is not room for both. */
 .change-main, .panes > *, .editor, .view { min-width: 0; }
 .ed-table { min-width: max-content; }
+/* The Fields tab's table scrolls in a box of its own: the head stays at the top, Name and Label at the
+   left (Name alone on a phone) and the Remove buttons at the right, and the other columns slide between
+   them; the tab itself never scrolls sideways. */
+/* A long text on a form (records.js): as high as its rows at least, growing with what is typed up to its
+   largest (--max-rows lines), then scrolling; its count shown under it once it nears the field's longest length. */
+.text-box { display: grid; gap: 2px; }
+.text-box textarea { line-height: 1.5; }
+.text-box textarea.grows { max-height: calc(var(--max-rows, 12) * 1.5em + 18px); overflow-y: auto; resize: vertical; }
+@supports (field-sizing: content) { .text-box textarea.grows { field-sizing: content; min-height: calc(var(--rows, 3) * 1.5em + 18px); } }
+.text-count { justify-self: end; font-variant-numeric: tabular-nums; }
+.fields-box { overflow: auto; max-height: max(260px, calc(100vh - 280px)); border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+.fields-table { border: 0; border-radius: 0; overflow: visible; border-collapse: separate; border-spacing: 0; }
+.fields-table thead th { position: sticky; top: 0; z-index: 2; background: var(--panel); }
+.fields-table :is(th, td):nth-child(-n+2):not([colspan]) { position: sticky; z-index: 1; background-color: var(--panel); box-sizing: border-box; }
+.fields-table :is(th, td):last-child:not([colspan]) { position: sticky; right: 0; z-index: 1; background-color: var(--panel); box-shadow: inset 1px 0 0 var(--line); }
+.fields-table thead :is(th, td):is(:nth-child(-n+2), :last-child):not([colspan]) { z-index: 3; }
+/* Values / refers to: at most 280px, a summary and a button that opens the field's values in a panel. */
+.fields-table td.values-td { width: 280px; min-width: 200px; max-width: 280px; }
+.values-row { display: flex; align-items: center; gap: 6px; max-width: 280px; }
+.values-row > :first-child { flex: 1; min-width: 0; }
+.values-row select { max-width: 100%; }
+.values-sum { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+span.values-sum { display: block; white-space: nowrap; }
+.values-chip { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 2px 8px; border-radius: 999px; background: var(--chip); font-size: 12px; }
+.values-expand { flex: none; padding: 4px 6px; line-height: 0; }
+.values-expand svg { width: 15px; height: 15px; }
+.editor-panel { width: min(640px, 100%); }
+.approval-values td.approval-who { width: 100%; min-width: 220px; }
+.org-groups td:last-child { white-space: nowrap; text-align: right; }
+.org-group-actions { display: flex; gap: 4px; justify-content: flex-end; align-items: center; }
+/* On a phone a group's mailbox is in its panel: the list keeps its name, members and buttons. */
+@media (max-width: 700px) { .org-groups :is(th, td):nth-child(3) { display: none; } }
+.values-section { display: grid; gap: 6px; padding-top: 10px; border-top: 1px solid var(--line); }
+.values-section-title { font-size: 12px; font-weight: 600; color: var(--muted); }
+.values-section .small.muted { margin: 0; }
+.editor-panel .derived-cell { max-width: none; margin-top: 0; }
+.values-section > .btn { justify-self: start; margin-top: 0; }
+.editor-panel .derived-cell select { max-width: 200px; }
+.field-remove { padding: 6px 8px; line-height: 0; }
+.field-remove svg { width: 16px; height: 16px; }
+.field-remove:hover:not(:disabled) { color: var(--danger); }
+.fields-table :is(th, td):first-child { left: 0; width: 190px; min-width: 190px; max-width: 190px; }
+.fields-table :is(th, td):nth-child(2):not([colspan]) { left: 190px; width: 210px; min-width: 210px; box-shadow: inset -1px 0 0 var(--line); }
+.fields-table tr.diff-added td:is(:nth-child(-n+2), :last-child) { background-image: linear-gradient(color-mix(in srgb, var(--ok) 8%, transparent), color-mix(in srgb, var(--ok) 8%, transparent)); }
+.fields-table tr.diff-changed td:is(:nth-child(-n+2), :last-child) { background-image: linear-gradient(color-mix(in srgb, var(--warn) 9%, transparent), color-mix(in srgb, var(--warn) 9%, transparent)); }
+.fields-table tr.diff-removed td:first-child { background-image: linear-gradient(var(--danger-soft), var(--danger-soft)); }
+@media (max-width: 700px) {
+  .fields-table :is(th, td):first-child { width: 150px; min-width: 150px; max-width: 150px; box-shadow: inset -1px 0 0 var(--line); }
+  .fields-table :is(th, td):nth-child(2):not([colspan]) { position: static; box-shadow: none; }
+}
 .ed-table input[type=text] { min-width: 120px; }
 @media (max-width: 1280px) {
   .change-body { grid-template-columns: minmax(0, 1fr); }
@@ -907,6 +1054,12 @@ path.series-7 { fill: var(--series-7); } .rep-swatch.series-7 { background: var(
 .stepper input { flex: 1; min-width: 0; }
 .stepper button { width: 34px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 6px; font: inherit; cursor: pointer; }
 .ref-search input { width: 100%; }
+/* A reference's suggestions, under its field: drawn by the page, themed, the one moved to with the arrows marked. */
+.ref-search { position: relative; display: block; }
+.ref-options { position: absolute; left: 0; right: 0; top: calc(100% + 2px); z-index: 40; margin: 0; padding: 4px; list-style: none; max-height: 260px; overflow: auto; overscroll-behavior: contain; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, .16); }
+.ref-options li { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+.ref-options li:hover, .ref-options li.active { background: var(--hover); }
+.ref-option-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The section holds the grid; the older fieldset grid no longer applies. Radio and check inputs keep their size. */
 .form fieldset.section, .live-preview .form fieldset.section { display: block; }
 .field input[type=radio], .field input[type=checkbox] { width: auto; padding: 0; }
@@ -946,6 +1099,11 @@ path.series-7 { fill: var(--series-7); } .rep-swatch.series-7 { background: var(
 .lay-inspector { border: 1px solid var(--accent-soft); background: var(--panel); border-radius: var(--radius); padding: 10px 12px; display: grid; gap: 8px; }
 .lay-rule-head { display: flex; align-items: center; gap: 6px; }
 .values-cell { display: grid; gap: 4px; }
+/* Derived from (§6.11): the path's steps in a row, wrapping under the field's other settings. */
+.derived-cell { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 4px; margin-top: 4px; max-width: 250px; }
+.derived-cell select { max-width: 112px; }
+.derive-start { display: inline-flex; margin-top: 4px; padding: 2px 8px; font-weight: 500; }
+.derived-cell .expr-field { flex-basis: 100%; }
 
 /* comparing a change with what is published (compare.js) */
 .tab-diff { display: inline-block; min-width: 16px; margin-left: 5px; padding: 0 5px; border-radius: 999px; background: var(--warn-soft); color: var(--warn); font-size: 11px; font-weight: 600; text-align: center; line-height: 16px; }
@@ -975,7 +1133,16 @@ pre.diff .del { background: var(--danger-soft); text-decoration: none; }
 /* ---- transactions (§25) ---- */
 .scan-field { display: flex; align-items: center; gap: 6px; position: relative; flex-wrap: wrap; }
 .scan-field .scan-icon { color: var(--muted); font-size: 18px; line-height: 1; }
-.scan-field input { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .02em; }
+.scan-field input { flex: 1; min-width: 0; }
+/* Part of a title typed where a screen's parameter searches (§26.1): how many hold it by state, each state a filter
+   (pressed: that state only), then the rows. */
+.param-matches { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin: 0 0 14px; }
+.pm-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.pm-head .pm-close { margin-left: auto; }
+.pm-states { display: flex; flex-wrap: wrap; gap: 6px; }
+.pm-state { cursor: pointer; border: 1px solid transparent; font: inherit; font-size: 13px; padding: 3px 10px; }
+.pm-state.on { border-color: currentColor; box-shadow: 0 0 0 1px currentColor inset; }
+.pm-state:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .scan-field .field-error { flex-basis: 100%; }
 .view.transaction .record-head p { margin: 4px 0 0; }
 .tx-preview, .tx-done { margin-top: 14px; }
@@ -989,6 +1156,11 @@ pre.diff .del { background: var(--danger-soft); text-decoration: none; }
 .actions .tx-btn:hover { background: var(--hover); }
 /* the designer's transaction editor */
 .tx-card { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 12px; margin: 10px 0; display: grid; gap: 8px; background: var(--panel); }
+/* A part of a designer tab (the Layout tab's List, History, Form, Preview): set apart, its heading first. */
+.ed-panel { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px 14px; margin: 0 0 14px; display: grid; gap: 10px; background: var(--panel); min-width: 0; }
+.ed-panel-title { margin: 0; font-size: 14px; font-weight: 650; }
+.ed-panel-about { margin: -6px 0 0; }
+.ed-panel > .lay-list { margin: 0; }
 .tx-card legend { display: flex; align-items: center; gap: 6px; padding: 0 4px; }
 .tx-card.diff-added { box-shadow: inset 3px 0 0 var(--ok); }
 .tx-card.diff-changed { box-shadow: inset 3px 0 0 var(--warn); }
@@ -1002,6 +1174,8 @@ pre.diff .del { background: var(--danger-soft); text-decoration: none; }
 .screen-head .title { flex-wrap: wrap; }
 .screen-param { font-weight: 600; font-size: 18px; }
 .param-picker { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+/* What a screen is opened with sits outside any form: drawn as a form's fields are, scan or pick alike. */
+.param-picker input, .param-picker select { padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; font: inherit; background: var(--panel); color: var(--ink); }
 .param-picker .scan-field { min-width: 260px; }
 .screen-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 12px; }
 .screen-grid .screen-block { grid-column: span 12; min-width: 0; margin: 0; }
@@ -1070,15 +1244,26 @@ pre.diff .del { background: var(--danger-soft); text-decoration: none; }
 .screen-block-bar { display: flex; justify-content: flex-end; margin-bottom: 8px; }
 
 /* ---- choosing several from many (pick.js) ---- */
-.pick { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+/* One field: chips and the box to type in, inside one border, wrapping as it fills (a read-only one, the
+   chips alone); the suggestions open below the whole field. */
+.pick { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; box-sizing: border-box; min-height: 34px; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); cursor: text; }
+.pick:focus-within { border-color: var(--accent); }
+.pick > span:empty { display: none; }
+.pick.ro { border-color: transparent; background: transparent; padding-left: 0; min-height: 0; cursor: default; }
 .pick-chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 10px; border: 1px solid var(--line); border-radius: 4px; background: var(--chip); color: var(--ink); font-size: 13px; }
 .pick-x { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 0 4px; font-size: 12px; line-height: 1; }
 .pick-x:hover { color: var(--danger); }
-.pick-box { position: relative; flex: 1 1 180px; min-width: 160px; }
-.pick-box input { width: 100%; box-sizing: border-box; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); font: inherit; font-size: 13px; }
+.pick-box { flex: 1 1 8em; min-width: 8em; }
+.pick .pick-box input, .ed-field .pick .pick-box input, .ed-table .pick .pick-box input { width: 100%; box-sizing: border-box; padding: 3px 2px; border: 0; border-radius: 0; outline: none; background: transparent; color: var(--ink); font: inherit; font-size: 13px; }
+.pick.ro .pick-box input { border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
 .pick-list { position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 2px); margin: 0; padding: 4px; list-style: none; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgb(0 0 0 / .18); max-height: 260px; overflow: auto; }
 .pick-list li { padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; }
 .pick-list li.on { background: var(--accent-soft); }
+/* A new value to add (tagsInput), and why one typed may not be. */
+.pick-list li.pick-new { color: var(--accent); }
+.pick-list li.pick-error { color: var(--danger); cursor: default; }
+.pick-list li.pick-error:hover, .pick-list li.pick-none:hover { background: transparent; }
+.pick-list li.pick-none { color: var(--muted); cursor: default; }
 .pick-list li:hover { background: var(--hover); }
 .org-role { display: grid; grid-template-columns: minmax(90px, auto) 1fr; gap: 10px; align-items: center; padding: 4px 0; }
 .org-step { align-items: flex-start; }
@@ -1142,10 +1327,12 @@ code.field-name.locked { cursor: help; }
 .second-plus { font-weight: 700; font-size: 13px; }
 .second-who { display: inline-flex; align-items: center; gap: 4px; }
 .second-who .who { font-weight: 600; white-space: nowrap; }
-.second-out { display: inline-flex; align-items: center; gap: 3px; }
-.second-out svg { width: 14px; height: 14px; }
+/* Its × alone signs the second person out: small, beside their name, its words in its title. */
+.btn.second-out { display: inline-flex; align-items: center; justify-content: center; padding: 3px; min-height: 0; min-width: 0; line-height: 1; border-radius: 4px; color: var(--muted); }
+.btn.second-out:hover:not(:disabled) { color: var(--ink); }
+.second-out svg { width: 11px; height: 11px; }
 /* A phone's top bar: the second person's name clipped, signing them out by its × alone. */
-@media (max-width: 700px) { .second-who .who { max-width: 9ch; overflow: hidden; text-overflow: ellipsis; } .second-out-words { display: none; } }
+@media (max-width: 700px) { .second-who .who { max-width: 9ch; overflow: hidden; text-overflow: ellipsis; } }
 .second-panel { position: absolute; right: 0; top: calc(100% + 8px); width: min(320px, calc(100vw - 32px)); display: grid; gap: 8px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 32px rgba(0, 0, 0, .18); padding: 12px; z-index: 50; }
 .second-panel p { margin: 0; }
 .second-panel label { display: grid; gap: 3px; font-size: 13px; }
@@ -1200,7 +1387,32 @@ code.field-name.locked { cursor: help; }
 .sbx-field .code-editor { min-width: 0; }
 .sbx-button .btn { align-self: start; height: 34px; }
 /* Saved selections (the records a sandbox starts with), and a record found among every object. */
-.sbx-selection { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; margin: 4px 0 12px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+/* The records it starts with, in groups: a saved selection, adding, what is chosen. */
+.sbx-group { border: 1px solid var(--line); border-radius: var(--radius, 8px); background: var(--panel); padding: 10px 14px; margin: 0 0 12px; min-width: 0; }
+.sbx-group > h4 { margin: 0 0 8px; font-size: 13px; }
+.sbx-group .sbx-find { margin: 0; }
+.sbx-group table.grid { margin: 0; }
+.sbx-by-hand { margin-top: 10px; }
+.sbx-fields { margin: 2px 0 0; padding-left: 18px; }
+.sbx-starts select { font: inherit; padding: 2px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); max-width: 100%; }
+.sbx-starts select.chosen { border-color: var(--accent); background: var(--accent-soft); }
+/* What a route needs (§5.11): each need, given (ticked) or not (with live records to add). */
+.sbx-needs { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 6px; max-height: 360px; overflow: auto; }
+.sbx-needs > li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 8px; align-items: start; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.sbx-needs > li:last-child { border-bottom: 0; }
+.sbx-needs > li > svg { width: 14px; height: 14px; margin-top: 2px; }
+.sbx-needs > li.have > svg { color: var(--ok); }
+.sbx-needs > li.to-choose > svg { color: var(--muted); }
+.sbx-need-pick { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 3px; }
+.sbx-needs-foot { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+/* The sandbox's other parts, each a box of its own: following a route, a step, what ran. */
+.sandbox :is(.sbx-follow, .sbx-run, .sbx-steps) { border: 1px solid var(--line); border-radius: var(--radius, 8px); background: var(--panel); padding: 10px 14px; margin: 0 0 12px; min-width: 0; }
+.sandbox :is(.sbx-follow, .sbx-run, .sbx-steps) > h3 { margin-top: 0; }
+.sbx-steps .sbx-add { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 10px; }
+/* A part of a step that is not asked for (a placeholder) takes no place in the grid. */
+.sbx-add > span:empty { display: none; }
+.sbx-by-hand > summary { cursor: pointer; color: var(--accent); }
+.sbx-selection { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; margin: 0; }
 .sbx-selection .sbx-field { min-width: min(420px, 100%); }
 .sbx-selection-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .sbx-selection-actions .btn { box-sizing: border-box; height: 34px; padding: 0 12px; }
@@ -1274,13 +1486,26 @@ code.field-name.locked { cursor: help; }
 .scheme-pick button { border: 0; background: none; color: var(--muted); padding: 3px 8px; cursor: pointer; display: inline-flex; align-items: center; }
 .scheme-pick.hidden { display: none; }
 @media (max-width: 760px) { .scheme-pick { border: 0; } .scheme-pick button:not(.on) { display: none; } }
-@media (max-width: 480px) { .topbar .scope { display: none; } }
+@media (max-width: 480px) {
+  .topbar .scope { display: none; }
+  .topbar .brand { max-width: 12ch; }
+  /* A phone's top bar keeps every control in reach (the bell, Sign out): tighter, the live state its dot alone,
+     the name cut short (its full text in the menu it opens). */
+  .topbar { gap: 6px; padding: 0 10px; }
+  .topbar .live > span { display: none; }
+  .switch-btn.who { max-width: 10ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; padding: 4px 2px; }
+  .second-btn, .inbox-btn { padding: 3px 4px; }
+  .topbar .scheme-pick, .topbar .second, .topbar .inbox, .topbar .logout { flex-shrink: 0; }
+  .topbar .switch { min-width: 0; flex-shrink: 1; }
+  .switch-btn.who { max-width: 100%; }
+  .topbar .logout .btn { padding: 4px 6px; }
+}
 .scheme-pick button.on { background: var(--accent-soft); color: var(--accent); }
 .theme-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px 20px; }
-.theme-color { display: flex; align-items: center; gap: 8px; }
+.theme-color { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .theme-color .badge { white-space: nowrap; }
 .theme-color input[type="color"] { width: 36px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 6px; background: none; }
-.theme-color input[type="text"] { width: 96px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.theme-color input[type="text"] { width: 13em; max-width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .theme-preview { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .theme-preview .pv-bar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; font-weight: 700; }
 .theme-preview .pv-body { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px; }
@@ -1359,6 +1584,7 @@ code.field-name.locked { cursor: help; }
 .flow-list-node { padding: 6px 0; border-bottom: 1px solid var(--line); }
 .flow-chip { border-color: var(--kind); }
 .flow-chip .icon, .flow-side-head .icon { color: var(--kind); }
+.flow-node-id { margin: 2px 0 10px; }
 .flow-lifecycle { margin: 10px 0; padding-top: 8px; border-top: 1px solid var(--line); }
 .flow-inputs { display: grid; gap: 6px; }
 .flow-input-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -1371,6 +1597,29 @@ code.field-name.locked { cursor: help; }
 /* A run's map (§32.7): the template as the run's version draws it, read only, its way on it. */
 .task-map { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; margin: 12px 0; }
 .flow-position-box .flow-run-map { margin: 0 0 12px; }
+/* Following a route in the sandbox (§32.8): its offers and plans' questions, the step's suggestions. */
+.sbx-where { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.sbx-offers { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.sbx-task { border-left: 3px solid var(--warn); padding: 4px 0 4px 10px; display: grid; gap: 4px; }
+.sbx-suggest { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }
+.sbx-suggest > div { flex-basis: 100%; }
+.sbx-sugg { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 999px; padding: 1px 8px; cursor: pointer; display: inline-flex; align-items: center; gap: 2px; }
+.sbx-sugg svg { width: 12px; height: 12px; }
+.sbx-sugg-state { font-size: .85em; margin-left: 2px; }
+.sbx-sugg.ok { border-color: var(--ok); }
+.sbx-sugg.ok svg { color: var(--ok); }
+.sbx-sugg.no { opacity: .7; }
+.sbx-sugg.no svg { color: var(--danger); }
+.sbx-sugg[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+/* The sub routes' maps (§32.14): the trail back up, a sub flow that opens its own map. */
+.flow-trail { margin: 0 0 6px; overflow-wrap: anywhere; }
+.flow-trail button { font: inherit; background: none; border: 0; padding: 0; color: var(--accent); cursor: pointer; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 2px; }
+.flow-trail button:hover { text-decoration-color: currentColor; }
+.flow-run .flow-node.opens { cursor: pointer; }
+.flow-run .flow-node.opens:hover rect, .flow-run .flow-node.opens:focus-visible rect { stroke: var(--accent); stroke-width: 3; }
+.flow-run .flow-node.opens:focus { outline: none; }
+.flow-node-open { color: var(--accent); pointer-events: none; }
+.flow-run .flow-node.unreached.opens { opacity: .6; }
 .flow-run-wrap { overflow: auto; border: 1px solid var(--line); border-radius: var(--radius, 8px); background: var(--bg); max-height: 70vh; }
 .flow-run-wrap, .flow-run-wrap text, .flow-run-legend { -webkit-user-select: none; user-select: none; }
 .flow-canvas.flow-run { touch-action: auto; }
@@ -1433,6 +1682,7 @@ code.field-name.locked { cursor: help; }
 .guide-hint { margin: 8px 0 0; }
 .guide-body { font-size: 14px; line-height: 1.5; }
 .guide-body h2 { font-size: 16px; margin: 16px 0 6px; }
+.guide-body h2.guide-part { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 24px; }
 .guide-body h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 18px 0 6px; }
 .guide-body p, .guide-body ul, .guide-body ol { margin: 6px 0; }
 .guide-body ul, .guide-body ol { padding-left: 18px; }
@@ -1519,3 +1769,189 @@ select.mini-select:not([multiple]):not([size]) { padding-right: 22px; background
 .rep-media-file { display: inline-flex; gap: 6px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); text-decoration: none; }
 .rep-media-file svg { width: 18px; height: 18px; }
 .rep-caption { margin: 6px 0 0; }
+
+/* A node's script written under the flow canvas (§32.6). */
+.flow-hook-editor { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.flow-hook-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.flow-query-field { grid-column: 1 / -1; display: grid; gap: 6px; padding: 6px 0 4px 10px; border-left: 2px solid var(--line); }
+.task-query { display: grid; gap: 4px; }
+
+/* The expression builder (§9.2a): words first; rows of a field, an operator and a value, in groups. */
+.expr-field { display: grid; gap: 6px; min-width: 0; }
+.expr-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+.expr-head .spacer { flex: 1 1 auto; }
+.expr-words { font-weight: 500; }
+/* The condition itself, drawn as a rule (a box with its words), opened for editing by a click. */
+.expr-rule { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; box-sizing: border-box; padding: 5px 10px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; text-align: left; }
+.expr-rule svg { flex: none; color: var(--accent); }
+.expr-rule .expr-words { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; overflow-wrap: anywhere; }
+button.expr-rule { cursor: pointer; }
+button.expr-rule:hover, button.expr-rule.open { border-color: var(--accent); }
+.expr-rule.empty { border-style: dashed; border-left-width: 1px; color: var(--muted); }
+.expr-problem { flex-basis: 100%; margin: 0; }
+.expr-builder { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+.expr-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.expr-row > select, .expr-row > input { width: auto; min-width: 0; flex: 0 1 auto; }
+.expr-row > .expr-thing { flex: 1 1 14em; max-width: 24em; }
+.expr-row > input[type="text"], .expr-row > input[type="number"], .expr-row > input[type="date"] { flex: 0 1 10em; }
+.expr-group { display: grid; gap: 6px; padding-left: 10px; border-left: 2px solid var(--accent); }
+.expr-group.depth-2, .expr-group.depth-3 { border-left-color: var(--line); }
+.expr-group-head { display: flex; align-items: center; gap: 6px; }
+.expr-group-head > select, .expr-add > select { width: auto; }
+.expr-add { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.expr-chips { display: flex; flex-wrap: wrap; gap: 2px 12px; }
+.expr-raw { align-items: flex-start; }
+.expr-raw-box { display: grid; gap: 2px; flex: 1 1 18em; min-width: 0; }
+.expr-json textarea { width: 100%; box-sizing: border-box; }
+.expr-try-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(12em, 1fr)); gap: 6px; }
+.ed-grid > .ed-wide { grid-column: 1 / -1; }
+
+/* A designer tab's search, filters and order (list-tools.js). */
+.list-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 8px 0; }
+.list-tools > .design-search { flex: 1 1 14em; max-width: 22em; }
+.list-tools > select { width: auto; max-width: 16em; }
+.list-tools > select.on { border-color: var(--accent); }
+
+/* The data integrity review (§7.7). */
+.integrity .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 14px; }
+.integrity .panel h3 { margin: 0 0 8px; }
+.integrity-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.integrity-head h3 { margin: 0; }
+.integrity-head .btn { display: inline-flex; align-items: center; gap: 6px; }
+.integrity-facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 10px 0 0; }
+.integrity-facts dt { color: var(--muted); }
+.integrity-facts dd { margin: 0; min-width: 0; }
+.integrity-warn { display: flex; gap: 8px; align-items: flex-start; background: var(--warn-soft); color: var(--warn-ink); border-radius: var(--radius); padding: 8px 12px; margin: 0 0 14px; }
+.integrity-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+.integrity-list > li { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.integrity-list > li:last-child { border-bottom: 0; }
+.integrity-finding-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.integrity-badge { display: inline-flex; align-items: center; gap: 4px; font-size: 0.85em; color: var(--danger); background: var(--danger-soft); border-radius: 999px; padding: 1px 8px; }
+.integrity-finding-body { margin: 8px 0 4px; display: grid; gap: 8px; max-width: 760px; }
+.integrity-finding-body h4 { margin: 6px 0 0; }
+.integrity-finding-body p { margin: 0; }
+.integrity-changes { width: 100%; }
+.integrity-changes td { overflow-wrap: anywhere; vertical-align: top; }
+.integrity-field { display: grid; gap: 4px; }
+.integrity-field textarea, .integrity-review input { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; font: inherit; background: var(--panel); color: var(--ink); min-width: 0; }
+.integrity-decision { border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px 8px; margin: 0; display: grid; gap: 4px; }
+.integrity-decision label { display: flex; align-items: center; gap: 6px; }
+.integrity-actions { display: flex; justify-content: flex-end; }
+.integrity-review { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin-bottom: 8px; }
+.integrity-review label { display: grid; gap: 4px; }
+.integrity-review label.grow { flex: 1 1 240px; }
+.org-integrity { display: grid; gap: 10px; max-width: 760px; }
+/* The sign-in id's label, hint and domains (§8.2), with how the sign-in page shows them. */
+.org-signin { display: grid; gap: 10px; max-width: 560px; }
+.org-signin .ed-field input { width: 100%; box-sizing: border-box; }
+.org-signin-sample { border: 1px dashed var(--line); border-radius: var(--radius); padding: 10px 14px; max-width: 360px; }
+.org-integrity-object { display: grid; gap: 4px; max-width: 420px; }
+.org-integrity select { padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; font: inherit; background: var(--panel); color: var(--ink); max-width: 100%; }
+/* A list that waits for a search (list.searchFirst): said plainly, so an empty page does not read as "none". */
+.search-first { display: flex; gap: 10px; align-items: flex-start; max-width: 640px; margin: 12px 0; padding: 12px 14px; border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: var(--radius); background: var(--panel); }
+.search-first p { margin: 4px 0 0; color: var(--muted); }
+.approval-levels { display: grid; gap: 6px; }
+.approval-level { display: flex; gap: 8px; align-items: flex-start; }
+.approval-level input { margin-top: 3px; }
+
+/* Undo and redo in a change (undo.js): redo is undo's arrow turned round. */
+.undo-redo { display: inline-flex; gap: 6px; }
+.undo-redo .redo svg { transform: scaleX(-1); }
+
+/* A policy in words (policy-words.js): what it grants, beside its name; what to look at; where to start. */
+.policy .policy-actions { display: inline-flex; gap: 10px; margin-left: 6px; }
+.policy-summary { display: grid; gap: 6px; margin-top: 12px; padding: 10px 12px; border-radius: 6px; background: var(--chip); }
+.policy-says { display: flex; gap: 8px; align-items: flex-start; margin: 0; color: var(--ink); font-size: 14px; }
+.policy-together { margin: 0 0 0 24px; font-size: 13px; color: var(--ink); }
+.policy-says svg, .policy-advice svg { flex: none; margin-top: 3px; }
+.policy-advice { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: 13px; color: var(--muted); }
+.policy-advice.warn { color: var(--warn); }
+.policy-presets { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 10px; }
+/* A kept prompt's last run made late or on a later try (§34.7). */
+.rep-late { display: flex; gap: 6px; align-items: flex-start; color: var(--warn); margin: 2px 0; }
+.rep-late svg { flex: none; margin-top: 2px; }
+
+/* Files shown (§35.4): a picture, a video played, a PDF read in the page, a link to open any of them. */
+.media-view { display: grid; gap: 6px; min-width: 0; }
+.media-view.compact { display: inline-flex; }
+.media-picture { max-width: 100%; max-height: 640px; border-radius: var(--radius); border: 1px solid var(--line); display: block; }
+.media-video { width: 100%; background: #000; border-radius: var(--radius); }
+.media-pdf { width: 100%; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel, #fff); }
+.media-open { display: inline-flex; align-items: center; gap: 4px; color: var(--accent); text-decoration: none; overflow-wrap: anywhere; }
+.media-open:hover { text-decoration: underline; }
+.file-field { display: grid; gap: 6px; justify-items: start; }
+.cell-picture { height: 32px; width: auto; max-width: 64px; border-radius: 4px; vertical-align: middle; border: 1px solid var(--line); }
+.screen-text.rich .rich-p { margin: 0 0 6px; }
+.screen-text.rich a { color: var(--accent); }
+
+/* A guide's steps under a PDF or a video (§35.4): where it is, and big buttons for gloved hands. */
+.pdf-pages, .video-steps { display: grid; gap: 8px; min-width: 0; }
+.pdf-page { display: flex; justify-content: center; align-items: flex-start; background: var(--bg, #f3f4f6); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; overflow: hidden; outline-offset: 2px; }
+.pdf-canvas { background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .2); max-width: 100%; }
+.step-bar { display: grid; gap: 8px; }
+.step-where { font-size: 15px; overflow-wrap: anywhere; }
+.step-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.step-btn { min-height: 44px; padding: 8px 16px; font-size: 15px; flex: 1 1 140px; }
+.step-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.step-chip { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13px; cursor: pointer; min-height: 32px; }
+.step-chip.on { border-color: var(--accent); background: var(--accent); color: var(--panel); }
+/* A step done (§35.4): ticked, in the ok tone; where a route has it now, marked. */
+.step-chip { display: inline-flex; align-items: center; gap: 4px; }
+.step-chip.done:not(.on) { border-color: var(--ok); background: var(--ok-soft); color: var(--ok); }
+.step-chip.here:not(.on) { border-color: var(--accent); }
+.step-chip .icon { width: 14px; height: 14px; }
+.step-done { display: grid; gap: 6px; }
+.step-done:empty { display: none; }
+.step-done-yes { color: var(--ok); margin: 0; font-weight: 600; }
+.step-done-wait { margin: 0; }
+.step-done-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.step-done-row input, .step-done-row select { min-height: 40px; flex: 1 1 140px; max-width: 260px; }
+.step-done .btn { min-height: 44px; }
+.step-done label.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+
+/* An installed suite's set-up guide (§29.8). */
+.suite-guide { max-width: 860px; }
+.suite-guide-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.suite-guide h2 { margin: 10px 0 6px; }
+.suite-guide-intro { color: var(--muted); margin: 0 0 14px; }
+/* A guide is shown only for a suite installed here: said at the top, and its install steps marked done. */
+.suite-guide-installed { display: flex; align-items: flex-start; gap: 8px; margin: 0 0 14px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--accent-soft); }
+.suite-guide-installed svg, .suite-guide-done-note svg { width: 16px; height: 16px; flex: none; margin-top: 2px; }
+.suite-guide-steps > li.suite-guide-done { opacity: .62; }
+.suite-guide-done-note { display: flex; align-items: center; gap: 6px; margin: 0 0 4px !important; font-weight: 600; }
+.suite-guide-steps { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 10px; }
+.suite-guide-steps > li { padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); min-width: 0; }
+.suite-guide-steps p { margin: 6px 0; }
+.suite-guide-steps ul { margin: 4px 0 6px; padding-left: 20px; }
+.suite-guide-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.suite-guide-n { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 999px; background: var(--chip); font-size: 12px; font-weight: 600; flex: none; }
+.suite-guide-command { display: flex; align-items: flex-start; gap: 6px; margin: 6px 0 0; }
+.suite-guide-command pre { flex: 1; min-width: 0; margin: 0; padding: 6px 10px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
+.pack-card a.small .icon-text { display: inline-flex; align-items: center; gap: 4px; }
+
+/* About and other dialogs to read (§29.9): sections of label and value. */
+.dialog-section { display: grid; gap: 4px; }
+.dialog-section h3 { margin: 4px 0 0; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.dialog-rows { display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr); gap: 4px 16px; margin: 0; }
+.dialog-rows dt { color: var(--muted); }
+.dialog-rows dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.nav-about { margin-top: 8px; }
+.nav-about .nav-link { display: inline-flex; align-items: center; gap: 6px; width: calc(100% - 12px); background: none; border: 0; text-align: left; cursor: pointer; color: var(--muted); font: inherit; }
+.nav-about .nav-link:hover { color: var(--accent); }
+/* The suites on the designer's home: one line each, its name and version, what it brings, what to do. */
+.pack-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.pack-row { display: grid; grid-template-columns: minmax(0, 230px) minmax(0, 1fr) minmax(0, 340px); align-items: center; gap: 4px 14px; padding: 7px 12px; }
+.pack-row + .pack-row { border-top: 1px solid var(--line); }
+.pack-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.pack-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pack-said { min-width: 0; }
+.pack-acts { display: flex; align-items: center; gap: 12px; justify-content: flex-end; flex-wrap: wrap; }
+.pack-acts > span:empty { display: none; }
+.pack-acts a.small .icon-text { display: inline-flex; align-items: center; gap: 4px; }
+.pack-more { margin-top: 6px; padding: 0; }
+@media (max-width: 720px) { .pack-row { grid-template-columns: minmax(0, 1fr); } .pack-acts { justify-content: flex-start; } }
+.pack-newer { color: var(--accent); }
+.pack-newer .icon-text { display: inline-flex; align-items: center; gap: 4px; }
+.history-every { display: inline-flex; align-items: center; gap: 4px; margin: 0 0 10px; }
+.lay-history .chip-row { margin: 4px 0; }
+.lay-history > label { display: flex; align-items: center; gap: 4px; margin: 4px 0; }

@@ -3,9 +3,10 @@
 // fields, which number; the page draws it with components registered once (client/screen.js). What
 // a block shows is read with the viewer's own rights (policy.js mask), so a screen never shows more
 // than that person's forms would; a number counts only what they may read.
-import { fail } from "../../../src/errors.js";
+import { fail } from "@opencore-mes/juris-kit/errors.js";
 import { evaluate, referencesOf } from "../client/expr.js";
-import { validateScreen } from "../client/definition.js";
+import { validateScreen, isSensitive, stepTargetProblems } from "../client/definition.js";
+import { parseSteps, intoOf, secondsOf } from "../client/media-steps.js";
 import { mask, decide } from "./policy.js";
 import { recordWhere } from "./record-where.js";
 import { rightsSql, orderSql } from "./record-sql.js";
@@ -39,7 +40,7 @@ export function createScreens({ store, records, design, transactions, query = nu
         const groups = await store.db.query("SELECT group_id FROM mes.group_members WHERE user_id = $1", [user.id]);
         return groups.some((g) => callers.groups.includes(g.group_id));
     }
-    const publicOf = (s) => ({ name: s.body.name, version: s.version, label: s.body.label, description: s.body.description ?? "", params: s.body.params ?? {}, blocks: s.body.blocks ?? [], maximize: s.body.maximize ?? null });
+    const publicOf = (s) => ({ name: s.body.name, version: s.version, label: s.body.label, description: s.body.description ?? "", params: s.body.params ?? {}, blocks: s.body.blocks ?? [], maximize: s.body.maximize ?? null, oneTab: s.body.oneTab === true });
     const paramOf = (body) => Object.entries(body.params ?? {})[0] ?? null;
 
     // The labels and types of an object's fields, for the page to draw values with.
@@ -69,7 +70,8 @@ export function createScreens({ store, records, design, transactions, query = nu
             return seen(await x.reader.query(`SELECT r.* FROM mes.records r WHERE ${s.sql} ORDER BY ${order} LIMIT ${n}`, s.params));
         }
         const rows = await x.reader.query(`SELECT * FROM mes.records WHERE ${s.sql} ORDER BY updated_at DESC LIMIT ${sorted ? MAX_SCAN : Math.min(MAX_SCAN, n * 3 + 20)}`, s.params);
-        const visible = seen(rows).filter((r) => s.keys.every((k) => r.$perm.fields[k]));
+        // …and never by a sensitive field's value (§6.10), as record-sql.js has it in the database.
+        const visible = seen(rows).filter((r) => s.keys.every((k) => r.$perm.fields[k] && !isSensitive(def.body, k)));
         return (sorted ? sortRows(visible, (r) => (sort.field === "state" ? r.state : r[sort.field]), sort.dir ?? "asc") : visible).slice(0, n);
     }
     const whereOf = (b, scope) => Object.fromEntries(Object.entries(b.where ?? {}).map(([k, v]) => [k, Array.isArray(v) ? v : evaluate(v, scope) ?? null]));
@@ -101,6 +103,122 @@ export function createScreens({ store, records, design, transactions, query = nu
     }
     const slim = (r, columns) => ({ id: r.id, state: r.state, $title: r.$title ?? null, $titles: r.$titles ?? {}, ...Object.fromEntries(columns.filter((c) => c !== "state").map((c) => [c, r[c] ?? null])) });
 
+    // A guide's steps done (§35.4): the records of its log, as the viewer may read them, each saying which
+    // step (its number) and who did it; and how the page marks one done: its transaction, the inputs it
+    // fills (worked out here, as the viewer), and the inputs a step's value, photo or file goes in.
+    async function stepsDone(user, d, scope, steps) {
+        const logDef = await store.definition(d.log?.object);
+        const tx = (await store.transactions()).get(d.transaction);
+        if (!logDef || !tx) return { error: "Its steps cannot be marked done: its transaction or its log is not there. Ask its designer." };
+        const where = whereOf({ where: d.log.where }, scope);
+        // No record to read them for (no lot opened): nothing is done, and nothing can be.
+        if (Object.values(where).some((v) => v === null)) return { list: {}, off: true };
+        const rows = await visibleRows(user, logDef, where, { limit: 1000 });
+        const list = {};
+        for (const r of rows.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))) {
+            const n = Number(r[d.log.step]);
+            // The first record of a step counts; undone (archived), the next takes its place. Undo is the
+            // log record archived, for whoever its policies let archive it, as anywhere else.
+            if (Number.isInteger(n) && n > 0 && !list[n]) list[n] = { by: r.created_by, at: r.created_at, id: r.id, rowVersion: r.row_version, undo: Boolean(r.$perm?.archive) };
+        }
+        const ids = [...new Set(Object.values(list).map((v) => v.by))];
+        const names = ids.length ? new Map((await store.db.query("SELECT id, name FROM mes.users WHERE id = ANY($1)", [ids])).map((u) => [u.id, u.name])) : new Map();
+        for (const v of Object.values(list)) v.name = names.get(v.by) ?? (String(v.by).startsWith("service:") || String(v.by).startsWith("flow:") ? "the system" : v.by);
+        const inputs = tx.body.inputs ?? {};
+        const fills = {};
+        for (const [k, e] of Object.entries(d.fills ?? {})) { try { fills[k] = evaluate(e, scope) ?? null; } catch { fills[k] = null; } }
+        // What each step done at the screen fills besides its number, and how it is asked for.
+        const into = {};
+        const problems = {};
+        for (const s of steps ?? []) {
+            const target = intoOf(s, d);
+            if (target && inputs[target]) {
+                const spec = inputs[target];
+                into[target] = { type: spec.type, label: spec.label ?? target, ...(Array.isArray(spec.values) ? { values: spec.values } : {}), ...(spec.unit ? { unit: spec.unit } : {}) };
+            }
+        }
+        // A record's own steps are checked here, as they are shown: one that names what is not there says so.
+        for (const m of stepTargetProblems(steps ?? [], d, inputs, [...(await store.screens()).keys()])) {
+            const k = Number(/^step (\d+)/.exec(m)?.[1]);
+            if (k) problems[steps[k - 1].n] = m.replace(/^step \d+, "[^"]*": ?/, "");
+        }
+        return {
+            list, log: logDef.body.object, transaction: d.transaction, label: tx.body.label ?? d.transaction, signed: Boolean(tx.body.signature), meaning: tx.body.signature?.meaning ?? null,
+            // Verified by a second person (§7.4): the one signed in beside the operator, as on its form.
+            verifier: tx.body.signature?.verifier?.meaning ?? null, step: d.step, fills, into, gate: d.gate === true, problems,
+        };
+    }
+    // A guide that follows a route (§35.4, §32.4): the traveler's way along it, the sequences placed in the
+    // guide as its steps, each done once the route has left it, the one it is at the current step.
+    async function routeSteps(user, r, scope) {
+        let id;
+        try { id = evaluate(r.of, scope); } catch { id = null; }
+        if (typeof id !== "string" || !UUID.test(id)) return { route: null };
+        const [run] = await x.reader.query("SELECT id, flow, version, node, state FROM mes.flow_runs WHERE subject_id = $1 AND flow = $2 AND kind = 'route' ORDER BY (state <> 'ended') DESC, started_at DESC LIMIT 1", [id, r.flow]);
+        const [t] = run ? await x.reader.query("SELECT body FROM mes.flows WHERE name = $1 AND version = $2", [run.flow, run.version]) : await x.reader.query("SELECT body FROM mes.flows WHERE name = $1 ORDER BY version DESC LIMIT 1", [r.flow]);
+        if (!t) return { route: null };
+        const nodes = t.body.nodes ?? {};
+        const way = run ? await x.reader.query("SELECT node, at, by FROM mes.flow_steps WHERE run_id = $1 ORDER BY seq", [run.id]) : [];
+        const left = new Map();
+        for (const [i, w] of way.entries()) if (i < way.length - 1 || run.state === "ended") left.set(w.node, { by: way[i + 1]?.by ?? w.by, at: way[i + 1]?.at ?? w.at });
+        const txs = await store.transactions();
+        const steps = Object.entries(nodes).filter(([, n]) => n?.kind === "sequence" && typeof n.guide === "string" && secondsOf(n.guide.trim()) !== null)
+            .map(([node, n]) => ({ node, at: secondsOf(n.guide.trim()), time: n.guide.includes(":"), label: n.label ?? node, needs: "route", leaves: (n.leaves ?? []).map((name) => txs.get(name)?.body.label ?? name) }))
+            .sort((a, b) => a.at - b.at)
+            .map((s, i) => ({ ...s, n: i + 1 }));
+        const list = {};
+        for (const s of steps) {
+            const l = left.get(s.node);
+            if (l && s.node !== (run.state === "ended" ? null : run.node)) list[s.n] = { by: l.by, at: l.at instanceof Date ? l.at.toISOString() : l.at };
+        }
+        const ids = [...new Set(Object.values(list).map((v) => v.by).filter(Boolean))];
+        const names = ids.length ? new Map((await store.db.query("SELECT id, name FROM mes.users WHERE id = ANY($1)", [ids])).map((u) => [u.id, u.name])) : new Map();
+        for (const v of Object.values(list)) v.name = names.get(v.by) ?? "the route";
+        const current = run && run.state !== "ended" ? steps.find((s) => s.node === run.node)?.n ?? null : null;
+        return { steps, route: { flow: r.flow, label: t.body.label ?? r.flow, state: run?.state ?? null, current, nodeLabel: run ? nodes[run.node]?.label ?? run.node : null }, done: { list, route: true } };
+    }
+
+    // What was done lately with some transactions (§26.10, a `runs` block): their runs as the audit trail keeps
+    // them, newest first, each with the records it moved as the viewer may read them now (one they may not, or one archived since, is
+    // left out, and a run with none left), its state's way and the values it set (only fields the viewer may read, never
+    // a sensitive one; what it emptied is not said), who ran it and when. Nothing is written for it: the runs are already audited (§7).
+    async function runsOf(user, b) {
+        const names = (Array.isArray(b.transactions) ? b.transactions : []).filter((n) => typeof n === "string");
+        if (!names.length) return { rows: [] };
+        const limit = Number.isInteger(b.limit) ? Math.min(200, Math.max(5, b.limit)) : 50;
+        const live = await store.transactions();
+        const mine = b.mine === true;
+        const audited = await x.reader.query(
+            `SELECT a.seq, a.at, a.actor, u.name AS who, a.after FROM mes.audit_log a LEFT JOIN mes.users u ON u.id = a.actor
+             WHERE a.object = '$transaction' AND a.action = ANY($1)${mine ? " AND a.actor = $3" : ""} ORDER BY a.seq DESC LIMIT $2`,
+            mine ? [names.map((n) => `run:${n}`), limit, user.id] : [names.map((n) => `run:${n}`), limit]);
+        const defs = new Map();
+        const seenRows = new Map();
+        const rows = [];
+        for (const a of audited) {
+            const records = [];
+            for (const r of Array.isArray(a.after?.records) ? a.after.records : []) {
+                if (!defs.has(r.object)) defs.set(r.object, await store.definition(r.object));
+                const def = defs.get(r.object);
+                if (!def || typeof r.id !== "string" || !UUID.test(r.id)) continue;
+                // (A record archived since, removed from use, is not in a desk's history: its runs are in its own.)
+                if (!seenRows.has(r.id)) { const row = await x.loadRow(x.reader, r.object, r.id); seenRows.set(r.id, row && !row.archived_at ? mask(def.body, await x.actorFor(user, r.object), x.rowOut(row)) : null); }
+                const seen = seenRows.get(r.id);
+                if (!seen) continue;
+                const said = new Set();
+                const fields = Object.entries(r.fields ?? {})
+                    .filter(([f]) => Object.hasOwn(def.body.fields ?? {}, f) && !isSensitive(def.body, f) && seen.$perm?.fields?.[f])
+                    .map(([, v]) => ({ label: v.label, to: v.to ?? null }))
+                    // What it set, not what it cleared (a board off its tester: its tester, lot, borrower emptied).
+                    .filter((v) => v.to !== null && v.to !== "")
+                    .filter((v) => { const k = `${v.label}\u0000${v.to}`; if (said.has(k)) return false; said.add(k); return true; });
+                records.push({ id: r.id, object: r.object, title: seen[def.body.titleField] ?? r.title ?? null, label: def.body.label, from: r.state?.from ?? null, to: r.state?.to ?? null, tones: def.body.states?.tones ?? {}, fields });
+            }
+            if (records.length) rows.push({ seq: Number(a.seq), at: a.at, who: a.who ?? a.actor, transaction: live.get(a.after?.transaction)?.body.label ?? a.after?.transaction ?? "", records });
+        }
+        return { rows };
+    }
+
     async function blockData(user, b, scope) {
         // A block of a kind a suite adds (§30.11): what the suite reads for it, as the viewer. With the
         // suite gone the block says what it needs, and the screen's other blocks are read as ever.
@@ -108,6 +226,44 @@ export function createScreens({ store, records, design, transactions, query = nu
             const spec = design.suiteExtensions().blocks[b.block];
             if (!spec) return { $needs: b.block.split(".")[0] };
             return (await spec.data?.(b, { user: { id: user.id, name: user.name }, param: scope.param ?? {} })) ?? {};
+        }
+        if (b.block === "runs") return runsOf(user, b);
+        // The step a record's plan waits at (§26.10, a `plan` block): the newest running plan set off by the record the
+        // block names (of its flows, if it names some), as the viewer may read that record. The page draws the step
+        // itself (flows.task: its form for those it is for, whom it waits for to anyone else).
+        if (b.block === "plan") {
+            const id = evaluate(b.of, scope);
+            if (typeof id !== "string" || !UUID.test(id)) return { run: null };
+            const flows = Array.isArray(b.flows) ? b.flows.filter((f) => typeof f === "string") : [];
+            const [r] = await x.reader.query(`SELECT id, subject_object FROM mes.flow_runs WHERE kind = 'plan' AND state = 'running' AND subject_id = $1${flows.length ? " AND flow = ANY($2)" : ""} ORDER BY started_at DESC LIMIT 1`, flows.length ? [id, flows] : [id]);
+            if (!r) return { run: null };
+            const def = await store.definition(r.subject_object);
+            const row = def ? await x.loadRow(x.reader, r.subject_object, id) : null;
+            const seen = row && mask(def.body, await x.actorFor(user, r.subject_object), x.rowOut(row));
+            return seen ? { run: r.id } : { run: null };
+        }
+        // A table of a named query's rows (§23.1, §26): the query run as the viewer (what their policies hide is not
+        // there), its parameters bound over the screen's parameter and the viewer, in the design's order, at most its
+        // limit. Ids are never shown, each its record's title; a row keeps its id for its buttons (`object`).
+        if (b.block === "table" && b.query !== undefined) {
+            if (!query) return { error: "Queries are not set up here." };
+            const body = (await store.queries()).get(b.query)?.body;
+            if (!body) return { error: `The query ${b.query} is not there: ask whoever designs this screen.` };
+            try {
+                const values = Object.fromEntries(Object.entries(b.params ?? {}).map(([p, e]) => [p, evaluate(e, scope) ?? null]));
+                const ran = await query.pageNamed(user, body, values, { sort: b.sort, limit: b.limit ?? 200, channel: "screen" });
+                const at = (c) => ran.columns.indexOf(c);
+                const shown = Array.isArray(b.columns) && b.columns.length ? b.columns.filter((c) => at(c) >= 0) : ran.columns.filter((c) => c !== "id");
+                const named = titles ? await titles.titled(user, ran) : ran;
+                const odef = b.object ? await store.definition(b.object) : null;
+                return {
+                    query: b.query, label: body.label ?? b.query, columns: shown, object: odef ? b.object : null, truncated: Boolean(ran.truncated),
+                    // A row's state, when the query gives it, decides which of its buttons it offers (their appearsOn states).
+                    rows: ran.rows.map((row, i) => ({ id: at("id") >= 0 ? row[at("id")] : null, ...(at("state") >= 0 ? { state: row[at("state")] } : {}), cells: shown.map((c) => named.rows[i][at(c)]) })),
+                };
+            } catch (error) {
+                return { error: error?.expose === true ? error.message : "This table could not be read." };
+            }
         }
         const def = b.object ? await store.definition(b.object) : null;
         if (["record", "table", "kpi", "breakdown", "floor"].includes(b.block) && !def) return { error: `No object ${b.object}.` };
@@ -148,10 +304,35 @@ export function createScreens({ store, records, design, transactions, query = nu
                     ...base,
                     items: places.map((p) => {
                         const r = by.get(p.of);
-                        const v = r ? (status === "state" ? r.state : r[status]) : null;
+                        const v = r ? (status === "state" ? r.state : isSensitive(d, status) ? null : r[status]) : null;
                         return { of: p.of, x: p.x, y: p.y, w: p.w, ix: p.ix, iy: p.iy, id: r?.id ?? null, status: v === undefined || v === null ? null : String(v), picture: r ? pictureOf(r) : null };
                     }),
                 };
+            }
+            // A file shown (§35.4): a record's file or picture, read through the record as the viewer (its
+            // policies, what its access requires), or a file of the screen's own design (its guide).
+            case "media": {
+                const about = async (blob) => (await x.reader.query("SELECT type, size, name FROM mes.blobs WHERE sha256 = $1", [blob]))[0] ?? null;
+                let shown;
+                if (typeof b.file === "string") {
+                    const meta = /^[0-9a-f]{64}$/.test(b.file) ? await about(b.file) : null;
+                    shown = meta ? { src: `/blob/${b.file}`, type: meta.type, size: meta.size, name: b.name ?? meta.name ?? null, steps: parseSteps(b.steps).steps } : { src: null };
+                } else {
+                    if (!def || !["file", "image"].includes(def.body.fields?.[b.field]?.type)) return { src: null };
+                    const id = evaluate(b.of, scope);
+                    if (typeof id !== "string" || !UUID.test(id)) return { src: null };
+                    const row = await x.loadRow(x.reader, def.body.object, id);
+                    const seen = row && mask(def.body, await x.actorFor(user, def.body.object), x.rowOut(row));
+                    const blob = seen?.[b.field];
+                    const meta = typeof blob === "string" && /^[0-9a-f]{64}$/.test(blob) ? await about(blob) : null;
+                    // Its steps, from a text field of the same record, as the viewer may read it.
+                    const stepsText = b.stepsField && typeof seen?.[b.stepsField] === "string" ? seen[b.stepsField] : null;
+                    shown = meta ? { src: `/file/${def.body.object}/${id}/${b.field}`, type: meta.type, size: meta.size, name: meta.name ?? null, title: seen[def.body.titleField] ?? null, steps: parseSteps(stepsText).steps } : { src: null, none: Boolean(seen) };
+                }
+                if (!shown.src) return shown;
+                if (b.route) return { ...shown, ...(await routeSteps(user, b.route, scope)) };
+                if (b.done) return { ...shown, done: await stepsDone(user, b.done, scope, shown.steps) };
+                return shown;
             }
             case "record": {
                 const id = evaluate(b.of, scope);
@@ -196,6 +377,8 @@ export function createScreens({ store, records, design, transactions, query = nu
             case "breakdown": {
                 const label = b.by === "state" ? "State" : def.body.fields[b.by]?.label ?? b.by;
                 const isRef = def.body.fields[b.by]?.type === "ref";
+                // Never grouped by a sensitive field (§6.10): the groups would tell what it holds.
+                if (isSensitive(def.body, b.by)) return { by: label, groups: [] };
                 const s = await scopeOf(user, def, whereOf(b, scope), sinceOf(b.since, plantTz));
                 const top = (groups) => [...groups].map(([key, a]) => ({ key, value: measured(a, b.measure ?? "count") })).sort((a, c) => (c.value ?? 0) - (a.value ?? 0)).slice(0, 12);
                 if (s?.rights) {
@@ -242,8 +425,14 @@ export function createScreens({ store, records, design, transactions, query = nu
             case "chart": {
                 if (!query) return { error: "Charts are not set up here." };
                 const withParam = (v) => (Array.isArray(v) ? v.map(withParam) : isPlain(v) ? (Object.keys(v).length === 1 && typeof v.param === "string" ? scope.param?.[v.param] ?? null : Object.fromEntries(Object.entries(v).map(([k, x]) => [k, withParam(x)]))) : v);
+                // A named query's rows (§23.1, `{ named, params? }`): one formula, approved once, for every chart and
+                // table that reads it; its parameters bound over the screen's parameter and the viewer.
+                const named = typeof b.query.named === "string" ? (await store.queries()).get(b.query.named)?.body ?? null : null;
+                if (b.query.named !== undefined && !named) return { error: `The query ${b.query.named} is not there: ask whoever designs this screen.` };
                 try {
-                    const ran = await query.runAs(user, b.query.sql !== undefined ? { sql: b.query.sql } : { json: withParam(b.query.json) }, rowsFor(b));
+                    const ran = named
+                        ? await query.runNamed(user, named, Object.fromEntries(Object.entries(isPlain(b.query.params) ? b.query.params : {}).map(([p, e]) => [p, evaluate(e, scope) ?? null])), { channel: "screen" })
+                        : await query.runAs(user, b.query.sql !== undefined ? { sql: b.query.sql } : { json: withParam(b.query.json) }, rowsFor(b));
                     // Ids never shown (§34.9): each is its record's title, as the viewer may read it.
                     const r = titles ? await titles.titled(user, ran) : ran;
                     return { columns: r.columns, rows: r.rows, truncated: Boolean(r.truncated) };
@@ -330,6 +519,9 @@ export function createScreens({ store, records, design, transactions, query = nu
             for (const b of body.blocks ?? []) {
                 // Not shown: not read either, so nothing of it reaches the page.
                 if (b.showWhen !== undefined && !(await holds(b.showWhen))) { out.push({ $off: "hidden" }); continue; }
+                // A form the viewer may not send (not among its callers) is left out too (§26.10: a desk two kinds of
+                // people use, each seeing only their own moves).
+                if (b.block === "transaction" && transactions.mayRun && !(await transactions.mayRun(b.name, user))) { out.push({ $off: "hidden" }); continue; }
                 let data;
                 try { data = await blockData(user, b, scope); } catch (error) { data = { error: error.expose ? error.message : "This block could not be read." }; }
                 if (b.enableWhen !== undefined && !(await holds(b.enableWhen))) data = { ...data, $off: "disabled", $why: b.disabledBecause ?? null };

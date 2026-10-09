@@ -4,12 +4,15 @@
 // by the stewards of what its steps write, and live once executed.
 import { inputFlowSummary } from "./input-flow.js";
 import { noDefault } from "./select.js";
-import { pickMany } from "./pick.js";
+import { pickMany, tagsInput } from "./pick.js";
 import { validateTransaction, transactionFootprint, FIELD_TYPES, IDENTIFIER } from "./definition.js";
 import { changesOf, countByTab, statusMaps } from "./compare.js";
-import { elementOps, jsonOf } from "./integration-editor.js";
+import { elementOps, jsonOf, deprecation } from "./integration-editor.js";
 import { W, text, labelled, check, draftDefinitions } from "./editor-kit.js";
 import { icon, withIcon } from "./icons.js";
+import { exprField, objectEntries, scope } from "./expr-builder.js";
+import { confirmRemove } from "./dialog.js";
+import { querySourceEditor, queriesKnown } from "./query-source.js";
 
 export const TRANSACTION_VIEWS = [["copilot", "Copilot", "sparkle"], ["changes", "Changes"], ["general", "General"], ["inputs", "Inputs"], ["layout", "Layout"], ["checks", "Checks"], ["steps", "Steps"], ["scenarios", "Scenarios"], ["callers", "Callers"], ["try", "Try it"], ["stewards", "Stewards"], ["json", "JSON"]];
 
@@ -32,9 +35,9 @@ const parsed = (textValue) => { try { return { ok: true, value: textValue.trim()
 // states, transitions and stewards (the object drafted in this change, if any, as drafted).
 export function transactionKnown(api, w) {
     const home = api.peek("design.home") ?? {};
-    const objects = Object.fromEntries((home.objects ?? []).map((o) => [o.object, { label: o.label, fields: o.fields ?? {}, actions: o.actions ?? [], states: o.states ?? [], transitions: o.transitions ?? [], titleField: o.titleField, tones: o.tones ?? {}, stewards: o.stewardship ?? { object: o.stewards ?? [] }, roles: o.roles ?? [] }]));
+    const objects = Object.fromEntries((home.objects ?? []).map((o) => [o.object, { label: o.label, fields: o.fields ?? {}, actions: o.actions ?? [], states: o.states ?? [], transitions: o.transitions ?? [], titleField: o.titleField, tones: o.tones ?? {}, stewards: o.stewardship ?? { object: o.stewards ?? [] }, roles: o.roles ?? [], ...(o.approval ? { approval: o.approval } : {}) }]));
     for (const [object, body] of Object.entries(draftDefinitions(api, w))) {
-        if (body) objects[object] = { label: body.label, fields: body.fields ?? {}, actions: (body.states?.transitions ?? []).map((t) => t.action), states: body.states?.list ?? [], transitions: body.states?.transitions ?? [], titleField: body.titleField, tones: body.states?.tones ?? {}, stewards: body.stewards ?? {}, roles: body.roles ?? [] };
+        if (body) objects[object] = { label: body.label, fields: body.fields ?? {}, actions: (body.states?.transitions ?? []).map((t) => t.action), states: body.states?.list ?? [], transitions: body.states?.transitions ?? [], titleField: body.titleField, tones: body.states?.tones ?? {}, stewards: body.stewards ?? {}, roles: body.roles ?? [], ...(body.approval ? { approval: body.approval } : {}) };
     }
     // The input flows it may name (§32.13), the change's drafts over what is live.
     const inputFlows = Object.fromEntries((home.flows ?? []).filter((f) => f.kind === "input").map((f) => [f.name, f.summary ?? inputFlowSummary(null)]));
@@ -47,7 +50,8 @@ export function transactionKnown(api, w) {
     const drafted = new Set(serviceBodies.map(([n]) => n));
     for (const sv of home.services ?? []) if (!drafted.has(sv.name)) for (const t of sv.runs ?? []) (runBy[t] ??= []).push(sv.name);
     for (const [sv, b] of serviceBodies) if (b && (b.runAs ?? "service") === "service") for (const t of b.uses?.transactions ?? []) (runBy[t] ??= []).push(sv);
-    return { objects, users: (home.users ?? []).map((u) => u.id), groups: (home.groups ?? []).map((g) => g.id), departments: (home.departments ?? []).map((d) => d.id), inputFlows, suiteSteps: home.suiteSteps ?? {}, services, runBy };
+    // The named queries there will be (§23.1): a reference input's choices may come from one.
+    return { queries: queriesKnown(api, w), objects, users: (home.users ?? []).map((u) => u.id), groups: (home.groups ?? []).map((g) => g.id), departments: (home.departments ?? []).map((d) => d.id), inputFlows, suiteSteps: home.suiteSteps ?? {}, services, runBy };
 }
 
 export function transactionProblems(api, id) {
@@ -95,7 +99,7 @@ function generalTab(ctx) {
                     },
                 }, "A button on those records opens it with the record filled in."),
                 where && target ? labelled("…while they are", checks(ctx, (target.states ?? []).map((s) => ({ value: s, label: s.replace(/_/g, " ") })), where.states, (v, on) => ops.edit((b) => { b.appearsOn.states = toggleIn(b.appearsOn.states, v, on); })), "None ticked: in every state.") : { span: {} },
-                where && target ? labelled("…only when", exprInput(ctx, "appearsOn.when", where.when, (v) => ops.set("appearsOn.when", v, false), 'always (e.g. {"eq": [{"record": "step_kind"}, "spc"]})'), "A condition on the record, read as {\"record\": \"field\"}: the button shows only where it holds.") : { span: {} },
+                where && target ? labelled("…only when", condition(ctx, "appearsOn.when", where.when, (v) => ops.set("appearsOn.when", v, true), "always", { scopes: { record: scope(`the ${String(target.label ?? where.object).toLowerCase()}`, objectEntries(target)) } }), "A condition on the record, read as {\"record\": \"field\"}: the button shows only where it holds.") : { span: {} },
                 where ? labelled("…filling in", { select: { disabled: ro, onchange: (e) => ops.edit((b) => { b.appearsOn.fills = e.target.value; }), children: noDefault([{ option: { value: "", textContent: "—" } }, ...fillable.map((k) => ({ option: { value: k, selected: where.fills === k, textContent: `${body.inputs[k].label ?? k} (${k})` } }))]) } }, "The input the record goes into.") : { span: {} },
                 labelled("Confirm first", check(ctx, "confirm", "show what will change, and ask to confirm, before it runs"), "Recommended. Off: it runs as soon as the button is pressed."),
                 labelled("Electronic signature", {
@@ -104,7 +108,11 @@ function generalTab(ctx) {
                 body.signature ? labelled("Verified by a second person", { label: { children: [{ input: { type: "checkbox", disabled: ro, checked: Boolean(body.signature.verifier), onchange: (e) => ops.edit((b) => { if (e.target.checked) b.signature.verifier = { meaning: "", departments: [] }; else delete b.signature.verifier; }) } }, { span: " a second person, signed in beside the one running it, verifies it; both re-enter their passwords at every submit" }] } }, "Two signatures at most: the one who runs it, and the one who verifies.") : { span: {} },
                 body.signature?.verifier ? labelled("…their signature means", { input: { type: "text", disabled: ro, placeholder: "e.g. Verified", value: body.signature.verifier.meaning ?? "", onchange: (e) => ops.edit((b) => { b.signature.verifier.meaning = e.target.value.trim(); }) } }, "What the second person signs to.") : { span: {} },
                 body.signature?.verifier ? labelled("…who may verify: departments", checks(ctx, known.departments.map((d) => ({ value: d, label: d })), body.signature.verifier.departments ?? [], (v, on) => ops.edit((b) => { b.signature.verifier.departments = toggleIn(b.signature.verifier.departments, v, on); if (!b.signature.verifier.departments.length) delete b.signature.verifier.departments; })), "Anyone in one of them, other than the one running it.") : { span: {} },
-                body.signature?.verifier ? labelled("…or roles", { input: { type: "text", disabled: ro, placeholder: "e.g. lot.supervisor, material.quality", value: (body.signature.verifier.roles ?? []).join(", "), onchange: (e) => ops.edit((b) => { const r = e.target.value.split(",").map((x) => x.trim()).filter(Boolean); if (r.length) b.signature.verifier.roles = r; else delete b.signature.verifier.roles; }) } }, "Roles on objects, \"<object>.<role>\", comma separated: anyone holding one may verify.") : { span: {} },
+                body.signature?.verifier ? labelled("…or roles", tagsInput({ key: `${ctx.w}.vroles.${ctx.name}`, readOnly: ro, placeholder: "Add a role (object.role)…", value: body.signature.verifier.roles ?? [],
+                    // A role of an object: object.role, from those the objects declare.
+                    options: (api.peek("design.home")?.objects ?? []).flatMap((o) => (o.roles ?? []).map((r) => ({ value: `${o.object}.${r}`, label: `${o.object}.${r}`, hint: o.label ?? "" }))),
+                    create: (t) => (/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/.test(t) ? t : { error: `“${t}”: a role is object.role, e.g. lot.supervisor` }),
+                    onChange: (r) => ops.edit((b) => { if (r.length) b.signature.verifier.roles = r; else delete b.signature.verifier.roles; }) }), "Roles on objects, \"<object>.<role>\": anyone holding one may verify.") : { span: {} },
                 labelled("Fill the window", maximizeSelect(ctx), "A Maximize button on its screen sets the navigator, the top bar and the tabs aside: a tablet at a machine. Each device remembers the person's choice."),
                 labelled("Input flow", inputFlowSelect(ctx), "How it is filled from the keyboard or a scanner: which input next, what moves on (Enter, Tab, a key, or by itself), decisions on what was entered, and back to the start for the next one. Drawn in the Flow designer (a flow template of kind input)."),
                 published ? { p: { children: [{ Link: { to: `/t/${name}`, className: "btn", textContent: "Open its screen (the published version)" } }] } } : { span: {} },
@@ -114,7 +122,7 @@ function generalTab(ctx) {
 }
 
 function inputsTab(ctx) {
-    const { api, w, body, ops, ro } = ctx;
+    const { api, w, body, ops, ro, id } = ctx;
     const known = transactionKnown(api, w);
     const inputs = body.inputs ?? {};
     // Where an input may be filled in from: another reference input's field, a reference to the same
@@ -149,19 +157,22 @@ function inputsTab(ctx) {
                                                             ? { select: { disabled: ro, onchange: (e) => ops.edit((b) => { b.inputs[k].to = e.target.value; delete b.inputs[k].from; }), children: noDefault(Object.entries(known.objects).map(([o, d]) => ({ option: { value: o, selected: spec.to === o, textContent: d.label ?? o } }))) } }
                                                             : spec.type === "enum"
                                                                 ? { div: { children: [
-                                                                    { input: { type: "text", disabled: ro, value: (spec.values ?? []).join(", "), onchange: (e) => ops.set(`inputs.${k}.values`, e.target.value.split(",").map((v) => v.trim()).filter(Boolean), true) } },
-                                                                    check(ctx, `inputs.${k}.multiple`, "several values"),
+                                                                    tagsInput({ key: `${ctx.w}.ivals.${ctx.name}.${k}`, readOnly: ro, placeholder: "Add a value…", value: spec.values ?? [], onChange: (next) => ops.set(`inputs.${k}.values`, next, true) }),
+                                                                    check(ctx, `inputs.${k}.multiple`, "Multiple select"),
                                                                 ] } }
                                                                 : spec.type === "rows"
                                                                     ? { div: { className: "tx-rows-spec", children: [
-                                                                        { input: { type: "text", disabled: ro, title: "Each row's fields, as name:type (string, integer, decimal, boolean, date)", value: Object.entries(spec.fields ?? {}).map(([c, cs]) => `${c}:${cs.type}`).join(", "), onchange: (e) => ops.edit((b) => { b.inputs[k].fields = rowFields(e.target.value, b.inputs[k].fields); }) } },
+                                                                        tagsInput({ key: `${ctx.w}.rowf.${ctx.name}.${k}`, readOnly: ro, placeholder: "Add a field (name:type)…", value: Object.entries(spec.fields ?? {}).map(([c, cs]) => `${c}:${cs.type}`),
+                                                                            // Each row's fields, as name:type (string unless said): the type one of ROW_TYPES.
+                                                                            create: (t) => { const [n, ty = "string"] = t.split(":").map((x) => x.trim()); return /^[a-z][a-z0-9_]*$/.test(n) && ROW_TYPES.includes(ty) ? `${n}:${ty}` : { error: `“${t}”: name:type, the type one of ${ROW_TYPES.join(", ")}` }; },
+                                                                            onChange: (next) => ops.edit((b) => { b.inputs[k].fields = rowFields(next.join(","), b.inputs[k].fields); }) }),
                                                                         { span: { className: "small", children: [{ span: "at least " }, { input: { type: "number", min: 0, max: 1000, disabled: ro, className: "tiny", value: String(spec.min ?? ""), onchange: (e) => ops.edit((b) => { const n = parseInt(e.target.value, 10); if (Number.isInteger(n)) b.inputs[k].min = n; else delete b.inputs[k].min; }) } }, { span: " at most " }, { input: { type: "number", min: 0, max: 1000, disabled: ro, className: "tiny", value: String(spec.max ?? ""), onchange: (e) => ops.edit((b) => { const n = parseInt(e.target.value, 10); if (Number.isInteger(n)) b.inputs[k].max = n; else delete b.inputs[k].max; }) } }, { span: " rows" }] } },
                                                                     ] } }
                                                                     : { span: { className: "muted", textContent: "—" } }],
                                                     },
                                                 },
                                                 { td: { children: [spec.type !== "rows" ? { select: { disabled: ro, onchange: (e) => ops.edit((b) => { if (e.target.value) b.inputs[k].from = e.target.value; else delete b.inputs[k].from; }), children: noDefault([{ option: { value: "", textContent: "entered" } }, ...sourcesFor(k, spec).map((o) => ({ option: { value: o.value, selected: spec.from === o.value, textContent: o.label } }))]) } } : { span: { className: "muted", textContent: "entered" } }] } },
-                                                { td: { children: ro() ? [] : [{ button: { type: "button", className: "btn ghost", textContent: "Remove", onclick: () => ops.edit((b) => { delete b.inputs[k]; }) } }] } },
+                                                { td: { children: ro() ? [] : [{ button: { type: "button", className: "btn ghost", textContent: "Remove", onclick: confirmRemove(ctx.api, `input ${k}`, () => ops.edit((b) => { delete b.inputs[k]; }) )} }] } },
                                             ],
                                         },
                                     })),
@@ -171,6 +182,16 @@ function inputsTab(ctx) {
                     },
                 },
                 ro() ? { span: {} } : addRow(ctx, "New input (e.g. good_qty)", (k) => ops.edit((b) => { (b.inputs ??= {})[k] ??= { label: k.replace(/_/g, " "), type: "string" }; })),
+                // A reference input's choices from a named query (§23.1): the machines of the kind entered, the lots on
+                // hold; in place of every record of its object. One a record is filled in from takes none.
+                ...Object.entries(inputs).filter(([, spec]) => spec.type === "ref" && spec.from === undefined).map(([k, spec]) => ({ details: { key: `qsrc-${k}`, className: "tx-input-choices", open: Boolean(spec.options), children: [
+                    { summary: { textContent: `Choices of ${spec.label ?? k}${spec.options?.query ? `: from ${spec.options.query}` : ""}` } },
+                    querySourceEditor(api, {
+                        w, id, key: `${w}.qsrc.${ctx.name}.${k}`, readOnly: ro(), value: spec.options ?? null, kind: "choices", noun: String(known.objects[spec.to]?.label ?? spec.to ?? "record").toLowerCase(),
+                        scopes: 'its inputs ({"input": "kind"}), the records they name ({"lookup": "lot.product"}), the person ({"user": "id"}) and the route step ({"node": "area"})',
+                        onChange: (src) => ops.edit((b) => { if (src) b.inputs[k].options = src; else delete b.inputs[k].options; }),
+                    }),
+                ] } })),
             ],
         },
     };
@@ -189,7 +210,43 @@ function addRow(ctx, placeholder, onAdd) {
     };
 }
 
+// What route steps offering this transaction set in their settings ({ node: "parameter" }): from the live
+// routes (the designer's home), and those drafted in this change, which come first.
+function stepSettings(ctx) {
+    const types = {};
+    const add = (k, t) => { types[k] = types[k] === "string" || t === "string" ? "string" : "number"; };
+    for (const body of Object.values(ctx.api.peek(`${ctx.w}.fl`) ?? {})) for (const n of Object.values(body?.nodes ?? {})) {
+        if (!(n?.offers ?? []).includes(ctx.name) || !n.settings || typeof n.settings !== "object") continue;
+        for (const [k, v] of Object.entries(n.settings)) add(k, typeof v === "number" ? "number" : "string");
+    }
+    const drafted = new Set(Object.keys(ctx.api.peek(`${ctx.w}.fl`) ?? {}));
+    for (const f of ctx.api.getState("design.home.flows", []) ?? []) if (!drafted.has(f.name)) for (const [k, t] of Object.entries(f.txSettings?.[ctx.name] ?? {})) add(k, t);
+    return Object.entries(types).map(([path, type]) => ({ path, label: `the step's ${path.replace(/_/g, " ")}`, type }));
+}
+
 // An expression typed as JSON on one line: applied whenever it parses; marked while it does not.
+// What a transaction's checks and steps read (§25, §9.2a): its inputs, the fields of the records they name
+// (lookup), the person running it and their Person record, a route step's settings, a table input's rows, and
+// counts of records. Its "appears on … only when": the record the button is on.
+function txSpec(ctx) {
+    const known = transactionKnown(ctx.api, ctx.w);
+    const inputs = Object.entries(ctx.body.inputs ?? {});
+    const typeOf = (sp) => (sp?.multiple ? "list" : sp?.type === "ref" ? "ref" : sp?.type ?? "string");
+    const certIds = Object.keys(ctx.api.getState("design.home.organization.certifications", {}) ?? {});
+    return { scopes: {
+        input: scope("what is entered", inputs.map(([n, sp]) => ({ path: n, label: sp?.label ?? n, type: typeOf(sp), ...(Array.isArray(sp?.values) ? { values: sp.values } : {}) }))),
+        lookup: scope("the records entered", inputs.filter(([, sp]) => sp?.type === "ref").flatMap(([n, sp]) => objectEntries(known.objects?.[sp.to], { prefix: `${n}.`, label: sp?.label ?? n }))),
+        // …and the certifications they hold today (§27.9): a step only a certified person does.
+        user: scope("the person", [{ path: "id", label: "the person (sign-in id)", type: "string" }, ...(certIds.length ? [{ path: "certifications", label: "their certifications", type: "list", values: certIds }] : [])]),
+        person: scope("their Person record", objectEntries(known.objects?.person).filter((e) => e.path !== "id" && e.path !== "state")),
+        // The settings the route steps that offer it give it (live, and drafted in this change): a check that
+        // the step says what to measure, a limit read off it.
+        node: scope("the route step's settings", stepSettings(ctx)),
+        row: scope("a row of a table input", []),
+    }, count: Object.keys(known.objects ?? {}) };
+}
+const condition = (ctx, path, stored, apply, empty, spec) => exprField({ key: `${ctx.w}.txexpr.${ctx.name}.${path}`, readOnly: ctx.ro, empty, value: () => stored, onChange: apply, spec: spec ?? txSpec(ctx) });
+
 function exprInput(ctx, path, stored, apply, placeholder = "") {
     const draft = `${ctx.w}.exprText.${ctx.name}.${path}`;
     const current = () => ctx.api.getState(draft, null) ?? json(stored);
@@ -222,8 +279,8 @@ function checksTab(ctx) {
                         key: `req-${i}`,
                         className: `tx-card ${ctx.changedAt?.(`require:${i}`) ?? ""}`,
                         children: [
-                            { legend: { children: [{ strong: `Check ${i + 1}` }, ro() ? { span: {} } : { button: { type: "button", className: "linkish", textContent: "remove", onclick: () => ops.edit((b) => { b.require.splice(i, 1); }) } }] } },
-                            labelled("Must hold", exprInput(ctx, `require.${i}.that`, r.that, (v) => ops.set(`require.${i}.that`, v, false), '{"ne": [{"lookup": "machine.state"}, "down"]}')),
+                            { legend: { children: [{ strong: `Check ${i + 1}` }, ro() ? { span: {} } : { button: { type: "button", className: "linkish", textContent: "remove", onclick: confirmRemove(ctx.api, `check ${i + 1}`, () => ops.edit((b) => { b.require.splice(i, 1); }) )} }] } },
+                            labelled("Must hold", condition(ctx, `require.${i}.that`, r.that, (v) => ops.set(`require.${i}.that`, v, true), "nothing yet: build the check")),
                             labelled("Otherwise, say", text(ctx, `require.${i}.message`, { placeholder: "The machine is down." })),
                             labelled("On the input", { select: { disabled: ro, onchange: (e) => ops.edit((b) => { if (e.target.value) b.require[i].field = e.target.value; else delete b.require[i].field; }), children: noDefault([{ option: { value: "", textContent: "the whole form" } }, ...inputs.map((k) => ({ option: { value: k, selected: r.field === k, textContent: k } }))]) } }),
                         ],
@@ -264,7 +321,7 @@ function createStepCard(ctx, st, i, count, known, move) {
                     { strong: `Step ${i + 1}: creates a record` },
                     ro() || i === 0 ? { span: {} } : { button: { type: "button", className: "mini", title: "Earlier", "aria-label": "Earlier", children: [icon("arrowUp")], onclick: () => move(i, -1) } },
                     ro() || i === count - 1 ? { span: {} } : { button: { type: "button", className: "mini", title: "Later", "aria-label": "Later", children: [icon("arrowDown")], onclick: () => move(i, 1) } },
-                    ro() ? { span: {} } : { button: { type: "button", className: "linkish", textContent: "remove", onclick: () => ops.edit((b) => { b.steps.splice(i, 1); }) } },
+                    ro() ? { span: {} } : { button: { type: "button", className: "linkish", textContent: "remove", onclick: confirmRemove(ctx.api, `step ${i + 1}`, () => ops.edit((b) => { b.steps.splice(i, 1); }) )} },
                 ] } },
                 { div: { className: "ed-row", children: [
                     labelled("Creates a", { select: { disabled: ro, onchange: (e) => ops.edit((b) => { b.steps[i] = { create: e.target.value, set: {}, ...(st.forEach ? { forEach: st.forEach } : {}) }; }), children: noDefault(Object.entries(known.objects).map(([o, d]) => ({ option: { value: o, selected: st.create === o, textContent: d.label ?? o } }))) } }),
@@ -279,7 +336,53 @@ function createStepCard(ctx, st, i, count, known, move) {
                     ] } })),
                     ro() || !unset.length ? { span: {} } : { select: { className: "mini-select", onchange: (e) => { const f = e.target.value; if (!f) return; ops.edit((b) => { b.steps[i].set = { ...(b.steps[i].set ?? {}), [f]: null }; }); }, children: noDefault([{ option: { value: "", textContent: "+ set a field" } }, ...unset.map((f) => ({ option: { value: f, textContent: target.fields[f]?.label ?? f } }))]) } },
                 ] } },
-                labelled("Only when", exprInput(ctx, `steps.${i}.when`, st.when, (v) => ops.set(`steps.${i}.when`, v, false), 'always (e.g. {"some": [{"input": "readings"}, {"gt": [{"row": "value"}, 1.5]}]})')),
+                labelled("Only when", condition(ctx, `steps.${i}.when`, st.when, (v) => ops.set(`steps.${i}.when`, v, true), "always")),
+            ],
+        },
+    };
+}
+
+// A step on the records it finds (§25.1): of which object, where its fields equal what the run works out, how many
+// at most, what it does to each (sets, an action, or nothing), and the name the steps after it read it by.
+function findStepCard(ctx, st, i, count, known, move) {
+    const { ops, ro } = ctx;
+    const find = st.find ?? {};
+    const target = known.objects[find.object];
+    const fields = Object.keys(target?.fields ?? {});
+    const whereFree = [...fields, "state"].filter((f) => !Object.hasOwn(find.where ?? {}, f));
+    const unset = fields.filter((f) => !Object.hasOwn(st.set ?? {}, f));
+    const head = { legend: { children: [
+        { strong: `Step ${i + 1}: finds records` },
+        ro() || i === 0 ? { span: {} } : { button: { type: "button", className: "mini", title: "Earlier", "aria-label": "Earlier", children: [icon("arrowUp")], onclick: () => move(i, -1) } },
+        ro() || i === count - 1 ? { span: {} } : { button: { type: "button", className: "mini", title: "Later", "aria-label": "Later", children: [icon("arrowDown")], onclick: () => move(i, 1) } },
+        ro() ? { span: {} } : { button: { type: "button", className: "linkish", textContent: "remove", onclick: confirmRemove(ctx.api, `step ${i + 1}`, () => ops.edit((b) => { b.steps.splice(i, 1); }) )} },
+    ] } };
+    const pairs = (key, values, free, placeholder, words) => ({ div: { className: "tx-sets", children: [
+        { strong: { className: "small", textContent: words } },
+        ...Object.entries(values ?? {}).map(([f, e]) => ({ div: { key: f, className: "tx-set", children: [
+            { code: f }, { span: " = " },
+            exprInput(ctx, `steps.${i}.${key}.${f}`, e, (v) => ops.set(`steps.${i}.${key}.${f}`, v === undefined ? null : v, false), placeholder),
+            ro() ? { span: {} } : { button: { type: "button", className: "mini", title: "Take it out", "aria-label": `Take ${f} out`, children: [icon("x")], onclick: () => ops.edit((b) => { const at = key === "find.where" ? b.steps[i].find.where : b.steps[i].set; delete at[f]; if (key === "set" && !Object.keys(at).length) delete b.steps[i].set; }) } },
+        ] } })),
+        ro() || !free.length ? { span: {} } : { select: { className: "mini-select", "aria-label": `Add to ${words.toLowerCase()}`, onchange: (e) => { const f = e.target.value; if (!f) return; ops.edit((b) => { if (key === "find.where") b.steps[i].find.where = { ...(b.steps[i].find.where ?? {}), [f]: null }; else b.steps[i].set = { ...(b.steps[i].set ?? {}), [f]: null }; }); },
+            children: noDefault([{ option: { value: "", textContent: "+ a field…" } }, ...free.map((f) => ({ option: { value: f, textContent: target?.fields?.[f]?.label ?? f } }))]) } },
+    ] } });
+    return {
+        fieldset: {
+            key: `step-${i}`,
+            className: `tx-card ${ctx.changedAt?.(`step:${i}`) ?? ""}`,
+            children: [
+                head,
+                hint(`It finds the records of an object whose fields equal what you say (an input, a field of a record an input names, a route step's setting, or null for one left empty), that the person running it may read, in use, the oldest first. The steps after it read what it found as found.${st.as || "name"}.count and found.${st.as || "name"}.first.<field>; it may also change each.`),
+                { div: { className: "ed-row", children: [
+                    labelled("Finds records of", { select: { disabled: ro, onchange: (e) => ops.edit((b) => { b.steps[i] = { find: { object: e.target.value, where: {} }, as: b.steps[i].as ?? "found" }; }), children: noDefault(Object.entries(known.objects).map(([o, d]) => ({ option: { value: o, selected: o === find.object, textContent: d.label ?? o } }))) } }),
+                    labelled("Named", { input: { type: "text", disabled: ro, value: st.as ?? "", placeholder: "holds", onchange: (e) => ops.set(`steps.${i}.as`, e.target.value.trim(), true) } }, "How the steps after it read it."),
+                    labelled("At most", { input: { type: "number", min: 1, max: 100, disabled: ro, value: find.limit ?? 20, onchange: (e) => ops.edit((b) => { const v = Math.floor(Number(e.target.value)); if (!v || v === 20) delete b.steps[i].find.limit; else b.steps[i].find.limit = Math.max(1, Math.min(100, v)); }) } }, "records changed"),
+                ] } },
+                pairs("find.where", find.where, whereFree, '{"input": "lot"}', "Where"),
+                target ? labelled("Then takes the action on each", { select: { disabled: ro, onchange: (e) => ops.edit((b) => { if (e.target.value) b.steps[i].action = e.target.value; else delete b.steps[i].action; }), children: noDefault([{ option: { value: "", textContent: "— none" } }, ...(target.actions ?? []).map((a) => ({ option: { value: a, selected: a === st.action, textContent: a } }))]) } }) : { span: {} },
+                target ? pairs("set", st.set, unset, '{"input": "reason"}', "Sets on each") : { span: {} },
+                labelled("Only when", condition(ctx, `steps.${i}.when`, st.when, (v) => ops.set(`steps.${i}.when`, v, true), "always")),
             ],
         },
     };
@@ -301,13 +404,13 @@ function suiteStepCard(ctx, st, i, count, known, move) {
                     { strong: `Step ${i + 1}: ${spec?.label ?? st.step}` },
                     ro() || i === 0 ? { span: {} } : { button: { type: "button", className: "mini", title: "Earlier", "aria-label": "Earlier", children: [icon("arrowUp")], onclick: () => move(i, -1) } },
                     ro() || i === count - 1 ? { span: {} } : { button: { type: "button", className: "mini", title: "Later", "aria-label": "Later", children: [icon("arrowDown")], onclick: () => move(i, 1) } },
-                    ro() ? { span: {} } : { button: { type: "button", className: "linkish", textContent: "remove", onclick: () => ops.edit((b) => { b.steps.splice(i, 1); }) } },
+                    ro() ? { span: {} } : { button: { type: "button", className: "linkish", textContent: "remove", onclick: confirmRemove(ctx.api, `step ${i + 1}`, () => ops.edit((b) => { b.steps.splice(i, 1); }) )} },
                 ] } },
                 hint(spec
                     ? `A step of the ${suite} suite.${spec.irreversible ? " What it does cannot be taken back, so it comes last: it is done only once every other step held." : ""}`
                     : `This step needs the ${suite} suite, which is not installed here: the transaction cannot run until it is back.`),
                 ...keys.map((k) => labelled(`${k}${(spec?.required ?? []).includes(k) ? " (needed)" : ""}`, exprInput(ctx, `steps.${i}.${k}`, st[k], (v) => ops.set(`steps.${i}.${k}`, v === undefined ? null : v, false), '{"input": "lot"}'))),
-                labelled("Only when", exprInput(ctx, `steps.${i}.when`, st.when, (v) => ops.set(`steps.${i}.when`, v, false), "always")),
+                labelled("Only when", condition(ctx, `steps.${i}.when`, st.when, (v) => ops.set(`steps.${i}.when`, v, true), "always")),
             ],
         },
     };
@@ -327,6 +430,7 @@ function stepsTab(ctx) {
                 ...steps.map((st, i) => {
                     if (st.step !== undefined) return suiteStepCard(ctx, st, i, steps.length, known, move);
                     if (st.create !== undefined) return createStepCard(ctx, st, i, steps.length, known, move);
+                    if (st.find !== undefined) return findStepCard(ctx, st, i, steps.length, known, move);
                     const target = known.objects[body.inputs?.[st.on]?.to];
                     const fields = Object.keys(target?.fields ?? {});
                     const unset = fields.filter((f) => !Object.hasOwn(st.set ?? {}, f));
@@ -339,7 +443,7 @@ function stepsTab(ctx) {
                                     { strong: `Step ${i + 1}` },
                                     ro() || i === 0 ? { span: {} } : { button: { type: "button", className: "mini", title: "Earlier", "aria-label": "Earlier", children: [icon("arrowUp")], onclick: () => move(i, -1) } },
                                     ro() || i === steps.length - 1 ? { span: {} } : { button: { type: "button", className: "mini", title: "Later", "aria-label": "Later", children: [icon("arrowDown")], onclick: () => move(i, 1) } },
-                                    ro() ? { span: {} } : { button: { type: "button", className: "linkish", textContent: "remove", onclick: () => ops.edit((b) => { b.steps.splice(i, 1); }) } },
+                                    ro() ? { span: {} } : { button: { type: "button", className: "linkish", textContent: "remove", onclick: confirmRemove(ctx.api, `step ${i + 1}`, () => ops.edit((b) => { b.steps.splice(i, 1); }) )} },
                                 ] } },
                                 { div: { className: "ed-row", children: [
                                     labelled("On the record in", { select: { disabled: ro, onchange: (e) => ops.edit((b) => { b.steps[i] = { on: e.target.value }; }), children: noDefault([{ option: { value: "", textContent: "—" } }, ...refs.map(([k, s]) => ({ option: { value: k, selected: st.on === k, textContent: `${s.label ?? k} (${known.objects[s.to]?.label ?? s.to})` } }))]) } }),
@@ -361,7 +465,7 @@ function stepsTab(ctx) {
                                         ],
                                     },
                                 } : { span: {} },
-                                labelled("Only when", exprInput(ctx, `steps.${i}.when`, st.when, (v) => ops.set(`steps.${i}.when`, v, false), 'always (e.g. {"eq": [{"lookup": "machine.state"}, "idle"]})')),
+                                labelled("Only when", condition(ctx, `steps.${i}.when`, st.when, (v) => ops.set(`steps.${i}.when`, v, true), "always")),
                             ],
                         },
                     };
@@ -370,6 +474,7 @@ function stepsTab(ctx) {
                 // The step kinds the installed suites add (§30.11).
                 ...(ro() ? [] : Object.entries(known.suiteSteps ?? {}).map(([kind, spec]) => ({ button: { key: `add-${kind}`, type: "button", className: "btn", textContent: `Add: ${spec.label ?? kind}`, onclick: () => ops.edit((b) => { (b.steps ??= []).push({ step: kind }); }) } }))),
                 ro() ? { span: {} } : { button: { type: "button", className: "btn", textContent: "Add a step that creates a record", onclick: () => ops.edit((b) => { (b.steps ??= []).push({ create: Object.keys(known.objects)[0] ?? "", set: {} }); }) } },
+                ro() ? { span: {} } : { button: { type: "button", className: "btn", textContent: "Add a step that finds records", onclick: () => ops.edit((b) => { (b.steps ??= []).push({ find: { object: Object.keys(known.objects)[0] ?? "", where: {} }, as: `found${(b.steps ?? []).filter((x) => x?.find).length || ""}` }); }) } },
             ],
         },
     };
@@ -387,6 +492,14 @@ function callersTab(ctx) {
                 checks(ctx, (home.groups ?? []).map((g) => ({ value: g.id, label: g.name })), callers.groups, (v, on) => ops.edit((b) => { b.callers = { ...(b.callers ?? {}), groups: toggleIn(b.callers?.groups, v, on) }; })),
                 { h4: "Users" },
                 pickMany({ key: `callers-${ctx.name}`, options: (home.users ?? []).map((u) => ({ value: u.id, label: u.name, hint: u.id })), value: callers.users ?? [], readOnly: ctx.ro, placeholder: "Add a person…", onChange: (next) => ops.edit((b) => { b.callers = { ...(b.callers ?? {}), users: next }; }) }),
+                // Routes that run it on their traveler as they move it on (§32.15: a route's every step).
+                { h4: "Routes" },
+                body.signature ? hint("It is signed by the person running it: no route runs it.") : (() => {
+                    const routes = (home.flows ?? []).filter((f) => f.kind === "route").map((f) => ({ value: f.name, label: f.label ?? f.name }));
+                    return routes.length
+                        ? { div: { children: [hint("A route that runs it at every step (its At every step setting) acts as itself, with the roles its design gives it."), checks(ctx, routes, callers.flows, (v, on) => ops.edit((b) => { b.callers = { ...(b.callers ?? {}), flows: toggleIn(b.callers?.flows, v, on) }; if (!b.callers.flows.length) delete b.callers.flows; }))] } }
+                        : hint("No route yet.");
+                })(),
                 // Services whose scripts run it as their own service role (§15.2): an ERP's lot start, a
                 // scheduled pull. A signed transaction is a person's to run.
                 { h4: "Services" },
@@ -398,6 +511,13 @@ function callersTab(ctx) {
                         ? { div: { children: [hint("Their scripts may run it with ctx.transactions.run, acting as their own service role: they need, as people do, a role whose policy grants each write through this transaction."), checks(ctx, services.map((v) => ({ value: v, label: labels.get(v) })), callers.services, (v, on) => ops.edit((b) => { const next = toggleIn(b.callers?.services, v, on); b.callers = { ...(b.callers ?? {}) }; if (next.length) b.callers.services = next; else delete b.callers.services; }))] } }
                         : hint("No service yet.");
                 })(),
+                // Outside systems (§25.7, docs/contracts/http-apis): an ERP or a cell controller runs it as its token's
+                // person, who must be among the users or groups above. Never one a person signs.
+                { h4: "The web" },
+                body.signature ? hint("It is signed by the person running it: an outside system does not run it.") : { div: { className: "ed-web", children: [
+                    labelled("Published over HTTP", check(ctx, "http.enabled", `outside systems run it: POST /svc/v1/${ctx.name}`), `With an integration user's token (scope transaction:run): its person must be among the users or groups above. A reference is sent as its record's id or its title (as a scanner reads it); POST /svc/v1/${ctx.name}/preview says what it would change, writing nothing.`),
+                    ...(body.http?.enabled || body.deprecated ? [deprecation(ctx)] : []),
+                ] } },
             ],
         },
     };
@@ -446,7 +566,7 @@ function scenariosTab(ctx) {
                                             last ? { span: { className: `badge ${last.passed ? "tone-ok" : "tone-danger"}`, textContent: last.passed ? "passed" : "failed" } } : { span: { className: "muted small", textContent: " not run yet" } },
                                             { span: { className: "spacer" } },
                                             String(id).startsWith("view-") ? { span: {} } : { Link: { to: sandbox(sc), className: "small", textContent: "open in the sandbox" } },
-                                            ro() ? { span: {} } : { button: { type: "button", className: "linkish small", textContent: "remove", onclick: () => ops.edit((b) => { b.scenarios = (b.scenarios ?? []).filter((_, k) => k !== i); if (!b.scenarios.length) delete b.scenarios; }) } },
+                                            ro() ? { span: {} } : { button: { type: "button", className: "linkish small", textContent: "remove", onclick: confirmRemove(ctx.api, "this scenario", () => ops.edit((b) => { b.scenarios = (b.scenarios ?? []).filter((_, k) => k !== i); if (!b.scenarios.length) delete b.scenarios; }) )} },
                                         ] } },
                                         { div: { className: "small muted", textContent: `Records: ${Object.entries(sc?.records ?? {}).map(([k, r]) => `@${k} (${objLabel(r.object)}${r.data !== undefined ? ", given" : ""})`).join(", ") || "none"}` } },
                                         { ol: { className: "small", children: (sc?.steps ?? []).map((st, j) => ({ li: { key: j, textContent: `${describe(st)}${st.as ? `, as ${st.as}` : ""} → ${st.expect?.ok === false ? `refused${st.expect.error ? ` ("${st.expect.error}")` : ""}` : "runs"}${st.expect?.states ? `; ${Object.entries(st.expect.states).map(([k, v]) => `@${k} ${String(v).replace(/_/g, " ")}`).join(", ")}` : ""}` } })) } },

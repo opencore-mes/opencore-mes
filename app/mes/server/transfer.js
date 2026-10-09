@@ -24,11 +24,13 @@
 //            the same file twice creates nothing twice. Rows are applied one by one: a refused row
 //            is reported and the others go on (POC; see §24).
 import { createHash } from "node:crypto";
-import { fail } from "../../../src/errors.js";
-import { CALL_KIND } from "../../../src/live-protocol.js";
+import { fail } from "@opencore-mes/juris-kit/errors.js";
+import { CALL_KIND } from "@opencore-mes/juris-kit/live-protocol.js";
 import { decide, mask } from "./policy.js";
 import { writeXlsx, readXlsx, sheetName, excelDate } from "./xlsx.js";
 import { sessionIdOf } from "./auth.js";
+import { isHidden, isSensitive, HIDDEN_TEXT } from "../client/definition.js";
+import { checkCell, checkRow } from "../client/row-check.js";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const MAX_ROWS = 10_000;
@@ -44,42 +46,14 @@ const same = (a, b) => (blank(a) && blank(b)) || JSON.stringify(a) === JSON.stri
 export const keyOf = (def) => def?.transfer?.import?.key ?? def?.titleField ?? null;
 
 // A cell as the field's type wants it: { value } or { error }.
-export function cellValue(field, raw) {
-    if (blank(raw)) return { value: field.multiple ? [] : null };
-    // Several values: "dent; scratch" (or with commas), each one of the field's values.
-    if (field.multiple) {
-        const parts = [...new Set(String(raw).split(/[;,]/).map((v) => v.trim()).filter(Boolean))];
-        const bad = parts.filter((v) => !field.values?.includes(v));
-        return bad.length ? { error: `some of ${field.values?.join(", ")}; not ${bad.join(", ")}` } : { value: parts };
-    }
-    switch (field.type) {
-        case "integer": {
-            const n = typeof raw === "number" ? raw : Number(String(raw).trim());
-            return Number.isInteger(n) ? { value: n } : { error: "a whole number" };
-        }
-        case "decimal": {
-            const n = typeof raw === "number" ? raw : Number(String(raw).trim().replace(/,(?=\d{3}\b)/g, ""));
-            return Number.isFinite(n) ? { value: n } : { error: "a number" };
-        }
-        case "boolean": {
-            if (typeof raw === "boolean") return { value: raw };
-            const t = String(raw).trim().toLowerCase();
-            if (["true", "yes", "1", "y"].includes(t)) return { value: true };
-            if (["false", "no", "0", "n"].includes(t)) return { value: false };
-            return { error: "yes or no" };
-        }
-        case "date": {
-            if (typeof raw === "number") return { value: excelDate(raw) };
-            const t = String(raw).trim().slice(0, 10);
-            return /^\d{4}-\d{2}-\d{2}$/.test(t) ? { value: t } : { error: "a date (YYYY-MM-DD)" };
-        }
-        case "enum": {
-            const t = String(raw).trim();
-            return field.values?.includes(t) ? { value: t } : { error: `one of ${field.values?.join(", ")}` };
-        }
-        default:
-            return { value: typeof raw === "number" ? String(raw) : String(raw) };
-    }
+// A field as a column of the file (row-check.js): its type and allowed values; a reference finds its record
+// through `find` (a model's index, by key). Required fields are the record services' to refuse, as at a form.
+export const columnOf = (name, field, ref = null) => ({ key: name, label: field.label ?? name, type: field.type, ...(field.values ? { values: field.values } : {}), ...(field.multiple ? { multiple: true } : {}), ...(ref ? { ref } : {}) });
+
+// One cell as its field's value, or what it must be (the shared row checker's own words).
+export function cellValue(field, given) {
+    const r = checkCell(columnOf("", field), given, { excelDate });
+    return r.error ? { error: r.error } : { value: r.value };
 }
 
 // A field as the _about tab describes it: [label, type, required, values / refers to]. Export writes
@@ -143,11 +117,13 @@ export function dependencyOrder(defs) {
     return out;
 }
 
-export function createTransfer({ store, records, recordTargets = () => [], invalidate = async () => {}, log = console }) {
+export function createTransfer({ store, records, recordTargets = () => [], invalidate = async () => {}, log = console, actorFor = null }) {
     const { db } = store;
     const read = (sql, params) => store.read(sql, params);
 
-    async function actorOf(user, object) { return { id: user.id, name: user.name, roles: await store.rolesFor(user.id, object) }; }
+    // As the record services know them (their departments and certifications too: a policy, or what an
+    // object's access requires, may read them), so an export holds what their own list shows.
+    async function actorOf(user, object) { return actorFor ? actorFor(user, object) : { id: user.id, name: user.name, roles: await store.rolesFor(user.id, object) }; }
     async function published() {
         return new Map((await store.allDefinitions()).map((d) => [d.body.object, d.body]));
     }
@@ -231,6 +207,8 @@ export function createTransfer({ store, records, recordTargets = () => [], inval
                 const line = [r.id, r.state, r.row_version];
                 for (const f of readableFields) {
                     const v = r[f];
+                    // A sensitive field (§6.10) as the words of its marker: a workbook never holds its value.
+                    if (isHidden(v)) { line.push(HIDDEN_TEXT); continue; }
                     line.push(def.fields[f].type === "ref" && typeof v === "string" && UUID.test(v) ? await refKey(def.fields[f].to, v) : Array.isArray(v) ? v.join("; ") : v ?? null);
                 }
                 rows.push(line);
@@ -332,32 +310,27 @@ export function createTransfer({ store, records, recordTargets = () => [], inval
             const index = await indexOf(def);
             const actor = await actorOf(user, def.object);
             const current = new Map((await readable(user, def)).map((r) => [r.id, r]));
+            // Each field a column with its constraints; a reference finds its record by the referred model's key
+            // (among what the person may read, and what this import creates).
+            const columnsOfTab = [];
+            for (const [name, field] of Object.entries(def.fields)) {
+                if (field.type !== "ref") { columnsOfTab.push(columnOf(name, field)); continue; }
+                const target = defs.get(field.to);
+                const map = target ? await indexOf(target) : new Map();
+                columnsOfTab.push(columnOf(name, field, { label: target?.label ?? field.to, scope: "that you can see", find: (t) => map.get(t) ?? null }));
+            }
             for (const [i, line] of body.entries()) {
                 const rowNumber = i + 2;
                 if (!line.some((v) => !blank(v))) continue;
                 const cell = (name) => { const k = columns.indexOf(name); return k < 0 ? undefined : line[k]; };
-                // The row's values, typed, references resolved.
-                const data = {};
-                const problems = {};
-                let dependsOnPending = false;
-                for (const [name, field] of Object.entries(def.fields)) {
+                // The row's values, typed, references resolved: each cell checked against its field (row-check.js).
+                // A sensitive field's marker as exported, unchanged, is not a value: left as it is.
+                const { values: data, problems: wrong } = checkRow(columnsOfTab, (name) => {
                     const raw = cell(name);
-                    if (raw === undefined) continue;
-                    if (field.type === "ref") {
-                        if (blank(raw)) { data[name] = null; continue; }
-                        const target = defs.get(field.to);
-                        const map = target ? await indexOf(target) : new Map();
-                        const id = map.get(String(raw).trim());
-                        if (!id) { problems[name] = `no ${target?.label ?? field.to} "${raw}" that you can see`; continue; }
-                        if (id === "ambiguous") { problems[name] = `more than one ${target.label} "${raw}"`; continue; }
-                        if (pending.has(id)) dependsOnPending = true;
-                        data[name] = id;
-                        continue;
-                    }
-                    const typed = cellValue(field, raw);
-                    if (typed.error) problems[name] = `${field.label ?? name}: ${typed.error}, not "${raw}"`;
-                    else data[name] = typed.value;
-                }
+                    return raw !== undefined && isSensitive(def, name) && String(raw).trim() === HIDDEN_TEXT ? undefined : raw;
+                }, { excelDate });
+                const problems = Object.fromEntries(Object.entries(wrong).map(([name, message]) => [name, `${def.fields[name]?.label ?? name}: ${message}`]));
+                const dependsOnPending = Object.entries(data).some(([name, v]) => def.fields[name]?.type === "ref" && pending.has(v));
                 if (Object.keys(problems).length) { refuse(rowNumber, "Some cells need attention.", problems); continue; }
                 // Which record it is: by the model's key, else by id.
                 const keyValue = key ? cell(key) : undefined;

@@ -12,7 +12,7 @@
 //   DATABASE_URL=postgres:///openmes_test node app/mes/test/attachments.mjs   (after a reset)
 import pg from "pg";
 import { randomBytes } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 import { writeXlsx } from "../server/xlsx.js";
 
@@ -76,7 +76,7 @@ try {
     }
     step("the store keeps a picture, a PDF, a CSV file and an Excel workbook by what their bytes are (an HTML page refused); a document is saved under the name asked for (made safe), a picture shown; an image field refuses a PDF",
         png.type === "image/png" && pdf.type === "application/pdf" && csv.type === "text/csv" && xlsx.type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" && html.status === 415 &&
-        /^attachment; filename="Spec _rev B_\.pdf"$/.test(saved.headers.get("content-disposition") ?? "") && shown.headers.get("content-disposition") === "inline" && /sandbox/.test(saved.headers.get("content-security-policy") ?? "") &&
+        /^attachment; filename="Spec _rev B_\.pdf"$/.test(saved.headers.get("content-disposition") ?? "") && /^inline(;|$)/.test(shown.headers.get("content-disposition") ?? "") && /sandbox/.test(saved.headers.get("content-security-policy") ?? "") &&
         (imageRefused.skipped || (!imageRefused.ok && /Upload a picture/.test(JSON.stringify(imageRefused.fields ?? imageRefused.message)))),
         { png, pdf, csv, xlsx, html, disposition: saved.headers.get("content-disposition"), imageRefused });
 

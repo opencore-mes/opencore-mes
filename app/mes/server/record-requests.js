@@ -10,18 +10,19 @@
 // meanwhile (a transaction ran, someone else edited it), or the checks no longer pass, it is void and
 // says why, and nothing is written. One request waits per record at a time. Nothing here knows what
 // a lot is: which changes wait, and for whom, is each object's design.
-import { ServiceError, fail } from "../../../src/errors.js";
-import { CALL_KIND } from "../../../src/live-protocol.js";
+import { ServiceError, fail } from "@opencore-mes/juris-kit/errors.js";
+import { CALL_KIND } from "@opencore-mes/juris-kit/live-protocol.js";
 import { appendAudit } from "./audit.js";
 import { decide, mask } from "./policy.js";
-import { recordRoute } from "../client/definition.js";
+import { recordRoute, isSensitive, hiddenValue } from "../client/definition.js";
+import { auditValues } from "./services.js";
 import { organizationSettings, stepsOf } from "./organization.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const iso = (v) => (v instanceof Date ? v.toISOString() : v ?? null);
 const either = (list) => (list.length > 1 ? `${list.slice(0, -1).join(", ")} or ${list.at(-1)}` : list.join(""));
 
-export function createRecordRequests({ store, records, log = console }) {
+export function createRecordRequests({ store, records, mail = null, log = console }) {
     const { db } = store;
     const x = records.internals;
     // Signatures (§7.4): who proves who they are at an approval, where the plant asks it (app.mjs sets it).
@@ -59,10 +60,47 @@ export function createRecordRequests({ store, records, log = console }) {
         return out;
     }
 
+    // Each department or group on the route that has a mailbox (People & departments, §28.6) is told what waits for
+    // it, written with the request: what it is, the fields it changes by their labels (never their values: a
+    // mailbox may be read by people the record's policies would not show them to), why, who asked, and where
+    // to sign. One message per request and department.
+    async function tellDepartments(tx, req, { def, row, user, why, route, changed, action }) {
+        const [org] = await tx.query("SELECT body FROM mes.organization WHERE status = 'published' ORDER BY version DESC LIMIT 1");
+        const emails = org?.body?.emails ?? {};
+        const names = Object.fromEntries((await tx.query("SELECT id, name FROM mes.groups WHERE id = ANY($1)", [route.map((r) => r.department)])).map((g) => [g.id, g.name]));
+        const title = row ? row.data?.[def.body.titleField] ?? row.id.slice(0, 8) : req.data?.[def.body.titleField] ?? "";
+        const what = req.op === "create" ? `New ${def.body.label}${title ? ` ${title}` : ""}`
+            : req.op === "action" ? `${def.body.states.transitions.find((t) => t.action === action)?.label ?? action}: ${def.body.label} ${title}`
+                : req.op === "archive" ? `Archive ${def.body.label} ${title}` : req.op === "restore" ? `Restore ${def.body.label} ${title}` : `Change to ${def.body.label} ${title}`;
+        const fieldsSaid = (changed ?? []).map((n) => def.body.fields[n]?.label ?? n);
+        for (const r of route) {
+            const to = emails[r.department];
+            if (!to) continue;
+            const name = names[r.department] ?? r.department;
+            const forValue = r.because.filter((b) => b.startsWith("value:")).map((b) => b.slice(b.indexOf("=") + 1));
+            await mail.enqueue(tx, {
+                key: `request:${req.id}:${r.department}`, to,
+                subject: `To approve for ${name}: ${what}`.trim(),
+                body: [
+                    `${what.trim()} waits for approval by ${name}${forValue.length ? ` (for ${forValue.join(" and ")})` : ""}.`,
+                    "",
+                    ...(fieldsSaid.length ? [`It changes: ${fieldsSaid.join(", ")}.`] : []),
+                    `Why: ${why}`,
+                    `Asked by: ${user.name ?? user.id}`,
+                    `Also asked: ${route.filter((x) => x.department !== r.department).map((x) => names[x.department] ?? x.department).join(", ") || "nobody else"}.`,
+                    "",
+                    `Open it to sign: ${mail.link(`/request/${req.id}`)}`,
+                    "",
+                    "Sent by OpenCore MES to this mailbox (People & departments). The change takes effect once every department and group on it has signed.",
+                ].join("\n"),
+            });
+        }
+    }
+
     // ---- asking: services.js, for a change that waits ----
     async function request(self, user, { op, def, row = null, data = {}, changed = [], action = null, reason, key }) {
         const object = def.body.object;
-        const route = recordRoute(def.body, { op, state: row?.state ?? null, changed, action });
+        const route = recordRoute(def.body, { op, state: row?.state ?? null, changed, action, now: row?.data ?? null, asked: data });
         const why = typeof reason === "string" ? reason.trim() : "";
         if (!route.length) fail(`Nobody stewards this change to ${def.body.label}: its design names no stewards.`, { status: 409, code: "record.no_approver" });
         if (!why) fail(`This change waits for approval by ${route.map((r) => r.department).join(", ")}: say why.`, { status: 400, code: "record.reason", fields: { reason: "Say why." } });
@@ -82,7 +120,8 @@ export function createRecordRequests({ store, records, log = console }) {
                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
                     [object, row?.id ?? null, op, action, JSON.stringify(data), row ? Number(row.row_version) : null, def.version, user.id, why, JSON.stringify(route)],
                 );
-                await appendAudit(tx, { actor: user.id, object, recordId: row?.id ?? null, defVersion: def.version, action: `request:${op}`, after: { request: req.id, ...(op === "action" ? { action } : { values: data }), reason: why, route: route.map((r) => r.department) } });
+                await appendAudit(tx, { actor: user.id, object, recordId: row?.id ?? null, defVersion: def.version, action: `request:${op}`, after: { request: req.id, ...(op === "action" ? { action } : { values: auditValues(def.body, data) }), reason: why, route: route.map((r) => r.department) } });
+                if (mail) await tellDepartments(tx, req, { def, row, user, why, route, changed, action });
                 const result = { $request: summaryOf(req) };
                 await x.remember(tx, key, user, result);
                 return result;
@@ -115,7 +154,9 @@ export function createRecordRequests({ store, records, log = console }) {
                 const row = await x.loadRow(db, req.object, req.record_id);
                 if (!row) return voided("The record is gone.");
                 if (Number(row.row_version) !== Number(req.base_version)) return voided("The record changed after this was asked for, so it was not applied: ask again on the record as it is now.");
-                plan = req.op === "edit" ? await x.planUpdate(self, user, def, row, req.data) : await x.planAction(self, user, def, row, req.action);
+                plan = req.op === "edit" ? await x.planUpdate(self, user, def, row, req.data)
+                    : req.op === "archive" || req.op === "restore" ? await x.planArchive(self, user, def, row, req.op === "archive")
+                        : await x.planAction(self, user, def, row, req.action);
                 if (!plan) return voided("It changes nothing any more.");
             }
         } catch (error) {
@@ -130,7 +171,7 @@ export function createRecordRequests({ store, records, log = console }) {
             else {
                 const row = await x.loadRow(tx, req.object, req.record_id, true);
                 if (!row || Number(row.row_version) !== Number(req.base_version)) return closeAs(tx, req, "void", "The record changed after this was asked for, so it was not applied: ask again on the record as it is now.");
-                await (req.op === "edit" ? x.applyUpdate(tx, self, user, plan) : x.applyAction(tx, self, user, plan));
+                await (req.op === "edit" ? x.applyUpdate(tx, self, user, plan) : req.op === "archive" || req.op === "restore" ? x.applyArchive(tx, self, user, plan) : x.applyAction(tx, self, user, plan));
             }
             return closeAs(tx, { ...req, record_id: recordId }, "applied", null, approvals);
         });
@@ -180,8 +221,10 @@ export function createRecordRequests({ store, records, log = console }) {
             const seen = decide(def.body, await x.actorFor(user, req.object), row ? x.recordOf(row) : { ...asked, state: def.body.states.initial });
             readable = (n) => seen.read && Boolean(seen.fields[n]);
         }
-        const changes = req.op === "action" ? [] : Object.keys(asked).map((n) => (readable(n)
-            ? { field: n, label: labelOf(n), type: fields[n]?.type ?? "string", before: req.op === "edit" ? now[n] ?? null : null, after: asked[n] ?? null, beforeTitle: nowTitles[n] ?? null, afterTitle: askedTitles[n] ?? null }
+        // A sensitive field (§6.10): that it changes, not what it holds (the record shows it to who asks).
+        const out = (n, v) => (isSensitive(def?.body, n) && v !== null && v !== undefined && v !== "" ? hiddenValue() : v);
+        const changes = req.op !== "create" && req.op !== "edit" ? [] : Object.keys(asked).map((n) => (readable(n)
+            ? { field: n, label: labelOf(n), type: fields[n]?.type ?? "string", before: req.op === "edit" ? out(n, now[n] ?? null) : null, after: out(n, asked[n] ?? null), beforeTitle: nowTitles[n] ?? null, afterTitle: askedTitles[n] ?? null, ...(isSensitive(def?.body, n) ? { sensitive: true } : {}) }
             : { field: n, label: labelOf(n), type: fields[n]?.type ?? "string", before: null, after: null, beforeTitle: null, afterTitle: null, hidden: true }));
         const titleField = def?.body.titleField;
         const transition = req.op === "action" ? def?.body.states.transitions.find((t) => t.action === req.action && (!row || t.from.includes(row.state))) : null;
@@ -220,7 +263,7 @@ export function createRecordRequests({ store, records, log = console }) {
             const row = req.record_id ? await x.loadRow(db, req.object, req.record_id) : null;
             const name = (row?.data ?? req.data ?? {})[def?.body.titleField] ?? "";
             const action = def?.body.states.transitions.find((t) => t.action === req.action)?.label ?? req.action;
-            const title = `${req.op === "create" ? "New" : req.op === "action" ? action : "Change to"} ${def?.body.label ?? req.object}${name ? ` ${name}` : ""}`;
+            const title = `${req.op === "create" ? "New" : req.op === "action" ? action : req.op === "archive" ? "Archive" : req.op === "restore" ? "Restore" : "Change to"} ${def?.body.label ?? req.object}${name ? ` ${name}` : ""}`;
             for (const r of req.route) {
                 const p = await progressOf(db, req, r.department, approvals, settings);
                 for (const u of p.current?.eligible ?? []) (out[u] ??= { review: [], sign: [] }).sign.push({ id: req.id, title, department: r.department, step: p.steps.length > 1 ? p.current.label : null, record: true });

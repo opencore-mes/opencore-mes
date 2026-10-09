@@ -1,0 +1,123 @@
+<!-- {"title": "Floor · OpenCore MES", "description": "Operators work from stale screens and paper instructions. OpenCore MES keeps every screen live, shows the line from above, and walks each station through its instruction a step at a time."} -->
+<main>
+  <section class="page-hero hero">
+    <div class="wrap">
+      <span class="eyebrow problem">The problem</span>
+      <h1>Operators work from stale screens and paper.</h1>
+      <p class="lede">A tool went down an hour ago and the board still says running; the instruction is a binder by the machine.</p>
+    </div>
+  </section>
+
+  <section class="sol live alt" id="live">
+    <div class="wrap">
+      <div>
+        <span class="eyebrow">Solution</span>
+        <h2 style="margin-top:16px">Every screen, live.</h2>
+        <p class="sub">Saved at the press, seen in the quality office the same moment.</p>
+        <ul class="live-points">
+          <li><b>Nothing to refresh</b><span>Lists, boards, counts update themselves.</span></li>
+          <li><b>Who else is here</b><span>See who has the record open before saves collide.</span></li>
+          <li><b>Only what can be done</b><span>A refused action is greyed, with why.</span></li>
+          <li><b>Never silently stale</b><span>Offline is said; what was typed is kept.</span></li>
+        </ul>
+        <p class="in-demo" style="margin-top:20px"><span>In the demo:</span> <a href="https://demo.opencoremes.com/s/semi_line" target="_blank" rel="noopener">The assembly and test line<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></p>
+      </div>
+      <div class="screens" role="img" aria-label="Lot 4712 open on a press tablet and in the quality office: the quantity saved at the press appears in the office at once">
+        <div class="screen">
+          <div class="where"><span>Tablet · Press 1</span><span class="on-air"><svg class="icon"><use href="#i-dot"/></svg>live</span></div>
+          <h4>Lot 4712</h4>
+          <dl class="kv"><dt>State</dt><dd>Processed</dd><dt>Good</dt><dd class="changed">580 kg</dd><dt>Scrap</dt><dd class="changed">20 kg</dd></dl>
+          <div class="who"><svg class="icon"><use href="#i-users"/></svg>Quinn is also viewing</div>
+        </div>
+        <span class="sync-line" aria-hidden="true"><svg class="icon"><use href="#i-sync"/></svg></span>
+        <div class="screen">
+          <div class="where"><span>Quality office</span><span class="on-air"><svg class="icon"><use href="#i-dot"/></svg>live</span></div>
+          <h4>Lot 4712</h4>
+          <dl class="kv"><dt>State</dt><dd>Processed</dd><dt>Good</dt><dd class="changed">580 kg</dd><dt>Scrap</dt><dd class="changed">20 kg</dd></dl>
+          <div class="who"><svg class="icon"><use href="#i-users"/></svg>Olga is also viewing</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sol floor-sec" id="layout">
+    <div class="wrap">
+      <div class="fl-mock" role="img" aria-label="A floor layout: eight tools placed along a line, each with a light in the colour of its state; one wirebonder is down and shown in red">
+        <div class="head"><b>Wirebond line 1</b><span>live</span></div>
+        <div class="fl-floor">
+          <div class="fl-aisle">AISLE</div>
+          <div class="fl-tool" style="left:7%;top:12%"><i class="fl-run"></i><span>WBD-01</span></div>
+          <div class="fl-tool" style="left:30%;top:12%"><i class="fl-run"></i><span>WBD-02</span></div>
+          <div class="fl-tool is-down" style="left:53%;top:12%"><i class="fl-down"></i><span>WBD-03</span></div>
+          <div class="fl-tool" style="left:76%;top:12%"><i class="fl-idle"></i><span>WBD-04</span></div>
+          <div class="fl-tool" style="left:7%;top:66%"><i class="fl-run"></i><span>WBD-05</span></div>
+          <div class="fl-tool" style="left:30%;top:66%"><i class="fl-pm"></i><span>WBD-06</span></div>
+          <div class="fl-tool" style="left:53%;top:66%"><i class="fl-run"></i><span>WBD-07</span></div>
+          <div class="fl-tool" style="left:76%;top:66%"><i class="fl-idle"></i><span>WBD-08</span></div>
+        </div>
+        <div class="fl-legend">
+          <span><i class="fl-run"></i>Running <b>4</b></span>
+          <span><i class="fl-idle"></i>Idle <b>2</b></span>
+          <span><i class="fl-pm"></i>Maintenance <b>1</b></span>
+          <span><i class="fl-down"></i>Down <b>1</b></span>
+        </div>
+      </div>
+      <div>
+        <span class="eyebrow">Solution</span>
+        <h2 style="margin-top:16px">The line, seen from above.</h2>
+        <p class="sub">Your floor plan, each tool lit in the colour of its state.</p>
+        <ul class="live-points">
+          <li><b>Drawn by dragging</b><span>Drop a tool on the plan; no drawing program.</span></li>
+          <li><b>Red everywhere at once</b><span>A tool down shows on every board.</span></li>
+          <li><b>Wall board to phone</b><span>One layout, every screen; tap a tool to open it.</span></li>
+          <li><b>Each person's view</b><span>Only the tools they may read.</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="sol alt" id="instructions">
+    <div class="wrap">
+      <span class="eyebrow">Solution</span>
+      <h2 style="margin-top:16px">The instruction at the station, a step at a time.</h2>
+      <p class="sub">PDFs, videos and drawings kept with the designs, shown for the lot in front of the operator.</p>
+      <div class="grid3">
+        <div class="card">
+          <svg class="icon"><use href="#i-steps"/></svg>
+          <h3>A step at a time</h3>
+          <p>A page or a video step to fit the screen; big buttons for gloved hands.</p>
+        </div>
+        <div class="card">
+          <svg class="icon"><use href="#i-check"/></svg>
+          <h3>Each step recorded</h3>
+          <p>A click, a value, a photo or the machine marks it done, in the audit trail.</p>
+        </div>
+        <div class="card">
+          <svg class="icon"><use href="#i-user-check"/></svg>
+          <h3>Only the certified</h3>
+          <p>Records and transactions kept to those who hold the certification.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="sol guides" id="input">
+    <div class="wrap">
+      <div>
+        <span class="eyebrow">Solution</span>
+        <h2 style="margin-top:16px">No mouse at the station.</h2>
+        <p class="sub">Scan, Enter, next lot. Every form works from the keyboard and the scanner.</p>
+        <ul class="points">
+          <li><svg class="icon"><use href="#i-scan"/></svg><div><b>Scanner first</b><span>A label read whole moves to the next input.</span></div></li>
+          <li><svg class="icon"><use href="#i-branch"/></svg><div><b>Input flows</b><span>Which input next, which question for a held lot.</span></div></li>
+          <li><svg class="icon"><use href="#i-help"/></svg><div><b>Panels that explain themselves</b><span>A ? opens each panel's guide, drawn from its design.</span></div></li>
+        </ul>
+      </div>
+      <figure class="shot">
+        <a class="frame zoom" href="#zoom-guide" title="Zoom in"><picture><source srcset="/img/guide-dark.webp" media="(prefers-color-scheme: dark)"><img src="/img/guide.webp" width="1600" height="1000" alt="A metrology equipment screen with its guide open on the left; pointing at Tables in the guide outlines the screen's two tables" loading="lazy"></picture><span class="zoom-hint" aria-hidden="true"><svg class="icon"><use href="#i-zoom"/></svg></span></a>
+        <figcaption><b>A screen's guide</b>: pointing at “Tables” outlines them.</figcaption>
+        <a class="lightbox" id="zoom-guide" href="#_" title="Close" aria-label="Close the large view"><picture><source srcset="/img/guide-dark.webp" media="(prefers-color-scheme: dark)"><img loading="lazy" src="/img/guide.webp" width="1600" height="1000" alt="A metrology equipment screen with its guide open"></picture><span class="lb-cap"><b>A screen's guide</b>: pointing at “Tables” outlines them.</span><span class="lb-close" aria-hidden="true"><svg class="icon"><use href="#i-x"/></svg></span></a>
+      </figure>
+    </div>
+  </section>
+</main>

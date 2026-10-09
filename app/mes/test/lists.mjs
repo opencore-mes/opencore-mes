@@ -2,8 +2,10 @@
 //   1. An object whose list is sorted by a code held as text: 60 records, codes 1 to 60. The list
 //      comes 50 a page (drawn as it is scrolled), in number order (9 before 10), saying whether
 //      there are more; an unsorted list reads only as far as its page needs.
-//   2. The filter searches every record, on the server, not only the page shown.
-//   3. Without a page, records.list still answers what pick-lists need (the 200 changed last).
+//   2. The filter searches every record, on the server, not only the page shown. A column the person sorts
+//      by (its head clicked) orders every record too, in the database, in place of the design's order.
+//   3. Without a page, records.list still answers what pick-lists need (the 200 changed last); a reference
+//      picked by typing (records.pick) searches every record by its title, 20 at most, as each may see.
 //   4. A screen's table sorts the same way and holds up to its limit (1000); the page pages it.
 //   5. Its New and Remove buttons: offered only to whoever may create or archive; Remove archives.
 //   6. At scale: 6 000 records, read with each person's rights in the database (record-sql.js). A
@@ -14,7 +16,7 @@
 //   DATABASE_URL=postgres:///openmes_test node app/mes/test/lists.mjs   (after a reset)
 import pg from "pg";
 import { randomBytes } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 import { mask } from "../server/policy.js";
 import { rightsSql } from "../server/record-sql.js";
@@ -71,6 +73,11 @@ try {
     const p2 = await call("olga", "records.list", { object: OBJ, as: "olga", page: 2 });
     step("page 2: the other 10, 51 to 60", p2.rows.map((r) => r.code).join() === "51,52,53,54,55,56,57,58,59,60", p2.rows.map((r) => r.code));
     step("…and no more after it", p2.more === false);
+    // The person's own order (a column's head clicked), in place of the design's, sorted by the database.
+    const down = await call("olga", "records.list", { object: OBJ, as: "olga", page: 1, sort: { field: "code", dir: "desc" } });
+    step("a column sorted by the person, Z to A: 60 down to 11, still in number order, the total counted", down.rows.map((r) => r.code).join() === Array.from({ length: 50 }, (_, k) => 60 - k).join() && down.total === 60, down.rows.slice(0, 5).map((r) => r.code));
+    const odd = await call("olga", "records.list", { object: OBJ, as: "olga", page: 1, sort: { field: "nope", dir: "sideways" } });
+    step("a sort that names no field, or no direction, is the design's order", odd.rows.map((r) => r.code).join() === p1.rows.map((r) => r.code).join(), odd.rows.slice(0, 5).map((r) => r.code));
     // Listed as changed last (no sort, no filter), a page reads only as far as it needs.
     const lots = await call("olga", "records.list", { object: "lot", as: "olga", page: 1 });
     step("an unsorted list's first page: the rows, whether there are more, and the total when it read to the end", Array.isArray(lots.rows) && lots.more === false && lots.total === lots.rows.length, { more: lots.more, total: lots.total, rows: lots.rows.length });
@@ -188,6 +195,8 @@ try {
     step("a sorted list's page 1: the largest 50 of all, and the total", ids(l1.rows) === ids(sorted.slice(0, 50)) && l1.total === 6000 && l1.more === true && !l1.capped, { total: l1.total, more: l1.more });
     const l120 = await call("olga", "records.list", { object: BIG, as: "olga", page: 120 });
     step("…its last page, 120: the smallest, and no more", ids(l120.rows) === ids(sorted.slice(5950)) && l120.more === false, { rows: l120.rows.length, more: l120.more });
+    const up = await call("olga", "records.list", { object: BIG, as: "olga", page: 1, sort: { field: "qty", dir: "asc" } });
+    step("the person's order over all 6 000: the smallest first, as each may read them", up.total === 6000 && up.rows.every((r, k) => k === 0 || up.rows[k - 1].qty <= r.qty) && up.rows[0].qty === Math.min(...truth.olga.map((r) => r.qty)), up.rows.slice(0, 5).map((r) => r.qty));
     const old = await call("olga", "records.list", { object: BIG, as: "olga", page: 1, q: "x-6000" });
     step("the filter finds the oldest record, by its code", old.total === 1 && old.rows[0]?.id === oldest.id, old.rows.map((r) => r.code));
     const viaRef = await call("olga", "records.list", { object: BIG, as: "olga", page: 1, q: "kestrel" });
@@ -204,6 +213,20 @@ try {
         { byCode: byCode.rows.length, bySecret: bySecret.rows.length, quinn: quinnSecret.rows.length });
     const nav = await call("olga", "records.search", { q: "X-6000" });
     step("the navigator finds the oldest record too", nav.some((h) => h.id === oldest.id), nav.map((h) => h.title));
+    // A reference picked by typing (records.pick): nothing for nothing typed; then at most 20 matches by the
+    // title, those it begins first and the shortest first; the oldest of 6 000 found by its code; and only
+    // what the person may see.
+    const none = await call("olga", "records.pick", { object: BIG, q: "  ", as: "olga" });
+    const x1 = await call("olga", "records.pick", { object: BIG, q: "x-1", as: "olga" });
+    const x6000 = await call("olga", "records.pick", { object: BIG, q: "X-6000", as: "olga" });
+    step("a reference picked by typing: nothing until something is typed; at most 20 matches, those it begins and the shortest first (X-1 before X-10), saying there are more",
+        none.rows.length === 0 && x1.rows.length === 20 && x1.more === true && x1.rows[0].title === "X-1" && x1.rows.slice(1, 11).every((r) => r.title.length === 4) && x1.rows.every((r) => r.title.toLowerCase().includes("x-1")),
+        { none: none.rows.length, x1: x1.rows.map((r) => r.title), more: x1.more });
+    const quinnPick = await call("quinn", "records.pick", { object: BIG, q: "X-", as: "quinn" });
+    const seenByQuinn = new Set(truth.quinn.map((r) => r.id));
+    step("…the oldest of 6 000 found by its code (not only the 200 changed last), and only records the person may see",
+        x6000.rows.length === 1 && x6000.rows[0].id === oldest.id && x6000.more === false && quinnPick.rows.length === 20 && quinnPick.rows.every((r) => seenByQuinn.has(r.id)),
+        { x6000: x6000.rows, quinn: quinnPick.rows.filter((r) => !seenByQuinn.has(r.id)).length });
 
     // The rights as SQL, against policy.js on every record and every field.
     let mismatches = 0;

@@ -12,7 +12,8 @@ GRANT USAGE ON SCHEMA q TO mes_query;
 CREATE TABLE IF NOT EXISTS mes.query_context (
   txid     bigint PRIMARY KEY,
   user_id  text   NOT NULL,
-  roles    jsonb  NOT NULL
+  roles    jsonb  NOT NULL,
+  certifications jsonb   -- what they hold (§27.9): what an object's access requires reads it (§9.9)
 );
 -- Which definitions the views were last built from.
 CREATE TABLE IF NOT EXISTS mes.query_views (

@@ -1,0 +1,12 @@
+# The restore tested (restore-test.sh) for each database in /etc/opencore-mes/backup.env: its output in the journal
+# (journalctl -u opencore-mes-restore-test) is the evidence an auditor asks for.
+[Unit]
+Description=OpenCore MES: the latest backups restored, verified and dropped
+After=postgresql.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/opencore-mes/backup.env
+ExecStartPre=/bin/sh -c 'install -m 0400 -o postgres /etc/opencore-mes/backup.key /run/backup.key'
+ExecStart=/bin/sh -c 'for db in $BACKUP_DATABASES; do su -s /bin/sh postgres -c "cd /srv/opencore-mes/current && PATH=/usr/local/bin:$$PATH DATABASE_URL=$db BACKUP_DIR=$BACKUP_DIR BACKUP_KEY=/run/backup.key ops/backup/restore-test.sh" || exit 1; done'
+ExecStopPost=/bin/rm -f /run/backup.key

@@ -14,6 +14,10 @@
 //              travelers it made start; a run whose `ends` holds ends; one whose step field was moved
 //              follows it there, off its wires if need be, audited so; one left on a sequence's `leaves`
 //              goes on by its wire, through auto decisions, to the next sequence or an end
+// A route's `everySequence` (§32.15) runs a designed transaction on its traveler, as the route, each time the
+// traveler enters any of its steps (onEnter, once the step field names it) or leaves one (onExit, the step field
+// still naming the one it leaves): what to do at every step, said once on the route, never in each transaction
+// that ends a step. The transaction's callers name the route; it appears on the traveler's object.
 // Each node's onEnter and onExit scripts run as it is entered and left: rule scripts, the context in and
 // out, their writes made after, as the template's own identity, through the record services, so the
 // objects' own lifecycles (transitions, policies, rule pipes) decide. Something that goes wrong on the
@@ -30,14 +34,16 @@
 // (someone fills it in: its values into the context, its files and images kept with the run), each
 // in the inbox of the people it is for, and at a sub flow, whose own run (a child) hands its values
 // back when it ends.
-import { CALL_KIND } from "../../../src/live-protocol.js";
-import { fail } from "../../../src/errors.js";
+import { CALL_KIND } from "@opencore-mes/juris-kit/live-protocol.js";
+import { fail, ServiceError } from "@opencore-mes/juris-kit/errors.js";
 import { evaluate } from "../client/expr.js";
 import { fileTypeOf } from "../client/input-flow.js";
 import { flowKindOf, flowStartOf, flowMapOf, derivedOrder } from "../client/definition.js";
+import { optionsOf } from "../client/query-def.js";
 import { appendAudit } from "./audit.js";
 import { mask } from "./policy.js";
-import { runServiceScript } from "./rules.js";
+import { runServiceScript, RULES_UNAVAILABLE } from "./rules.js";
+import { createHash } from "node:crypto";
 
 const isPlain = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -102,7 +108,7 @@ export async function adoptRuns(db, { flows, definitions, only = null }) {
 const todayIn = (tz) => { try { return new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date()); } catch { return new Date().toISOString().slice(0, 10); } };
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-export function createFlows({ store, records, design, sandbox = false, plantTz = "UTC", log = console }) {
+export function createFlows({ store, records, design, query = null, sandbox = false, plantTz = "UTC", log = console }) {
     let invalidate = async () => {};
     const { db } = store;
     const x = records.internals;
@@ -117,7 +123,9 @@ export function createFlows({ store, records, design, sandbox = false, plantTz =
         return versions.get(k);
     }
     // Its own identity: `flow:<name>`, holding the roles its design grants, acting for its run.
-    const identity = (f, run) => ({ id: `flow:${f.body.name}`, name: `${f.body.label} (flow)`, serviceRoles: isPlain(f.body.roles) ? f.body.roles : {}, onBehalfOf: `flow:${f.body.name}:${run.id}` });
+    // A plan acts on its participants whatever their access requires (§9.9): it is the plant's own
+    // automation, and shows nothing to anyone (what it asks a person, it asks through their own access).
+    const identity = (f, run) => ({ id: `flow:${f.body.name}`, name: `${f.body.label} (flow)`, serviceRoles: isPlain(f.body.roles) ? f.body.roles : {}, unrestricted: true, onBehalfOf: `flow:${f.body.name}:${run.id}` });
     const as = (actor) => ({ [CALL_KIND]: "internal", reason: `flow ${actor.id}`, user: actor });
     // The route run a traveler is in now: the innermost. A route whose sub flow runs another route waits
     // there while that one's run (its child) is under way; the traveler is at a step of the child (§32.14).
@@ -135,7 +143,67 @@ export function createFlows({ store, records, design, sandbox = false, plantTz =
         }
         return chain;
     }
+    // Whether a transaction is offered anywhere in a traveler's whole way: the routes of its chain as their
+    // runs' versions have them, and the sub routes they run (as published), however deep, each read once.
+    async function offeredIn(chain, name) {
+        const published = await store.flows();
+        const seen = new Set();
+        const queue = chain.map((l) => l.f.body);
+        while (queue.length && seen.size <= 200) {
+            const body = queue.shift();
+            if (!body || seen.has(body.name)) continue;
+            seen.add(body.name);
+            const nodes = Object.values(body.nodes ?? {});
+            if (nodes.some((m) => (m?.offers ?? []).includes(name))) return true;
+            for (const m of nodes) if (m?.kind === "sub_flow" && typeof m.flow === "string" && !seen.has(m.flow)) queue.push(published.get(m.flow)?.body);
+        }
+        return false;
+    }
     const stepFieldOf = async (object) => (await store.definition(object))?.body.flow?.step ?? null;
+    // A traveler's whole way through its route, for its page (§32.14): the run at the top and every sub
+    // route's run under it, ended or not, each with its own way and map, its parent, and the parent's sub
+    // flow node that ran it (`at`: the last time that node was entered before the run began, so a node
+    // entered twice names the run of each time); and, for a sub flow it has not reached, the sub route as
+    // it is published now (`subMaps`, by name), so the page opens that one too, nothing walked on it.
+    async function routeTreeOf(run) {
+        const [top] = await db.query(
+            `WITH RECURSIVE up(id, parent_id, depth) AS (SELECT id, parent_id, 0 FROM mes.flow_runs WHERE id = $1
+               UNION ALL SELECT r.id, r.parent_id, up.depth + 1 FROM mes.flow_runs r JOIN up ON r.id = up.parent_id WHERE up.depth < $2)
+             SELECT id FROM up WHERE parent_id IS NULL`, [run.id, MAX_NESTED + 1]);
+        if (!top) return { routes: [], subMaps: {} };
+        const rows = await db.query(
+            `WITH RECURSIVE down(id, depth) AS (SELECT id, 0 FROM mes.flow_runs WHERE id = $1
+               UNION ALL SELECT r.id, down.depth + 1 FROM mes.flow_runs r JOIN down ON r.parent_id = down.id WHERE r.kind = 'route' AND down.depth < $2)
+             SELECT r.* FROM mes.flow_runs r JOIN down USING (id) ORDER BY r.started_at, r.id`, [top.id, MAX_NESTED + 1]);
+        const allSteps = await db.query("SELECT run_id, seq, node, at, by, via FROM mes.flow_steps WHERE run_id = ANY($1) ORDER BY run_id, seq", [rows.map((r) => r.id)]);
+        const iso = (d) => (d instanceof Date ? d.toISOString() : d ?? null);
+        const flowNodes = design.flowNodes();
+        const routes = [];
+        for (const r of rows) {
+            const rf = await flowAt(r.flow, r.version);
+            const steps = allSteps.filter((s) => s.run_id === r.id).map(({ run_id, ...s }) => ({ ...s, label: rf?.body.nodes?.[s.node]?.label ?? s.node, offRoute: String(s.via ?? "").startsWith("off route"), at: iso(s.at) }));
+            routes.push({ id: r.id, parent: r.parent_id, flow: r.flow, label: rf?.body.label ?? r.flow, version: r.version, state: r.state, outcome: r.outcome, reason: r.reason,
+                node: r.node, nodeLabel: rf?.body.nodes?.[r.node]?.label ?? r.node, startedAt: iso(r.started_at), steps, body: rf?.body ?? null, map: rf ? flowMapOf(rf.body, flowNodes) : null });
+        }
+        for (const r of routes) {
+            const p = routes.find((q) => q.id === r.parent);
+            const ran = (p?.steps ?? []).filter((s) => s.at <= r.startedAt && p.body?.nodes?.[s.node]?.flow === r.flow && flowKindOf(p.body.nodes[s.node], flowNodes) === "sub_flow");
+            r.at = ran.at(-1)?.node ?? null;
+        }
+        // The sub routes not reached yet, as published now, and theirs in turn (never in a circle: the
+        // designer refuses one, and a name is read once).
+        const subMaps = {};
+        const published = await store.flows();
+        const pending = routes.flatMap((r) => Object.values(r.body?.nodes ?? {}));
+        while (pending.length) {
+            const n = pending.pop();
+            if (flowKindOf(n, flowNodes) !== "sub_flow" || typeof n.flow !== "string" || n.flow in subMaps) continue;
+            const sf = published.get(n.flow);
+            subMaps[n.flow] = sf?.body.kind === "route" ? flowMapOf(sf.body, flowNodes) : null;
+            if (sf) pending.push(...Object.values(sf.body.nodes ?? {}));
+        }
+        return { routes: routes.map(({ body, ...r }) => r), subMaps };
+    }
 
     // The run's records by name: the traveler (a plan's subject), then those filled in from it.
     async function idsOf(f, travelerId) {
@@ -252,7 +320,25 @@ export function createFlows({ store, records, design, sandbox = false, plantTz =
     }
 
     // One write, as the template, through the record services: an action, or fields set.
-    async function write(f, run, { record, action, set }) {
+    // What a route does by itself (a step's script, its writes, its every-step transaction) is done again, a few
+    // times, when it was refused only for the moment: no connection free in time (db.busy), the database away
+    // (db.unavailable), the rules' runner not answering. A refusal that decided something (a rule, a policy, a
+    // check) stops the run as before; one whose outcome is not known (db.unknown) is never done twice.
+    const passing = (e) => e?.code === "db.busy" || e?.code === "db.unavailable" || e?.message === RULES_UNAVAILABLE;
+    async function again(work) {
+        for (let attempt = 0; ; attempt++) {
+            try { return await work(); } catch (error) {
+                if (!passing(error) || attempt >= 5) throw error;
+                await new Promise((resolve) => setTimeout(resolve, 200 * 2 ** attempt + Math.random() * 200));
+            }
+        }
+    }
+    async function write(f, run, w, key = null) { return again(() => writeOnce(f, run, w, key)); }
+    async function writeOnce(f, run, { record, action, set, create, data }, key = null) {
+        // A record of its own making (§32.5a): a preventive work order when its plan comes due, a follow-up
+        // check. Made as the template, through the record services, holding the roles its design gives it
+        // on that object (its `roles`), so the object's policies decide; once per run and write (`key`).
+        if (create !== undefined) return records.services["records.create"].call(as(identity(f, run)), { object: create, data, ...(key ? { key } : {}) });
         const ids = await idsOf(f, run.subject_id);
         const p = f.body.participants?.[record];
         if (!p) throw new Error(`"${record}" is no record of the flow`);
@@ -275,17 +361,56 @@ export function createFlows({ store, records, design, sandbox = false, plantTz =
         if (!script) { store.forgetScripts(); script = (await store.scripts()).get(name); }
         if (!script) throw new Error(`its ${which} script ${name} is not published`);
         const context = await contextOf(f, run);
-        const out = await runServiceScript({ name, version: script.version, source: script.source, ctx: { event: { kind: which === "onEnter" ? "enter" : "exit", node: id, label: n.label, flow: f.body.name }, context, writes: [] }, deadlineMs: 5000 });
+        // `now` as every script has it (§12: `Date` is replaced by ctx.now), and as the script editor's
+        // test run gives it. `lookup(object, idOrTitle)` reads one record as the template, with the roles
+        // its design gives it (a backend rule's lookup, §12.4): a route's draw skips a wafer that is gone.
+        // A record it may not see, or none, is null.
+        const self = as(identity(f, run));
+        const lookup = async (object, key) => {
+            if (typeof object !== "string" || typeof key !== "string" || !key || key.length > 200) return null;
+            try {
+                const id = UUID.test(key) ? key : (await records.services["records.lookup"].call(self, { object, key }))?.id;
+                return id ? await records.services["records.get"].call(self, { object, id }) : null;
+            } catch (e) {
+                if (e instanceof ServiceError) return null;
+                throw e;
+            }
+        };
+        const out = await again(() => runServiceScript({ name, version: script.version, source: script.source, ctx: { event: { kind: which === "onEnter" ? "enter" : "exit", node: id, label: n.label, flow: f.body.name }, context, writes: [], now: new Date().toISOString(), lookup }, deadlineMs: 5000 }));
         const keys = new Set(Object.keys(f.body.participants ?? {}));
         const values = Object.fromEntries(Object.entries(isPlain(out?.context) ? out.context : {}).filter(([k, v]) => !keys.has(k) && plain(v)));
         if (Object.keys(values).length) {
             run.context = { ...(isPlain(run.context) ? run.context : {}), ...values };
             await db.query("UPDATE mes.flow_runs SET context = $2, updated_at = now() WHERE id = $1", [run.id, JSON.stringify(run.context)]);
         }
+        // Each write keyed by the run, which visit of the run this is, the node (hashed: a key is at most 100
+        // characters, and a node's name up to 48) and its place among the script's writes: the same write
+        // done again (a retry) is made once, and one on a later visit to the node (a rework loop) is made anew.
+        const [{ visit }] = await db.query("SELECT count(*)::int AS visit FROM mes.flow_steps WHERE run_id = $1", [run.id]);
+        const node = createHash("sha256").update(String(id)).digest("hex").slice(0, 12);
+        let nth = 0;
         for (const w of Array.isArray(out?.writes) ? out.writes : []) {
-            if (!isPlain(w) || typeof w.record !== "string" || (w.action === undefined && !isPlain(w.set))) throw new Error(`${name} asked for a write that is not { record, action } or { record, set }`);
-            await write(f, run, w);
+            const made = isPlain(w) && typeof w.create === "string" && isPlain(w.data);
+            if (!made && (!isPlain(w) || typeof w.record !== "string" || (w.action === undefined && !isPlain(w.set)))) throw new Error(`${name} asked for a write that is not { record, action }, { record, set } or { create, data }`);
+            await write(f, run, w, `flow-${run.id}-${visit}-${node}-${which}-${nth++}`);
         }
+    }
+    // The route's transaction for every step (everySequence.onEnter / onExit), run on its traveler as the route,
+    // through the transaction like anyone's run: its callers (the route named), its checks, steps and audit.
+    let transactions = null;
+    async function everySequence(f, run, which) {
+        const name = isPlain(f.body.everySequence?.[which]) ? f.body.everySequence[which].run : null;
+        if (!name) return;
+        if (!transactions) throw new Error("transactions are not available here");
+        const t = (await store.transactions()).get(name);
+        if (!t) throw new Error(`its ${which === "onEnter" ? "entering" : "leaving"} transaction ${name} is not published`);
+        const traveler = travelerOf(f.body);
+        const fills = t.body.appearsOn?.object === traveler?.[1].object ? t.body.appearsOn.fills : null;
+        if (!fills) throw new Error(`${t.body.label} does not appear on its traveler's records, so the route cannot run it on one`);
+        // (A request key is at most 100 characters: the run and its step, which may have a long name, are in the run's audit, not the key.)
+        // One key for its tries: a retry after a passing refusal is the same request, made once.
+        const key = `flow-${which}-${crypto.randomUUID()}`;
+        await again(() => transactions["transactions.run"].call(as(identity(f, run)), { name, input: { [fills]: run.subject_id }, key }));
     }
     // A sequence entered: the traveler's step field says so, and its state is the sequence's, if it names one.
     async function mark(f, run, id, n) {
@@ -324,6 +449,7 @@ export function createFlows({ store, records, design, sandbox = false, plantTz =
             try {
                 if (kind === "sequence") await mark(f, run, node, n);
                 await hook(f, run, node, "onEnter");
+                if (kind === "sequence") await everySequence(f, run, "onEnter");
             } catch (error) {
                 return stop(run, f, `${n.label}: ${error.message}`);
             }
@@ -349,6 +475,7 @@ export function createFlows({ store, records, design, sandbox = false, plantTz =
         if (run.state === "running" && n) {
             try {
                 await hook(f, run, run.node, "onExit");
+                if (flowKindOf(n, design.flowNodes()) === "sequence") await everySequence(f, run, "onExit");
             } catch (error) {
                 return stop(run, f, `${n.label}: ${error.message}`);
             }
@@ -447,10 +574,11 @@ export function createFlows({ store, records, design, sandbox = false, plantTz =
             const n = f.body.nodes?.[run.node];
             node ??= n ? { ...(isPlain(n.settings) ? n.settings : {}), name: run.node, label: n.label } : null;
             // Only what the route offers somewhere is the route's to place; the rest runs as before.
-            // (Somewhere: on this route, or on one it runs inside. A sub route's step decides while the
-            // traveler is in it.)
+            // Somewhere: anywhere in the whole way the traveler is on (§32.14): the outermost route it is
+            // in, and every sub route that one runs, entered or not. A transaction one sub route offers is
+            // refused on the route's own steps and in its other sub routes, not let through there.
             const chain = await chainOf(run);
-            if (!chain.some((l) => Object.values(l.f.body.nodes ?? {}).some((m) => (m.offers ?? []).includes(name)))) continue;
+            if (!(await offeredIn(chain, name))) continue;
             const t = (await store.transactions()).get(name);
             const what = t?.body.label ?? name;
             const noun = await nounOf(row.object, row.id);
@@ -576,14 +704,37 @@ export function createFlows({ store, records, design, sandbox = false, plantTz =
     }
     // What an input screen's values must be: each field's type, its choices, required; files and
     // images as { name, type, data (base64) }, kept with the run; links as http(s) addresses.
-    async function collect(run, node, n, values, user) {
+    // An input screen's field drawn from a named query (§32.6): its options, worked out by running the query
+    // as `user` with its parameters read from the run's context as it is now. → { options, problem? }
+    async function choicesFor(f, run, spec, user) {
+        const label = spec.label ?? spec.name;
+        const body = query ? (await store.queries()).get(spec.query)?.body : null;
+        if (!body) return { options: [], problem: `its list (the query ${spec.query}) is not published: ask whoever designed this plan.` };
+        const context = await contextOf(f, run);
+        const scope = { context, user: { id: user.id, name: user.name } };
+        const values = {};
+        for (const [p, expr] of Object.entries(isPlain(spec.params) ? spec.params : {})) {
+            const v = evaluate(expr, scope);
+            values[p] = isPlain(v) && typeof v.id === "string" ? v.id : v;
+        }
+        try {
+            const { options, missing } = optionsOf(spec, await query.runNamed(user, body, values, { channel: "plan" }));
+            if (missing.length) return { options: [], problem: `the query ${spec.query} has no column ${missing.join(", ")}: ask whoever designed this plan.` };
+            return { options };
+        } catch (error) {
+            if (!(error instanceof ServiceError)) throw error;
+            return { options: [], problem: `${label}'s list could not be read: ${error.message}` };
+        }
+    }
+    async function collect(run, node, n, values, user, f) {
         const fields = Array.isArray(n.fields) ? n.fields.filter((spec) => isPlain(spec) && typeof spec.name === "string") : [];
         const given = isPlain(values) ? values : {};
         const problems = {};
         const out = {};
         for (const spec of fields) {
             const k = spec.name;
-            const v = given[k];
+            // What was typed, trimmed (§11.1a): only spaces is nothing.
+            const v = typeof given[k] === "string" ? given[k].trim() : given[k];
             const empty = v === undefined || v === null || v === "";
             if (empty) { if (spec.required) problems[k] = `${spec.label ?? k} is required.`; continue; }
             if (spec.type === "string") out[k] = String(v).slice(0, 4000);
@@ -593,6 +744,14 @@ export function createFlows({ store, records, design, sandbox = false, plantTz =
                 else out[k] = num;
             } else if (spec.type === "boolean") out[k] = v === true || v === "true";
             else if (spec.type === "enum") { if (!(spec.values ?? []).includes(v)) problems[k] = `${spec.label ?? k} is one of ${(spec.values ?? []).join(", ")}.`; else out[k] = v; }
+            // From a named query: one of the options it gives the person submitting, now (never a value sent
+            // that is not on their list).
+            else if (spec.type === "query") {
+                const { options, problem } = await choicesFor(f, run, spec, user);
+                const hit = options.find((o) => String(o.value) === String(v));
+                if (!hit) problems[k] = problem ? `${spec.label ?? k}: ${problem}` : `${spec.label ?? k}: choose one of the list (it may have changed: look again).`;
+                else out[k] = hit.value;
+            }
             else if (spec.type === "link") { if (!/^https?:\/\/\S+$/i.test(String(v))) problems[k] = `${spec.label ?? k} is a web address (https://…).`; else out[k] = String(v); }
             else if (spec.type === "file" || spec.type === "image") {
                 const bytes = isPlain(v) && typeof v.data === "string" ? Buffer.from(v.data, "base64") : null;
@@ -685,7 +844,7 @@ export function createFlows({ store, records, design, sandbox = false, plantTz =
                 to = wire.to;
                 what = choice;
             } else if (w.kind === "input_screen") {
-                const got = await collect(run, run.node, n, values, user);
+                const got = await collect(run, run.node, n, values, user, f);
                 run.context = { ...(isPlain(run.context) ? run.context : {}), ...got };
                 await db.query("UPDATE mes.flow_runs SET context = $2 WHERE id = $1", [run.id, JSON.stringify(run.context)]);
                 to = wires.find((e) => !e.retry)?.to;
@@ -721,7 +880,11 @@ export function createFlows({ store, records, design, sandbox = false, plantTz =
                 state: run.state, reason: run.reason, outcome: run.outcome, node: run.node, nodeLabel: label(run.node), nodeKind: n.kind ?? null,
                 message: n.message ?? "", waiting: run.waiting ?? null, dueAt: iso(run.due_at), mayAct: Boolean(run.waiting && run.state === "running" && (await isFor(run.waiting, user.id))),
                 choices: run.waiting?.kind === "manual_decision" ? (f.body.edges ?? []).filter((e) => e.from === run.node).map((e) => e.label) : [],
-                fields: run.waiting?.kind === "input_screen" ? (Array.isArray(n.fields) ? n.fields : []).map((spec) => ({ name: spec.name, label: spec.label ?? spec.name, type: spec.type, values: spec.values ?? [], required: Boolean(spec.required) })) : [],
+                fields: run.waiting?.kind === "input_screen" ? await Promise.all((Array.isArray(n.fields) ? n.fields : []).map(async (spec) => ({
+                    name: spec.name, label: spec.label ?? spec.name, type: spec.type, values: spec.values ?? [], required: Boolean(spec.required),
+                    // A list from a named query, as this person may read it (§32.6).
+                    ...(spec.type === "query" ? await choicesFor(f, run, spec, user) : {}),
+                }))) : [],
                 context: Object.fromEntries(Object.entries(run.context ?? {}).filter(([k]) => !keys.has(k))),
                 subject: subjectRow ? { object: run.subject_object, id: run.subject_id, label: def.body.label, title: x.nounOf(def, { data: seen ?? {} }), state: seen?.state ?? null, tone: seen ? def.body.states?.tones?.[seen.state] ?? null : null } : null,
                 steps: steps.map((st) => ({ ...st, label: label(st.node), at: iso(st.at) })),
@@ -784,7 +947,9 @@ export function createFlows({ store, records, design, sandbox = false, plantTz =
             const chain = run.state !== "ended" && run.kind === "route" ? await chainOf(run) : [];
             const steps = await db.query("SELECT seq, node, at, by, via FROM mes.flow_steps WHERE run_id = $1 ORDER BY seq", [run.id]);
             const label = (n) => f?.body.nodes?.[n]?.label ?? n;
+            const tree = run.kind === "route" ? await routeTreeOf(run) : { routes: [], subMaps: {} };
             return {
+                id: run.id, ...tree,
                 flow: run.flow, label: f?.body.label ?? run.flow, version: run.version, state: run.state, reason: run.reason, outcome: run.outcome,
                 node: run.node, nodeLabel: label(run.node), offers: f?.body.nodes?.[run.node]?.offers ?? [], context: run.context ?? {},
                 // What the route offers anywhere: on the record's page, those appear only where it is (§32.5).
@@ -801,5 +966,5 @@ export function createFlows({ store, records, design, sandbox = false, plantTz =
         "flows.file": [],
         ...(sandbox ? { "flows.timeUp": [{ name: "flows.task" }, { name: "flows.plansOf" }, { name: "inbox.mine" }] } : {}),
     };
-    return { services, touches, queries: ["flows.runOf", "flows.task", "flows.plansOf"], start, startPlans, gate, afterRun, afterWrite, afterCreate, adopt, tick, dues, tasksFor, useInvalidate: (fn) => { invalidate = fn; } };
+    return { useTransactions: (services) => { transactions = services; }, services, touches, queries: ["flows.runOf", "flows.task", "flows.plansOf"], start, startPlans, gate, afterRun, afterWrite, afterCreate, adopt, tick, dues, tasksFor, useInvalidate: (fn) => { invalidate = fn; } };
 }

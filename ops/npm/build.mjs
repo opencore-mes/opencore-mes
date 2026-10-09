@@ -2,19 +2,23 @@
 // The npm packages made from this repository, staged and packed into .local/npm/ (kept out of git); it
 // never publishes: `npm publish` is a person's step, once the tarballs are checked (ops/npm/README.md).
 //
-//   node ops/npm/build.mjs [--only juris,server,...] [--to .local/npm]
+//   node ops/npm/build.mjs [--only juris-kit,server,...] [--to .local/npm]
 //
-//   juris                            the framework (src/), on its own
+//   @opencore-mes/juris-kit          the framework, Juris, packed from its own repository (JURIS_KIT_DIR,
+//                                    ../juris-kit by default), where it is developed and tested: this one
+//                                    depends on it from npm (the name `juris` there is the earlier framework's)
 //   @opencore-mes/server             the application, runnable: the `opencore-mes` command (app/mes/cli.mjs)
-//                                    and everything it imports (app/mes, src, docs/contracts), with the
-//                                    chart library copied in, since a package's files are all it may serve
+//                                    and everything it imports (app/mes, docs/contracts), with the chart
+//                                    library copied in, since a package's files are all it may serve, and the
+//                                    framework bundled at the version installed here (node_modules), so an
+//                                    installation runs the framework it was tested with, offline too
 //   @opencore-mes/equipment-adapter  the equipment-adapter contract and its conformance kit (§31)
 //   @opencore-mes/http-apis          the HTTP APIs' contract and its kit (§31)
 //
 // Only what git tracks or would track goes in (as for the public tree), never a private file, a suite or
 // a test; each package carries LICENSE and NOTICE.
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync, statSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -29,6 +33,11 @@ const PRIVATE = /(^|\/)(DESIGN|INVENTION_DISCLOSURE|SUITES|CLAUDE(\.local)?)\.md
 const under = (...dirs) => tracked.filter((f) => dirs.some((d) => f === d || f.startsWith(`${d}/`)));
 
 const REPO = "https://github.com/opencore-mes/opencore-mes";
+// Juris has a repository of its own (the package as published, with its tests): it is packed there.
+const JURIS_REPO = "https://github.com/opencore-mes/juris-kit";
+const JURIS_DIR = path.resolve(ROOT, process.env.JURIS_KIT_DIR ?? "../juris-kit");
+const JURIS = "@opencore-mes/juris-kit";
+const jurisInstalled = () => JSON.parse(readFileSync(path.join(ROOT, "node_modules", JURIS, "package.json"), "utf8"));
 const common = (directory) => ({
     license: "Apache-2.0",
     author: "Resti Guay",
@@ -42,29 +51,23 @@ const common = (directory) => ({
 const contractReadme = (name, usage, dir) => `# ${name}\n\nThe published contract, its machine-readable schema and its conformance kit, as a package of their own (OpenCore MES, ${REPO}).\n\n\`\`\`bash\nnpm install --save-dev ${name}\nnpx ${usage}\n\`\`\`\n\nPaths below under \`${dir}/\` are this package's root.\n\n---\n\n${readFileSync(path.join(ROOT, dir, "README.md"), "utf8")}`;
 
 const PACKAGES = {
-    juris: {
-        name: "juris",
-        version: "0.91.0",
-        files: under("src").map((f) => [f, f.slice("src/".length)]),
-        json: {
-            description: "A framework for server-rendered web apps whose pages stay live: no build step, no runtime dependency",
-            keywords: ["framework", "server-rendering", "live-queries", "reactive", "no-build"],
-            homepage: "https://jurisjs.com",
-            ...common("src"),
-            main: "./juris.js",
-            exports: { ".": "./juris.js", "./*": "./*" },
-        },
-    },
+    // Packed in its own repository, as it is published from there.
+    "juris-kit": { name: JURIS, fromRepo: JURIS_DIR },
     server: {
         name: "@opencore-mes/server",
-        version: "0.1.0",
+        // The repository's own version (package.json): the one About shows, in a checkout as in a plant.
+        version: root.version,
         files: [
-            ...under("app/mes", "src", "docs/contracts").filter((f) => !f.startsWith("app/mes/test/")).map((f) => [f, f]),
+            ...under("app/mes", "docs/contracts").filter((f) => !f.startsWith("app/mes/test/")).map((f) => [f, f]),
             ...["ops/script-runner-sandbox.sh", "ops/script-runner-sandbox.apparmor"].map((f) => [f, f]),
             // The chart library (§34.9), served from the package (app.mjs ECHARTS), with its licence.
             ["node_modules/echarts/dist/echarts.esm.min.mjs", "app/mes/vendor/echarts.esm.min.mjs"],
             ["node_modules/echarts/LICENSE", "app/mes/vendor/echarts.LICENSE"],
             ["node_modules/echarts/NOTICE", "app/mes/vendor/echarts.NOTICE"],
+            // The PDF library (§35.4), its legacy build and worker, with its licence.
+            ["node_modules/pdfjs-dist/legacy/build/pdf.min.mjs", "app/mes/vendor/pdf.min.mjs"],
+            ["node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs", "app/mes/vendor/pdf.worker.min.mjs"],
+            ["node_modules/pdfjs-dist/LICENSE", "app/mes/vendor/pdf.LICENSE"],
         ],
         readme: readFileSync(path.join(ROOT, "ops/npm/server.README.md"), "utf8"),
         json: {
@@ -73,8 +76,10 @@ const PACKAGES = {
             homepage: "https://opencoremes.com",
             ...common(),
             bin: { "opencore-mes": "app/mes/cli.mjs" },
-            // echarts is copied in (above), so it is no dependency here.
-            dependencies: Object.fromEntries(Object.entries(root.dependencies).filter(([n]) => n !== "echarts")),
+            // echarts and pdf.js are copied in (above), so they are no dependencies here. The framework is a dependency at the
+            // version installed here, and bundled (below): what this package was tested with.
+            dependencies: Object.fromEntries(Object.entries(root.dependencies).filter(([n]) => n !== "echarts" && n !== "pdfjs-dist").map(([n, v]) => [n, n === JURIS ? `^${jurisInstalled().version}` : v])),
+            bundleDependencies: [JURIS],
         },
     },
     "equipment-adapter": {
@@ -93,11 +98,11 @@ const PACKAGES = {
     },
     "http-apis": {
         name: "@opencore-mes/http-apis",
-        version: "1.0.0",
+        version: "1.1.0",
         files: under("docs/contracts/http-apis").map((f) => [f, f.slice("docs/contracts/http-apis/".length)]),
         readme: contractReadme("@opencore-mes/http-apis", "http-apis-kit --url http://127.0.0.1:9090 --token <token>", "docs/contracts/http-apis"),
         json: {
-            description: "The OpenCore MES HTTP APIs' contract (1.0, /ai/v1 and /svc/v1): its specification, OpenAPI schema, surface and kit",
+            description: "The OpenCore MES HTTP APIs' contract (1.1, /ai/v1 and /svc/v1): its specification, OpenAPI schema, surface and kit",
             keywords: ["opencore-mes", "openapi", "api", "contract", "conformance"],
             homepage: `${REPO}/tree/main/docs/contracts/http-apis`,
             ...common("docs/contracts/http-apis"),
@@ -111,6 +116,12 @@ mkdirSync(OUT, { recursive: true });
 let failed = false;
 for (const [key, p] of Object.entries(PACKAGES)) {
     if (only && !only.includes(key)) continue;
+    if (p.fromRepo) {
+        if (!existsSync(path.join(p.fromRepo, "package.json"))) { console.error(`✗ ${p.name}: its repository is not at ${p.fromRepo} (JURIS_KIT_DIR)`); failed = true; continue; }
+        const [packed] = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", OUT], { cwd: p.fromRepo, encoding: "utf8" }));
+        console.log(`✓ ${p.name}@${packed.version}: ${packed.entryCount} files, ${(packed.size / 1024).toFixed(0)} kB, from ${p.fromRepo} → ${path.relative(ROOT, path.join(OUT, packed.filename))}`);
+        continue;
+    }
     const bad = p.files.filter(([from]) => PRIVATE.test(from));
     const missing = p.files.filter(([from]) => !existsSync(path.join(ROOT, from)));
     if (bad.length || missing.length) {
@@ -126,6 +137,8 @@ for (const [key, p] of Object.entries(PACKAGES)) {
         copyFileSync(path.join(ROOT, from), dest);
         chmodSync(dest, statSync(path.join(ROOT, from)).mode & 0o777);
     }
+    // A bundled dependency travels inside the package, as installed here (npm pack takes it from node_modules).
+    for (const dep of p.json.bundleDependencies ?? []) cpSync(path.join(ROOT, "node_modules", dep), path.join(stage, "node_modules", dep), { recursive: true, dereference: true });
     if (p.readme) writeFileSync(path.join(stage, "README.md"), p.readme);
     writeFileSync(path.join(stage, "package.json"), `${JSON.stringify({ name: p.name, version: p.version, ...p.json }, null, 2)}\n`);
     const [packed] = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", OUT], { cwd: stage, encoding: "utf8" }));

@@ -1,0 +1,98 @@
+<!-- {"title": "Control · OpenCore MES", "description": "Changes reach the plant untested, unapproved and untraced. In OpenCore MES every change is designed, reviewed, approved and executed; every version is kept; every record is proved."} -->
+<main>
+  <section class="page-hero hero">
+    <div class="wrap">
+      <span class="eyebrow problem">The problem</span>
+      <h1>Changes reach the plant untested, unapproved and untraced.</h1>
+      <p class="lede">A hotfix on Friday, a field edited in the database, an auditor asking who and why. OpenCore MES answers each.</p>
+    </div>
+  </section>
+
+  <section class="sol alt" id="how">
+    <div class="wrap">
+      <span class="eyebrow">Solution</span>
+      <h2 style="margin-top:16px">One path for every change.</h2>
+      <p class="sub">A field, a rule, a screen, an approver: all go the same way, on the record.</p>
+      <ol class="flow flow-wrap">
+        <li><h3>Design</h3><p>Drafted alone, with co-designers or the AI, with why.</p></li>
+        <li><h3>Review</h3><p>Someone who did not design it checks the frozen draft.</p></li>
+        <li><h3>Approval</h3><p>Each department it touches signs, never its authors.</p></li>
+        <li><h3>Execution</h3><p>Live exactly as approved, everywhere, no restart.</p></li>
+      </ol>
+      <p class="in-demo" style="margin-top:24px"><span>In the demo:</span> <a href="https://demo.opencoremes.com/design/approvals" target="_blank" rel="noopener">Changes waiting for approval<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></p>
+    </div>
+  </section>
+
+  <section class="sol ver-sec" id="versions">
+    <div class="wrap">
+      <div class="fl-mock" role="img" aria-label="An illustration of an object's versions: version 9 under test in the test sandbox, version 8 live after a rollback that restored version 6, version 7 rolled back, version 6 superseded">
+        <div class="head"><b>Lot · versions</b><span>nothing is ever deleted</span></div>
+        <ul class="ver-list">
+          <li><span class="v">draft</span><span class="what">Hold reason by category<small>in the test sandbox, with 2 other changes</small></span><span class="tag test">Under test</span></li>
+          <li><span class="v">v8</span><span class="what">Roll back: scrap limit per item<small>restores v6 · one approval, by Sam</small></span><span class="tag live">Live</span></li>
+          <li class="was"><span class="v">v7</span><span class="what">Scrap limit per item<small>approved by Production and Quality</small></span><span class="tag">Rolled back</span></li>
+          <li class="was"><span class="v">v6</span><span class="what">Hold on contamination<small>approved by Production and Quality</small></span><span class="tag">Superseded</span></li>
+        </ul>
+      </div>
+      <div>
+        <span class="eyebrow">Solution</span>
+        <h2 style="margin-top:16px">Every version kept. Roll back in one step.</h2>
+        <p class="sub">Nothing is overwritten, nothing is deleted.</p>
+        <ul class="points">
+          <li><svg class="icon"><use href="#i-eye"/></svg><div><b>See what changes</b><span>Published beside proposed, before anyone signs.</span></div></li>
+          <li><svg class="icon"><use href="#i-test"/></svg><div><b>Test together</b><span>Drafts tried side by side in a test sandbox.</span></div></li>
+          <li><svg class="icon"><use href="#i-sync"/></svg><div><b>Undo with one approval</b><span>The rollback is drafted for you, and recorded too.</span></div></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="sol ver-sec alt" id="integrity">
+    <div class="wrap">
+      <div>
+        <span class="eyebrow">Solution</span>
+        <h2 style="margin-top:16px">Changed in the database? It is found.</h2>
+        <p class="sub">The audit trail proves itself, and every record proves it still holds what the platform wrote.</p>
+        <ul class="points">
+          <li><svg class="icon"><use href="#i-shield"/></svg><div><b>Every record sealed</b><span>A write around the platform cannot match the seal.</span></div></li>
+          <li><svg class="icon"><use href="#i-eye"/></svg><div><b>Caught as it happens</b><span>Who, from where, each field before and after.</span></div></li>
+          <li><svg class="icon"><use href="#i-pulse"/></svg><div><b>Scanned all the time</b><span>Every fifteen minutes; every record each week.</span></div></li>
+          <li><svg class="icon"><use href="#i-clipboard"/></svg><div><b>Closed with a signed report</b><span>Never quietly restored; into your own NCRs.</span></div></li>
+        </ul>
+      </div>
+      <div class="fl-mock" role="img" aria-label="An illustration of the data integrity review: a lot's quantity changed in the database, a role given by SQL, and a lot put back as an earlier version, closed with a signed report">
+        <div class="head"><b>Data integrity · findings</b><span>scanned every 15 minutes</span></div>
+        <ul class="ver-list">
+          <li><span class="v int-x"><svg class="icon"><use href="#i-x"/></svg></span><span class="what">Lot 4712: changed in the database<small>quantity 600 → 900 kg · by etl_job, from 10.0.4.17</small></span><span class="tag bad">Open</span></li>
+          <li><span class="v int-x"><svg class="icon"><use href="#i-x"/></svg></span><span class="what">Role given by SQL: designer<small>no change, no approval</small></span><span class="tag bad">Open</span></li>
+          <li class="was"><span class="v int-ok"><svg class="icon"><use href="#i-check"/></svg></span><span class="what">Lot 4711: an earlier version put back<small>report signed by Quinn</small></span><span class="tag live">Closed</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="sol" id="regulated">
+    <div class="wrap">
+      <span class="eyebrow">Solution</span>
+      <h2 style="margin-top:16px">Made for plants that answer to auditors.</h2>
+      <p class="sub">Part 11 practices built in; SOC 2, ISO 27001 and HIPAA mapped control by control in the repository.</p>
+      <ul class="checks">
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Your sign-in.</b> Single sign-on, LDAP or Active Directory, or passwords with a second factor.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>An audit trail that checks itself.</b> Append only, chained, verified every 15 minutes.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Segregation of duties.</b> Nobody approves what they designed or reviewed.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Signed by two.</b> An operator and a verifier, each proving it is them.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Record changes that wait.</b> Edits your design names go to the people responsible.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Emergency changes.</b> Live on one signature, reviewed within days.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Sensitive fields.</b> Hidden by default, shown with a reason, never sent to the AI.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Retention and erasure.</b> Periods approved like any change; the audit trail kept.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Backups you have restored.</b> Nightly, encrypted, a restore tested every month.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>"Why can't I?"</b> Every refusal explained from the rule that decided it.</span></li>
+      </ul>
+      <figure class="shot" style="margin-top:32px">
+        <a class="frame zoom" href="#zoom-lot" title="Zoom in"><picture><source srcset="/img/lot-dark.webp" media="(prefers-color-scheme: dark)"><img src="/img/lot.webp" width="1600" height="1000" alt="A lot held by an out-of-control plan: where it is on its route, the plan and its step, and beside each field why it is read only" loading="lazy"></picture><span class="zoom-hint" aria-hidden="true"><svg class="icon"><use href="#i-zoom"/></svg></span></a>
+        <figcaption><b>A lot on hold</b>: its route, its plan, and why each field is read only.</figcaption>
+        <a class="lightbox" id="zoom-lot" href="#_" title="Close" aria-label="Close the large view"><picture><source srcset="/img/lot-dark.webp" media="(prefers-color-scheme: dark)"><img loading="lazy" src="/img/lot.webp" width="1600" height="1000" alt="A lot held by an out-of-control plan"></picture><span class="lb-cap"><b>A lot on hold</b>: its route, its plan, and why each field is read only.</span><span class="lb-close" aria-hidden="true"><svg class="icon"><use href="#i-x"/></svg></span></a>
+      </figure>
+    </div>
+  </section>
+</main>

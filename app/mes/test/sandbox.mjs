@@ -17,7 +17,7 @@
 //   DATABASE_URL=postgres:///openmes_test node app/mes/test/sandbox.mjs   (after a reset)
 import pg from "pg";
 import { randomBytes } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL ?? "postgres:///openmes_test" });
@@ -116,13 +116,13 @@ try {
     step("a scenario's mistakes are named: an object that is not one, a key that names nothing", /"nope" is not an object/.test(named) && /"@b" names no record/.test(named), shape.problems);
 
     // ---- 7. closed ----
-    const before = await db.query("SELECT count(*)::int AS n FROM pg_database WHERE datname LIKE 'openmes_test_sbx\\_%' AND datname <> 'openmes_test_sbxt'");
+    const before = await db.query("SELECT count(*)::int AS n FROM pg_database WHERE starts_with(datname, current_database() || '_sbx_')");
     await call("dana", "sandbox.close", { id });
-    const after = await db.query("SELECT count(*)::int AS n FROM pg_database WHERE datname LIKE 'openmes_test_sbx\\_%' AND datname <> 'openmes_test_sbxt'");
+    const after = await db.query("SELECT count(*)::int AS n FROM pg_database WHERE starts_with(datname, current_database() || '_sbx_')");
     const gone = await call("dana", "sandbox.run", { id, step: { do: { transaction: "move_in", input: {} } } });
     step("closed: its database is dropped, and a step says to open it again", before[0].n >= 1 && after[0].n === before[0].n - 1 && gone.status === 404 && /open it again/.test(gone.error), { before, after, gone });
     // Opened twice at once (a double click): one sandbox, one database; closed, none.
-    const count = async () => (await db.query("SELECT count(*)::int AS n FROM pg_database WHERE datname LIKE 'openmes_test_sbx\\_%' AND datname <> 'openmes_test_sbxt'"))[0].n;
+    const count = async () => (await db.query("SELECT count(*)::int AS n FROM pg_database WHERE starts_with(datname, current_database() || '_sbx_')"))[0].n;
     const none = await count();
     const both = await Promise.all([call("dana", "sandbox.open", { id, records: {} }), call("dana", "sandbox.open", { id, records: {} })]);
     const one = await count();

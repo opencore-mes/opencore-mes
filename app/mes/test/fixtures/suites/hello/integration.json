@@ -1,0 +1,8 @@
+{
+  "title": "Setting up Hello in your plant",
+  "intro": "Hello greets people by their nickname.",
+  "steps": [
+    { "title": "Install it", "who": "IT", "text": "Install the suite, then restart.", "commands": ["opencore-mes suite install hello"] },
+    { "title": "Take its designs through a change", "who": "Designer", "text": "Start a change from it, then have it approved.", "items": ["Nothing goes live until it is approved."] }
+  ]
+}

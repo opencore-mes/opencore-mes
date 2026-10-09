@@ -4,7 +4,8 @@
 //      A rows field that is a reference, a forEach over an input that is not rows, a row read outside
 //      a forEach step: named. Approved by Production (the lot) and Quality (the deviations it creates).
 //   2. Two readings: refused, "at least 3 rows". A reading that is not a number: refused, on its row.
-//   3. Three readings within the limit: the preview lists three new deviations, and no hold.
+//   3. Three readings within the limit: the preview lists three new deviations (their lot by its
+//      number), and no hold.
 //   4. One over the limit: run; three deviations created as Olga, through their own policies, audited
 //      in the run; the lot on hold.
 //   5. A value filled in from the lot (its quantity, `from: "lot.qty"`): copied as Olga reads it, never
@@ -13,7 +14,7 @@
 //   DATABASE_URL=postgres:///openmes_test node app/mes/test/create-steps.mjs   (after a reset)
 import pg from "pg";
 import { randomBytes } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL ?? "postgres:///openmes_test" });
@@ -93,6 +94,7 @@ try {
     const ok = await call("olga", "transactions.preview", { name: NAME, input: { lot, readings: [{ value: 1.1, note: `R1-${tag}` }, { value: 1.2, note: `R2-${tag}` }, { value: 1.4, note: `R3-${tag}` }, {}] } });
     const created = (ok.changes ?? []).filter((c) => c.created);
     step("within the limit: three new deviations in the preview (an empty last row is not a reading), no hold", created.length === 3 && created.every((c) => c.object === "deviation" && c.id === null && c.fields.lot) && !(ok.changes ?? []).some((c) => c.object === "lot") && ok.skipped?.includes(1), ok);
+    step("…each new deviation shows its lot by the lot's number, not its id", created.length === 3 && created.every((c) => c.fields.lot?.to === `LOT${tag}CS-A`), created.map((c) => c.fields.lot));
 
     // ---- 4. one over ----
     const run = await call("olga", "transactions.run", { name: NAME, input: { lot, readings: [{ value: 1.1, note: `S1-${tag}` }, { value: 1.8, note: `S2-${tag}` }, { value: 1.3, note: `S3-${tag}` }] }, key: key() });

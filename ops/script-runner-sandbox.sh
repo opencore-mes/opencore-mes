@@ -1,6 +1,6 @@
 #!/bin/sh
 # The script runner's operating-system walls on Linux (DESIGN §12.4), with bubblewrap: set
-#   SCRIPT_RUNNER_WRAP=/path/to/open-mes/ops/script-runner-sandbox.sh
+#   SCRIPT_RUNNER_WRAP=/path/to/opencore-mes/ops/script-runner-sandbox.sh
 # and the server starts the runner through it (server/rules.js passes the node binary, its flags, the
 # runner and its arguments). Node's permission model already keeps a script from the files, child
 # processes and native code; this adds what only the kernel can promise:

@@ -18,9 +18,19 @@ outside the package:
 npm install -g @opencore-mes/server
 opencore-mes init my-plant      # my-plant/.env (the settings, commented), suites/, .local/
 cd my-plant
-opencore-mes db reset --yes     # creates the database named in .env and loads the seed
+opencore-mes db reset --yes     # creates the database named in .env and loads the seed (sample people)
 opencore-mes start              # http://127.0.0.1:9090
 ```
+
+For a plant's own installation, start empty and name its first administrator, who sets up the rest:
+
+```bash
+opencore-mes db reset --yes --empty
+opencore-mes admin <id> "<Full name>" --url https://<your server>   # prints a one-time password link
+```
+
+The installation procedure (a Linux server with HTTPS, backups and a hardened host; upgrades; suites) is in
+the repository: docs/installation/installation-procedure.pdf.
 
 Without `PROD=1` it runs in development mode: anyone signs in as anyone from a picker, and the seed's
 people approve each other's changes. That is for trying it out, never for a reachable instance.
@@ -33,6 +43,8 @@ people approve each other's changes. That is for trying it out, never for a reac
 | `opencore-mes db reset --yes` | makes the database again from the seed: **everything in it is lost** |
 | `opencore-mes token <user> "<name>"` | makes a token for an integration user |
 | `opencore-mes password <user> --url <site>` | makes a one-time link for a person to set their password |
+| `opencore-mes db reset --yes --empty` | an empty database: a plant's own installation (**everything in it is lost**) |
+| `opencore-mes admin <id> "<name>"` | the first administrator of an empty installation, with a password link; opens setup |
 
 ## In production
 
@@ -43,6 +55,23 @@ every setting. On Linux, wall the script runner in with the operating system: se
 `SCRIPT_ISOLATION=required`. `/healthz` reports what the scripts are walled in with.
 
 To upgrade, update the package and restart. The server migrates the database when it starts.
+
+## Suites
+
+Suites are sold separately and installed into the plant folder's `suites/` from the suites registry,
+with the licence token from your account at the suites store (suites.opencoremes.com: planned, not
+open yet):
+
+```bash
+opencore-mes suite login              # paste the licence token
+opencore-mes suite install <name>     # then restart
+opencore-mes suite list
+```
+
+`suite update` installs the newest version, `suite remove` takes one out and `suite use <name>@<version>`
+brings back an earlier one: every version a plant ran is kept in `suites/.versions/`, and a suite's
+designs and tables stay whatever happens to its folder. A plant with no way out installs the package
+file downloaded from the store: `opencore-mes suite install <name> --from <file>.tgz`.
 
 ## Extending it
 

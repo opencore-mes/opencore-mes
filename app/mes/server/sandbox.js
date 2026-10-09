@@ -9,11 +9,12 @@
 //              (design.executeInto), and an app of its own on it (createApp, no outbound calls, no
 //              scheduler), called over HTTP as whoever a step runs as: policies, rule pipes, steps
 //              and audit all as in production, in the sandbox.
-//   records    { key: { object, id?, where? } }    picked: copied from live, with what they refer to
-//                                                  (two references deep), masked by the opener's live
+//   records    { key: { object, id?, where?, state? } }  picked: copied from live, with what they refer
+//                                                  to (two references deep), masked by the opener's live
 //                                                  rights (a draft that widens access shows no more);
 //                                                  `id` when it still matches `where`, else the first
-//                                                  record that does
+//                                                  record that does; `state`: the copy starts in it (a
+//                                                  tool down live, idle here), the live one untouched
 //              { key: { object, data, state? } }   given: made in the sandbox (after the draft, so a
 //                                                  new object's records too); "@key" names another,
 //                                                  in any order
@@ -29,14 +30,20 @@
 // { name, records, steps }. The fitness test runs every scenario of a new or changed transaction or
 // template in one sandbox, each on fresh copies, and one without a scenario fails it (§5.9).
 //
+// A route followed by hand (§32.8): the records on a route here (`sandbox.travelers`), one's place as a
+// person sees it (`sandbox.where`: flows.runOf, the plans waiting on it with what they ask), and what a
+// transaction's reference input may name at its step (`sandbox.suggest`: the records the step's resource
+// settings allow, each tried by transactions.preview). The page fills a step in from them; nothing new
+// runs: a step is still `sandbox.run`, so whatever follows a route here is what a scenario can keep.
+//
 // Interactive sandboxes are one per person per change, closed after a quarter of an hour unused, at
 // most LIMITS.open on a node; one left behind is dropped when twelve hours old. The live audit trail
 // says who opened one, on what.
 import pg from "pg";
 import { readFile } from "node:fs/promises";
 import { randomBytes, randomUUID } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
-import { fail } from "../../../src/errors.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
+import { fail } from "@opencore-mes/juris-kit/errors.js";
 import { loadSchema } from "../db/schema-load.mjs";
 import { migrate, MIGRATIONS } from "../db/migrate.mjs";
 import { mask } from "./policy.js";
@@ -46,12 +53,13 @@ import { recordWhere } from "./record-where.js";
 import { appendAudit, sha256 } from "./audit.js";
 import { adoptRuns } from "./flows.js";
 import { managedOf } from "../client/builtins.js";
+import { isSensitive, flowKindOf } from "../client/definition.js";
 
 const IDENT = /^[a-z][a-z0-9_]*$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // Copied whole: who people are and what they may do, in an order their references allow.
 const PEOPLE = ["users", "groups", "group_members", "department_reps", "assignments", "organization"];
-const DESIGNS = ["definitions", "scripts", "transactions", "screens", "services", "connections", "flows", "layouts", "elements"];
+const DESIGNS = ["definitions", "scripts", "transactions", "screens", "services", "connections", "flows", "layouts", "queries", "elements"];
 // open: sandboxes open on this server; perPerson: of those, one person's; scenarios: sandboxes of scenario
 // runs (a fitness test, a scenario tried) made at once, the rest waiting their turn, at most `waiting`.
 export const LIMITS = { open: 6, perPerson: 2, scenarios: 3, waiting: 20, records: 200, depth: 2, idleMs: 15 * 60_000, steps: 50, leftoverMs: 12 * 60 * 60_000 };
@@ -67,7 +75,7 @@ function selectionName(name) {
     if (!text || text.length > 120) fail("Name the selection: 1 to 120 characters (a date in it helps, \"Lots at test 2026-10-03\").", { status: 400, fields: { name: "Required." } });
     return text;
 }
-// Its records, as a sandbox starts with them: { key: { object, id? | where? } } picked, or { object, data, state? } given.
+// Its records, as a sandbox starts with them: { key: { object, id? | where?, state? } } picked, or { object, data, state? } given.
 export function selectionProblem(records) {
     if (!isPlain(records)) return "A selection's records are { key: { object, id or where, or data } }.";
     const keys = Object.keys(records);
@@ -79,8 +87,43 @@ export function selectionProblem(records) {
         if (r.data === undefined && r.id === undefined && r.where === undefined) return `"${k}": pick a record (its id), say where to find one, or give its data.`;
         if (r.id !== undefined && !(typeof r.id === "string" && UUID.test(r.id))) return `"${k}": its id is not a record's.`;
         if ((r.where !== undefined && !isPlain(r.where)) || (r.data !== undefined && !isPlain(r.data))) return `"${k}": where and data are { field: value }.`;
+        if (r.state !== undefined && !(typeof r.state === "string" && IDENT.test(r.state))) return `"${k}": its state is a state's name.`;
     }
     return null;
+}
+
+// What a record is, beside its title, for one who does not know it by its number: the first values of its
+// object's list columns (the designer's own choice of what tells its records apart: a tool's name and
+// process), never a sensitive one, references and empty values left out. `seen`: as the person may read it.
+// A route's start condition as the traveler fields it asks for ({ route: ["cmos_route"] }), where it is that
+// simple: an eq or in on one of the traveler's own fields ({ "context": "lot.route" }), or several under all.
+// Anything else (an or, a field of another record, arithmetic) asks for nothing here: the start decides.
+export function startWhere(when, key, body) {
+    const where = {};
+    const field = (o) => (isPlain(o) && typeof o.context === "string" && key && o.context.startsWith(`${key}.`) ? o.context.slice(key.length + 1) : null);
+    const take = (f, values) => { if (f && Object.hasOwn(body?.fields ?? {}, f) && values.every((v) => ["string", "number", "boolean"].includes(typeof v))) where[f] = values.map(String); };
+    const read = (c) => {
+        if (!isPlain(c)) return;
+        const [op] = Object.keys(c);
+        const a = c[op];
+        if (op === "all" && Array.isArray(a)) a.forEach(read);
+        else if (op === "eq" && Array.isArray(a) && a.length === 2) take(field(a[0]) ?? field(a[1]), [field(a[0]) ? a[1] : a[0]]);
+        else if (op === "in" && Array.isArray(a) && Array.isArray(a[1])) take(field(a[0]), a[1]);
+    };
+    read(when);
+    return where;
+}
+
+function aboutOf(body, seen, n = 2) {
+    const out = [];
+    for (const c of (body?.list?.columns ?? Object.keys(body?.fields ?? {})).filter((c) => c !== body.titleField)) {
+        const f = body.fields?.[c];
+        const v = seen?.[c];
+        if (!f || f.type === "ref" || isSensitive(body, c) || v === undefined || v === null || v === "" || typeof v === "object") continue;
+        out.push(String(v));
+        if (out.length >= n) break;
+    }
+    return out;
 }
 
 // "@key" anywhere in a value: the id of the record that key names.
@@ -232,7 +275,7 @@ export function createSandboxes({ store, design, records, suites = [], instance 
         // by asking which value picks a record.
         const fits = async (row, where) => {
             const v = await visible(row);
-            return Boolean(v && Object.keys(where ?? {}).every((f) => !v.def.body.fields[f] || v.seen.$perm.fields[f]));
+            return Boolean(v && Object.keys(where ?? {}).every((f) => !v.def.body.fields[f] || (v.seen.$perm.fields[f] && !isSensitive(v.def.body, f))));
         };
         const matches = (row, where) => Object.entries(where ?? {}).every(([f, v]) => (Array.isArray(v) ? v : [v]).map(String).includes(String(f === "state" ? row.state : row.data?.[f])));
         // Picked: by id while it still matches, else the newest record that does.
@@ -277,6 +320,17 @@ export function createSandboxes({ store, design, records, suites = [], instance 
             await sb.db.query("DELETE FROM mes.records WHERE id = ANY($1::uuid[])", [rows.map((r) => r.id)]);
             await sb.db.query("INSERT INTO mes.records SELECT * FROM json_populate_recordset(null::mes.records, $1)", [JSON.stringify(rows)]);
         }
+        // A picked record started in a state of its own (a tool down live, idle here): its copy only, one
+        // of its object's states as the sandbox has it (the change's draft too), set as the sandbox is made.
+        for (const [key, r] of entries.filter(([, r]) => isPlain(r) && r.data === undefined && r.state !== undefined && r.state !== null && r.state !== "")) {
+            const [def] = await sb.db.query("SELECT body FROM mes.definitions WHERE object = $1 AND status = 'published'", [r.object]);
+            if (!def?.body.states?.list?.includes(r.state)) fail(`"${key}": ${def?.body.label ?? r.object} has no state "${r.state}": one of ${(def?.body.states?.list ?? []).join(", ")}.`, { status: 400 });
+            const [was] = await sb.db.query("SELECT state FROM mes.records WHERE id = $1", [ids[key]]);
+            if (was && was.state !== r.state) {
+                await sb.db.query("UPDATE mes.records SET state = $2 WHERE id = $1", [ids[key], r.state]);
+                notes.push(`${key}: starts ${String(r.state).replace(/_/g, " ")} here (${String(was.state).replace(/_/g, " ")} live).`);
+            }
+        }
         // Given: made in the sandbox, by the draft's definitions. Each has its id before any is made, so
         // they may name one another in any order (a stored scenario's keys keep none), even in a circle.
         const given = entries.filter(([, r]) => isPlain(r) && r.data !== undefined);
@@ -307,13 +361,25 @@ export function createSandboxes({ store, design, records, suites = [], instance 
             await sb.db.query("DELETE FROM mes.flow_runs WHERE subject_id = ANY($1::uuid[])", [Object.values(ids)]);
             await adoptRuns(sb.db, { flows, definitions });
         }
+        // Its app reads people as they are now (a certification a scenario gives, §27.9).
+        sb.app?.forgetPeople?.();
         return { ids, notes, copied: copied.size };
     }
 
+    // The files a scenario names (a 64-character name anywhere in its records or steps: a guide, a certificate, a
+    // first article report), copied from the live file store into its sandbox, which starts without any; at most a
+    // few, as named, never the whole store.
+    async function copyFiles(sb, scenario) {
+        const names = [...new Set(JSON.stringify(scenario ?? {}).match(/\b[0-9a-f]{64}\b/g) ?? [])].slice(0, 20);
+        if (!names.length) return;
+        const rows = await db.query("SELECT sha256, type, size, bytes, created_by, created_at, name FROM mes.blobs WHERE sha256 = ANY($1)", [names]);
+        for (const r of rows) await sb.db.query("INSERT INTO mes.blobs (sha256, type, size, bytes, created_by, created_at, name) VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (sha256) DO NOTHING", [r.sha256, r.type, r.size, r.bytes, r.created_by, r.created_at, r.name]);
+    }
+
     // One step, as its person, on the sandbox's app; then the states of the records it knows.
-    async function step(sb, st, user) {
-        if (!isPlain(st) || !isPlain(st.do)) fail("A step is { as?, do: { transaction | action | update | create | service | screen }, expect? }.", { status: 400 });
-        const as = typeof st.as === "string" && st.as ? st.as : user.id;
+    // The sandbox's own services, called as one of its people (a session of theirs, made once): policies,
+    // rule pipes and the audit trail decide, as they will live. → call(name, args) → { ok, body | error, fields }.
+    async function callerIn(sb, as) {
         let session = sb.sessions.get(as);
         if (!session) {
             const [who] = await sb.db.query("SELECT id FROM mes.users WHERE id = $1 AND active", [as]);
@@ -322,11 +388,17 @@ export function createSandboxes({ store, design, records, suites = [], instance 
             await sb.db.query("INSERT INTO mes.sessions (id, user_id, expires_at) VALUES ($1, $2, now() + interval '1 day')", [session, as]);
             sb.sessions.set(as, session);
         }
-        const call = async (name, args) => {
+        return async (name, args) => {
             const res = await fetch(`${sb.url}/api/${name}`, { method: "POST", headers: { "content-type": "application/json", cookie: sessionCookieFor(session) }, body: JSON.stringify([args]) });
             const body = await res.json().catch(() => ({ error: "The sandbox did not answer." }));
             return res.ok ? { ok: true, body } : { ok: false, error: body.error ?? "Refused.", fields: body.fields ?? null };
         };
+    }
+
+    async function step(sb, st, user) {
+        if (!isPlain(st) || !isPlain(st.do)) fail("A step is { as?, do: { transaction | action | update | create | service | screen }, expect? }.", { status: 400 });
+        const as = typeof st.as === "string" && st.as ? st.as : user.id;
+        const call = await callerIn(sb, as);
         const key = () => `sbx-${randomBytes(8).toString("hex")}`;
         const d = st.do;
         const record = async (object, ref) => {
@@ -374,8 +446,10 @@ export function createSandboxes({ store, design, records, suites = [], instance 
         // Where each record's runs are (§32.8): those it is the traveler or subject of, or takes part in.
         const nodes = {};
         for (const [k, id] of Object.entries(sb.ids)) {
-            const runs = await sb.db.query("SELECT flow, node, state, outcome, reason FROM mes.flow_runs WHERE subject_id = $1 OR EXISTS (SELECT 1 FROM jsonb_each_text(participants) p WHERE p.value = $1::text) ORDER BY started_at", [id]);
-            if (runs.length) nodes[k] = Object.fromEntries(runs.map((r) => [r.flow, { node: r.node, state: r.state, outcome: r.outcome, reason: r.reason }]));
+            // (Marked: a run the record only takes part in, not its own; a sub route's, the route it runs inside.)
+            // Its node by its label as the run's version names it ("ADI CD metrology"), the id kept for expectations.
+            const runs = await sb.db.query("SELECT r.flow, r.node, f.body->'nodes'->r.node->>'label' AS label, r.state, r.outcome, r.reason, r.subject_id, p.flow AS inside FROM mes.flow_runs r LEFT JOIN mes.flow_runs p ON p.id = r.parent_id LEFT JOIN mes.flows f ON f.name = r.flow AND f.version = r.version WHERE r.subject_id = $1 OR EXISTS (SELECT 1 FROM jsonb_each_text(r.participants) x WHERE x.value = $1::text) ORDER BY r.started_at", [id]);
+            if (runs.length) nodes[k] = Object.fromEntries(runs.map((r) => [r.flow, { node: r.node, ...(r.label ? { label: r.label } : {}), state: r.state, outcome: r.outcome, reason: r.reason, ...(r.subject_id !== id ? { takesPart: true } : {}), ...(r.inside ? { inside: r.inside } : {}) }]));
         }
         sb.lastUsed = Date.now();
         return { ok: out.ok, error: out.ok ? null : out.error, fields: out.fields ?? null, result: out.body ?? null, created, states, data, nodes };
@@ -479,6 +553,214 @@ export function createSandboxes({ store, design, records, suites = [], instance 
             return (await sb.db.query("SELECT id, state, data FROM mes.records WHERE object = $1 AND archived_at IS NULL ORDER BY updated_at DESC LIMIT 200", [object]))
                 .map((r) => ({ id: r.id, key: keys[r.id] ?? null, title: String(r.data?.[def.body.titleField] ?? r.id.slice(0, 8)), state: r.state }));
         },
+        // ---- what a route needs to be walked to its end (§5.11), before the sandbox is opened ----
+        // The route (one of the change's, else a live one; not a sub route alone) and every route it runs,
+        // step by step: a record of its resource each step names (as gate reads it: a tool of its process),
+        // a record of each object its steps' transactions must be given (other than the traveler and the
+        // resource), and the traveler's own required references (a lot's device). Each said with the steps
+        // that need it, the chosen records that give it (`records`, as the page holds them), and a few live
+        // records that would, as this person may see them. Also: the transactions that make a traveler.
+        async "sandbox.needs"({ id, flow, records: spec = {} } = {}) {
+            const { user, row } = await changeFor(this, id);
+            const draftFlows = isPlain(row.content?.flows) ? row.content.flows : {};
+            const draftTx = isPlain(row.content?.transactions) ? row.content.transactions : {};
+            const published = await store.flows();
+            const bodyOf = (name) => (isPlain(draftFlows[name]) ? draftFlows[name] : published.get(name)?.body ?? null);
+            const routes = [...Object.values(draftFlows).filter(isPlain).map((b) => ({ b, draft: true })), ...[...published.values()].map((f) => ({ b: f.body, draft: false })).filter((x) => !isPlain(draftFlows[x.b?.name]))]
+                .filter((x) => x.b?.kind === "route" && !x.b.asSub).map((x) => ({ name: x.b.name, label: x.b.label ?? x.b.name, draft: x.draft }));
+            const name = typeof flow === "string" && flow && routes.some((r) => r.name === flow) ? flow : routes[0]?.name ?? null;
+            const top = name ? bodyOf(name) : null;
+            if (!top) return { routes, flow: null, needs: [], makers: [] };
+            const role = (as) => Object.values(top.participants ?? {}).find((p) => p?.as === as)?.object ?? null;
+            const [traveler, resource] = [role("traveler"), role("resource")];
+            const txOf = async (t) => (isPlain(draftTx[t]) ? draftTx[t] : (await store.transactions()).get(t)?.body ?? null);
+            const kinds = design.flowNodes();
+            const needs = new Map();
+            const canon = (w) => JSON.stringify(Object.fromEntries(Object.keys(w).sort().map((k) => [k, [].concat(w[k]).map(String).sort()])));
+            const need = (object, where, why) => {
+                const k = `${object}:${canon(where)}`;
+                const n = needs.get(k) ?? { object, where, why: [] };
+                if (!n.why.includes(why)) n.why.push(why);
+                needs.set(k, n);
+            };
+            // In the order a traveler meets them: each route from its start along its wires (the rest after),
+            // a sub route walked where it is run (each once: the designer refuses a circle).
+            const inOrder = (body) => {
+                const nodes = body.nodes ?? {};
+                const startId = Object.keys(nodes).find((k) => flowKindOf(nodes[k], kinds) === "start");
+                const order = [];
+                const next = startId ? [startId] : [];
+                while (next.length) {
+                    const k = next.shift();
+                    if (order.includes(k) || !nodes[k]) continue;
+                    order.push(k);
+                    for (const e of body.edges ?? []) if (e?.from === k) next.push(e.to);
+                }
+                return [...order, ...Object.keys(nodes).filter((k) => !order.includes(k))];
+            };
+            const walked = new Set();
+            const walk = async (fname, body) => {
+                if (walked.has(fname) || walked.size > 20) return;
+                walked.add(fname);
+                for (const nid of inOrder(body)) {
+                    const n = body.nodes[nid];
+                    const kind = flowKindOf(n, kinds);
+                    if (kind === "sub_flow" && typeof n.flow === "string") { const sb = bodyOf(n.flow); if (sb?.kind === "route") await walk(n.flow, sb); continue; }
+                    if (kind !== "sequence") continue;
+                    const at = `${n.label ?? nid}${fname === name ? "" : ` (${body.label ?? fname})`}`;
+                    if (resource && isPlain(n.resource)) need(resource, n.resource, at);
+                    for (const t of Array.isArray(n.offers) ? n.offers : []) {
+                        const tb = await txOf(t);
+                        for (const x of Object.values(tb?.inputs ?? {})) if (x?.type === "ref" && x.required && !x.from && x.to !== traveler && x.to !== resource) need(x.to, {}, `${tb.label ?? t}, at ${at}`);
+                    }
+                }
+            };
+            const tdef = traveler ? await store.definition(traveler) : null;
+            const makers = [];
+            for (const [tn, t] of [...[...(await store.transactions()).values()].map((t) => [t.body.name, t.body]).filter(([tn]) => !isPlain(draftTx[tn])), ...Object.entries(draftTx)]) {
+                if ((t?.steps ?? []).some((st) => st?.create === traveler)) makers.push({ name: tn, label: t.label ?? tn });
+            }
+            // The traveler first: whatever object the route takes through (its participant `as: "traveler"`),
+            // the ones its start takes (a simple start condition read as fields: route is this route), picked
+            // on its way or made by a step once the sandbox is open.
+            const travelerKey = Object.entries(top.participants ?? {}).find(([, p]) => p?.as === "traveler")?.[0] ?? null;
+            if (tdef) {
+                need(traveler, startWhere(top.nodes?.[Object.keys(top.nodes ?? {}).find((k) => flowKindOf(top.nodes[k], kinds) === "start")]?.when, travelerKey, tdef.body), `the traveler, walked along ${top.label ?? name}`);
+                needs.get([...needs.keys()][0]).traveler = { makers };
+            }
+            for (const [f, fd] of Object.entries(tdef?.body.fields ?? {})) if (fd?.type === "ref" && fd.required && fd.to !== traveler) need(fd.to, {}, `a ${String(tdef.body.label ?? traveler).toLowerCase()}'s ${String(fd.label ?? f).toLowerCase()}`);
+            await walk(name, top);
+            // What the chosen records give, and live ones that would do (as this person may see them).
+            const matches = (state, data, where) => Object.entries(where ?? {}).every(([f, v]) => [].concat(v).map(String).includes(String(f === "state" ? state : data?.[f])));
+            const chosen = [];
+            for (const [key, r] of Object.entries(isPlain(spec) ? spec : {})) {
+                if (!isPlain(r) || typeof r.object !== "string") continue;
+                if (r.data !== undefined) { chosen.push({ key, object: r.object, state: r.state ?? null, data: isPlain(r.data) ? r.data : {} }); continue; }
+                // Read as this person may: a field they may not read gives nothing away by what it matches.
+                const got = typeof r.id === "string" && UUID.test(r.id) ? await records.internals.loadRow(db, r.object, r.id) : null;
+                const def = got ? await store.definition(r.object) : null;
+                const seen = def ? mask(def.body, await records.internals.actorFor(user, r.object), records.internals.rowOut(got)) : null;
+                const data = seen ? Object.fromEntries(Object.keys(def.body.fields).filter((f) => seen.$perm.fields[f] && !isSensitive(def.body, f)).map((f) => [f, got.data?.[f]])) : {};
+                chosen.push({ key, object: r.object, state: typeof r.state === "string" && r.state ? r.state : seen ? got.state : null, data, where: r.where });
+            }
+            const out = [];
+            for (const n of needs.values()) {
+                const def = await store.definition(n.object);
+                if (!def) continue;
+                const have = chosen.filter((c) => c.object === n.object && (c.data && Object.keys(c.data).length ? matches(c.state, c.data, n.where) : matches(null, c.where, n.where))).map((c) => c.key);
+                const candidates = [];
+                const w = recordWhere(n.object, n.where);
+                // A traveler: those on their way along this route first (a run of it not ended), then the rest.
+                const onWay = n.traveler ? `(SELECT 1 FROM mes.flow_runs fr WHERE fr.subject_id = mes.records.id AND fr.flow = '${name.replace(/'/g, "''")}' AND fr.parent_id IS NULL AND fr.state <> 'ended' LIMIT 1) IS NULL, ` : "";
+                if (w) for (const r of await db.query(`SELECT * FROM mes.records WHERE ${w.sql} ORDER BY ${onWay}updated_at DESC LIMIT 30`, w.params)) {
+                    if (candidates.length >= 3) break;
+                    const seen = mask(def.body, await records.internals.actorFor(user, n.object), records.internals.rowOut(r));
+                    if (seen) candidates.push({ id: r.id, title: String(seen[def.body.titleField] ?? r.id.slice(0, 8)), state: r.state, about: aboutOf(def.body, seen) });
+                }
+                out.push({ object: n.object, label: def.body.label ?? n.object, where: n.where, why: n.why, have, candidates, ...(n.traveler ? { traveler: n.traveler } : {}) });
+            }
+            return { routes, flow: name, label: top.label ?? name, traveler: tdef ? { object: traveler, label: tdef.body.label ?? traveler } : null, makers, needs: out };
+        },
+
+        // ---- following a route by hand (§32.8): a traveler, where it is, what its step offers ----
+        // The records on a route here, newest first: those it started with and those its steps made (a
+        // lot a receiving transaction made has no key, and is followed all the same).
+        async "sandbox.travelers"({ id } = {}) {
+            const { user } = await changeFor(this, id);
+            const sb = mine(id, user);
+            const rows = await sb.db.query(
+                `SELECT * FROM (SELECT DISTINCT ON (r.subject_id) r.subject_id AS id, r.subject_object AS object, r.flow, r.version, r.node, r.state, r.outcome, r.started_at
+                   FROM mes.flow_runs r WHERE r.kind = 'route' AND r.parent_id IS NULL ORDER BY r.subject_id, r.started_at DESC) t ORDER BY t.started_at DESC LIMIT 100`);
+            if (!rows.length) return [];
+            const recs = await sb.db.query("SELECT r.id, r.state, r.data, d.body->>'titleField' AS tf, d.body->>'label' AS label FROM mes.records r JOIN mes.definitions d ON d.object = r.object AND d.status = 'published' WHERE r.id = ANY($1::uuid[])", [rows.map((r) => r.id)]);
+            const flowsAt = await sb.db.query("SELECT name, version, body->>'label' AS label FROM mes.flows WHERE name = ANY($1)", [[...new Set(rows.map((r) => r.flow))]]);
+            const keys = Object.fromEntries(Object.entries(sb.ids).map(([k, rid]) => [rid, k]));
+            sb.lastUsed = Date.now();
+            return rows.map((t) => {
+                const r = recs.find((x) => x.id === t.id);
+                return r ? { id: t.id, object: t.object, label: r.label, title: String(r.data?.[r.tf] ?? t.id.slice(0, 8)), state: r.state, key: keys[t.id] ?? null,
+                    route: flowsAt.find((f) => f.name === t.flow && f.version === t.version)?.label ?? t.flow, runState: t.state, outcome: t.outcome } : null;
+            }).filter(Boolean);
+        },
+        // One traveler, as `as` sees it here: its route (flows.runOf: the map, its way, the sub routes) and
+        // the plans waiting on it, each with what it asks (a screen's fields, a decision's choices) and for whom.
+        async "sandbox.where"({ id, record, as: who } = {}) {
+            const { user } = await changeFor(this, id);
+            const sb = mine(id, user);
+            if (typeof record !== "string" || !UUID.test(record)) fail("Which record?", { status: 400 });
+            const as = typeof who === "string" && who ? who : user.id;
+            const call = await callerIn(sb, as);
+            const [row] = await sb.db.query("SELECT object FROM mes.records WHERE id = $1", [record]);
+            if (!row) fail("No such record in this sandbox.", { status: 404 });
+            const route = await call("flows.runOf", { object: row.object, id: record, as });
+            // A plan waiting for someone (not at its sub flow: that one's own run waits), on this record.
+            const waiting = await sb.db.query(
+                `SELECT id FROM mes.flow_runs WHERE kind = 'plan' AND state = 'running' AND waiting IS NOT NULL AND waiting->>'kind' <> 'sub_flow'
+                   AND (subject_id = $1 OR EXISTS (SELECT 1 FROM jsonb_each_text(participants) p WHERE p.value = $1::text)) ORDER BY started_at LIMIT 20`, [record]);
+            const tasks = [];
+            for (const w of waiting) {
+                const t = await call("flows.task", { run: w.id, as });
+                if (t.ok && t.body) tasks.push({ run: t.body.id, flow: t.body.flow, label: t.body.label, node: t.body.node, nodeLabel: t.body.nodeLabel, kind: t.body.waiting?.kind ?? null,
+                    message: t.body.message, for: t.body.waiting?.for ?? null, mayAct: t.body.mayAct, choices: t.body.choices, fields: t.body.fields, subject: t.body.subject });
+            }
+            sb.lastUsed = Date.now();
+            return { record: { id: record, object: row.object }, route: route.ok ? route.body : null, tasks };
+        },
+        // What a transaction's reference input may name, at the step the travelers among its inputs are at:
+        // the records the step allows (its resource's settings: a tool of its process), each tried with
+        // the inputs given so far (transactions.preview, nothing written): one it would take, one it
+        // refuses for this input (and why), or one it cannot yet tell of (another input is missing).
+        async "sandbox.suggest"({ id, as: who, transaction, input = {}, field } = {}) {
+            const { user } = await changeFor(this, id);
+            const sb = mine(id, user);
+            const as = typeof who === "string" && who ? who : user.id;
+            const call = await callerIn(sb, as);
+            if (typeof transaction !== "string" || typeof field !== "string" || !isPlain(input)) fail("Which transaction, and which of its inputs?", { status: 400 });
+            const [t] = await sb.db.query("SELECT body FROM mes.transactions WHERE name = $1 AND status = 'published'", [transaction]);
+            const spec = t?.body.inputs?.[field];
+            if (!spec || spec.type !== "ref" || spec.from) return { candidates: [], step: null };
+            const [target] = await sb.db.query("SELECT body FROM mes.definitions WHERE object = $1 AND status = 'published'", [spec.to]);
+            if (!target) return { candidates: [], step: null };
+            // A traveler it takes (an object a route walks), not given yet: nothing is suggested until it is,
+            // since only its step says which of these it allows (rather than every one, to guess among).
+            const walkers = new Set((await sb.db.query("SELECT body FROM mes.flows WHERE status = 'published' AND body->>'kind' = 'route'")).flatMap((f) => Object.values(f.body?.participants ?? {}).filter((x) => x?.as === "traveler").map((x) => x.object)));
+            const travelerInput = Object.entries(t.body.inputs ?? {}).find(([k, x]) => k !== field && x?.type === "ref" && !x.from && walkers.has(x.to));
+            if (travelerInput && !(typeof input[travelerInput[0]] === "string" && UUID.test(input[travelerInput[0]]))) {
+                return { candidates: [], step: null, waitFor: { field: travelerInput[0], label: travelerInput[1].label ?? travelerInput[0] }, noun: target.body.label ?? spec.to };
+            }
+            // The step a traveler among the inputs is at (the innermost route run), and what it allows of this object.
+            let step = null;
+            for (const v of Object.values(input)) {
+                if (typeof v !== "string" || !UUID.test(v)) continue;
+                const runs = await sb.db.query("SELECT id, flow, version, node, parent_id FROM mes.flow_runs WHERE subject_id = $1 AND kind = 'route' AND state <> 'ended'", [v]);
+                const run = runs.find((r) => !runs.some((c) => c.parent_id === r.id));
+                if (!run) continue;
+                const [f] = await sb.db.query("SELECT body FROM mes.flows WHERE name = $1 AND version = $2", [run.flow, run.version]);
+                const n = f?.body.nodes?.[run.node];
+                const resource = Object.values(f?.body.participants ?? {}).find((p) => p?.as === "resource");
+                step = { node: run.node, label: n?.label ?? run.node, route: f?.body.label ?? run.flow, allows: resource?.object === spec.to && isPlain(n?.resource) ? n.resource : null };
+                break;
+            }
+            const rows = await sb.db.query("SELECT id, state, data FROM mes.records WHERE object = $1 AND archived_at IS NULL ORDER BY updated_at DESC LIMIT 200", [spec.to]);
+            // As the route's gate reads a step's resource settings: each field one of its values (state: the record's).
+            const allowed = (r) => !step?.allows || Object.entries(step.allows).every(([f, v]) => [].concat(v).map(String).includes(String(f === "state" ? r.state : r.data?.[f])));
+            const fit = rows.filter(allowed);
+            const keys = Object.fromEntries(Object.entries(sb.ids).map(([k, rid]) => [rid, k]));
+            const candidates = [];
+            for (const r of fit.slice(0, 25)) {
+                const tried = await call("transactions.preview", { name: transaction, input: { ...input, [field]: r.id } });
+                const why = tried.ok ? null : tried.fields?.[field] ?? null;
+                candidates.push({ id: r.id, key: keys[r.id] ?? null, title: String(r.data?.[target.body.titleField] ?? r.id.slice(0, 8)), state: r.state, about: aboutOf(target.body, r.data),
+                    ok: tried.ok ? true : why ? false : null, why: tried.ok ? null : why ?? tried.error });
+            }
+            const order = (c) => (c.ok === true ? 0 : c.ok === null ? 1 : 2);
+            candidates.sort((a, b) => order(a) - order(b));
+            sb.lastUsed = Date.now();
+            // Not one could be tried, for the same reason (the person may not run it; another input is missing):
+            // that reason, said once.
+            const untried = candidates.length && candidates.every((c) => c.ok === null && c.why === candidates[0].why) ? candidates[0].why : null;
+            return { candidates, step: step && { node: step.node, label: step.label, route: step.route, allows: step.allows }, others: rows.length - fit.length, more: Math.max(0, fit.length - 25), untried, noun: target.body.label ?? spec.to };
+        },
         // One scenario tried on a change's draft, in a sandbox of its own (the AI's try_scenario, §32.10):
         // each step's outcome and where the records' runs are; nothing is saved.
         async "sandbox.tryScenario"({ id, transaction, flow, scenario } = {}) {
@@ -564,6 +846,7 @@ export function createSandboxes({ store, design, records, suites = [], instance 
                 const name = scenario?.name ?? "(unnamed)";
                 try {
                     Object.assign(sb, { sessions: sb.sessions }, await prepare(sb, user, scenario.records ?? {}));
+                    await copyFiles(sb, scenario);
                     const steps = [];
                     for (const [i, st] of (scenario.steps ?? []).slice(0, LIMITS.steps).entries()) {
                         const result = await step(sb, st, user);
@@ -614,7 +897,7 @@ export function createSandboxes({ store, design, records, suites = [], instance 
     // else (a field a screen changed since still shows, a transaction a route still offers) shows as a
     // problem there, and nowhere else. `known`: the problems the live system has already, which are not
     // the rollback's. → { ok, items: [words] }
-    const WORLD = [["definitions", "object", "body"], ["scripts", "name", "source"], ["services", "name", "body"], ["connections", "name", "body"], ["transactions", "name", "body"], ["screens", "name", "body"], ["flows", "name", "body"], ["layouts", "name", "body"], ["elements", "name", "body"]];
+    const WORLD = [["definitions", "object", "body"], ["scripts", "name", "source"], ["services", "name", "body"], ["connections", "name", "body"], ["transactions", "name", "body"], ["screens", "name", "body"], ["flows", "name", "body"], ["layouts", "name", "body"], ["queries", "name", "body"], ["elements", "name", "body"]];
     async function worldOf(q) {
         const out = {};
         for (const [kind, key, value] of WORLD) out[kind] = Object.fromEntries((await q.query(`SELECT ${key} AS k, ${value} AS v FROM mes.${kind} WHERE status = 'published'`)).map((r) => [r.k, r.v]));

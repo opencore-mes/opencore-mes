@@ -1,22 +1,18 @@
-// Themes (DESIGN.md §10.8), without a database: the plant theme's checks, the CSS it writes, the scheme
+// Themes (DESIGN.md §10.8), without a database: the plant theme's checks (its shape; never how a colour reads), the CSS it writes, the scheme
 // a page is drawn in, a state's tone in a design, and the stylesheet's own rules. `npm test`.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { DEFAULTS, THEME_COLORS, colorChecks, contrast, themeProblems, themeCss, schemeOf, personalChoice, stateBadgeClass } from "../client/theme.js";
+import { themeProblems, themeCss, schemeOf, personalChoice, stateBadgeClass } from "../client/theme.js";
 import { validateDefinition } from "../client/definition.js";
 import { definitions } from "../db/seed.mjs";
 
-test("the default colours pass every contrast check, light and dark", () => {
-    for (const s of ["light", "dark"]) for (const n of THEME_COLORS) for (const c of colorChecks(s, n, DEFAULTS[s][n])) assert.ok(c.ok, `${s} ${c.what}: ${c.ratio}`);
-    assert.equal(contrast("#000000", "#ffffff").toFixed(0), "21");
-});
-
-test("a plant theme's mistakes are named, a colour that cannot be read among them", () => {
+test("a plant theme's mistakes are named; how a colour reads is never one of them (the plant chooses)", () => {
     assert.deepEqual(themeProblems(undefined), []);
     assert.deepEqual(themeProblems({ scheme: "dark", name: "Plant 1", scope: "Lyon", colors: { light: { accent: "#1d4ed8" }, dark: { ok: "#6ee7b7" } } }), []);
     const m = themeProblems({ scheme: "dim", font: "x", name: "x".repeat(41), colors: { light: { accent: "#ffff00", pink: "#ff00ff", ok: "green" }, sepia: {} } }).join("\n");
-    for (const expected of [/scheme is "choice".*not "dim"/, /"font" is not scheme/, /name is text, at most 40/, /in light, accent text on a panel reads at 1\.\d:1.*choose a darker accent/, /"pink" is not one of/, /light ok is a colour as #rrggbb, not "green"/, /for light and dark, not "sepia"/]) {
+    assert.doesNotMatch(m, /reads at|accent text/);
+    for (const expected of [/scheme is "choice".*not "dim"/, /"font" is not scheme/, /name is text, at most 40/, /"pink" is not one of/, /light ok is a colour as #rrggbb, not "green"/, /for light and dark, not "sepia"/]) {
         assert.match(m, expected);
     }
 });
@@ -28,6 +24,21 @@ test("the CSS it writes holds only checked colours, under the stylesheet's selec
     assert.ok(!css.includes("display:none") && !css.includes("--warn"), "anything but #rrggbb is never written");
     assert.match(css, /@media \(prefers-color-scheme: dark\)\{:root:not\(\[data-theme="light"\]\)\{--ok:#6ee7b7;/);
     assert.match(css, /:root\[data-theme="dark"\]\{--ok:#6ee7b7;/);
+});
+
+test("the top bar's colours: everything in the bar drawn from the two, its text automatic when not given, its dialogs the page's", () => {
+    assert.deepEqual(themeProblems({ colors: { light: { header: "#0b3d91", headerInk: "#ffffff" } } }), []);
+    // Pale on pale is the plant's to choose.
+    assert.deepEqual(themeProblems({ colors: { dark: { header: "#ffffff", headerInk: "#eeeeee" } } }), []);
+    // A background alone is enough: its text white or dark, whichever stands out on it (white on navy, dark on yellow).
+    assert.deepEqual(themeProblems({ colors: { light: { header: "#0b3d91" } } }), []);
+    assert.match(themeCss({ colors: { light: { header: "#0b3d91" } } }), /\.topbar\{--panel:#0b3d91;--bg:#0b3d91;--ink:#ffffff;/);
+    assert.match(themeCss({ colors: { light: { header: "#ffcc00" } } }), /--ink:#1d2230;/);
+    const css = themeCss({ colors: { light: { header: "#0B3D91", headerInk: "#ffffff", accent: "#1d4ed8" }, dark: { header: "#000;}*{x" } } });
+    assert.match(css, /\.topbar\{--panel:#0b3d91;--bg:#0b3d91;--ink:#ffffff;--muted:#[0-9a-f]{6};[^}]*background:#0b3d91;color:#ffffff;\}/);
+    assert.ok(!css.includes("*{x") && !/data-theme="dark"\] \.topbar/.test(css), "a dark bar not #rrggbb is never written: dark keeps the light one's");
+    assert.match(css, /\.topbar \[role=dialog\]\{--panel:var\(--page-panel\);[^}]*color:var\(--ink\);\}/);
+    assert.match(themeCss({ colors: { dark: { header: "#101820", headerInk: "#f0f0f0" } } }), /@media \(prefers-color-scheme: dark\)\{:root:not\(\[data-theme="light"\]\) \.topbar\{--panel:#101820;[^}]*\}\}:root\[data-theme="dark"\] \.topbar\{--panel:#101820;/);
 });
 
 test("the scheme a page is drawn in: the plant's when it decides, else the person's, else the device's", () => {

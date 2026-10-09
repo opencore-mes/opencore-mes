@@ -1,9 +1,12 @@
 // Approvals (DESIGN.md §5.3): every change waiting for review or approval, live, with each department
 // on its route: approved (by whom), rejected, or pending (at which step, for whom). What this person
-// can do now comes first. Below the changes to designs, the changes to records that wait (§28,
-// requests.js).
+// can do now comes first. Emergency changes (§5.7) are listed too until they have been reviewed
+// afterwards: the review, then each department's confirmation; an overdue one says so. Below the
+// changes to designs, the changes to records that wait (§28, requests.js).
 import { titleTab } from "./shell.js";
+import { plant } from "./format.js";
 import { icon } from "./icons.js";
+import { emergencyWords } from "./emergency.js";
 
 const ago = (at) => {
     if (!at) return "";
@@ -20,6 +23,9 @@ export function registerApprovals(juris, { args }) {
         const chip = (d) => {
             if (d.status === "after review") return { span: { key: d.department, className: "appr-chip after", textContent: `${d.department}: after review` } };
             if (d.status === "approved") return { span: { key: d.department, className: "appr-chip approved", children: [icon("check"), { span: `${d.department}${d.by ? ` (${d.by})` : ""}` }] } };
+            // An emergency's departments, after it went live (§5.7): confirmed, or flagged.
+            if (d.status === "confirmed") return { span: { key: d.department, className: "appr-chip approved", children: [icon("check"), { span: `${d.department}: confirmed${d.by ? ` (${d.by})` : ""}` }] } };
+            if (d.status === "flagged") return { span: { key: d.department, className: "appr-chip rejected", children: [icon("flag"), { span: `${d.department}: flagged${d.by ? ` (${d.by})` : ""}` }] } };
             if (d.status === "rejected") return { span: { key: d.department, className: "appr-chip rejected", children: [icon("x"), { span: `${d.department}${d.by ? ` (${d.by})` : ""}` }] } };
             const step = d.of > 1 ? ` · ${d.step} (${d.stepNo} of ${d.of})` : "";
             const who = d.waitingFor?.length ? d.waitingFor.join(" or ") : "nobody";
@@ -56,12 +62,14 @@ export function registerApprovals(juris, { args }) {
                                             onclick: () => api.navigate(`/design/c/${c.id}`),
                                             children: [
                                                 { td: { children: [{ Link: { to: `/design/c/${c.id}`, textContent: c.title } }, { div: { className: "muted small", textContent: `by ${c.author}` } }] } },
-                                                { td: { children: [{ span: { className: `badge s-${c.state}`, textContent: c.state } }] } },
-                                                { td: { children: c.state === "review"
+                                                { td: { children: [{ span: { className: `badge s-${c.state}`, textContent: c.state } }, c.emergency ? { span: { className: `badge s-emergency${c.emergency.overdue ? " overdue" : ""}`, title: `Why it could not wait: ${c.emergency.reason}`, textContent: emergencyWords(c.emergency) } } : { span: {} }] } },
+                                                { td: { children: c.emergency?.stage === "review"
+                                                    ? [{ span: { className: `appr-chip pending${c.mine ? " mine" : ""}`, textContent: c.mine ? "review afterwards: yours" : `review afterwards: ${c.reviewableBy.join(", ") || "nobody"}` } }, ...c.departments.map(chip)]
+                                                    : c.state === "review"
                                                     ? [{ span: { className: `appr-chip pending${c.mine ? " mine" : ""}`, textContent: c.mine ? "review: yours" : `review: ${c.reviewableBy.join(", ") || "nobody"}` } }, ...c.departments.map(chip)]
                                                     : c.departments.map(chip) } },
-                                                { td: { className: "muted small", textContent: `${ago(c.since)}${c.lastSigned ? ` · last signed ${ago(c.lastSigned)} ago` : ""}` } },
-                                                { td: { children: [c.mine ? { span: { className: "badge s-review", textContent: c.state === "review" ? "review it" : "sign it" } } : { span: {} }] } },
+                                                { td: { className: "muted small", textContent: `${c.state === "executed" ? "live " : ""}${ago(c.since)}${c.lastSigned ? ` · last signed ${ago(c.lastSigned)} ago` : ""}${c.emergency?.due ? ` · ${c.emergency.overdue ? "overdue since" : "due"} ${plant().dateTime(c.emergency.due)}` : ""}` } },
+                                                { td: { children: [c.mine ? { span: { className: "badge s-review", textContent: c.emergency?.stage === "review" ? "review it" : c.emergency?.stage === "confirm" ? "confirm it" : c.state === "review" ? "review it" : "sign it" } } : { span: {} }] } },
                                             ],
                                         },
                                     })) } },

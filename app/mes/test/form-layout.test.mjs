@@ -72,3 +72,39 @@ test("the server checks several values, and requiredWhen on the data it is given
     assert.equal(validate(lot, { ...base, defects: ["dent"], rework_note: "Reground" }), null);
     assert.equal(validate(lot, { ...base, defects: [] }), null, "an empty list is empty, and not required");
 });
+
+test("a text's longest length: designed per field, checked on every write; unsaid, 500", () => {
+    const def = structuredClone(lot);
+    def.fields.lot_no.maxLength = 8;
+    def.fields.rework_note.maxLength = 20000;
+    assert.deepEqual(validateDefinition(def, { departments: ["production", "quality", "engineering"] }).filter((p) => /maxLength/.test(p.path)), []);
+    assert.equal(validate(def, { ...validData(def), lot_no: "LOT-0001" }), null);
+    assert.match(validate(def, { ...validData(def), lot_no: "LOT-00012" })?.lot_no ?? "", /Text, at most 8 characters \(this is 9\)/);
+    assert.match(validate(lot, { ...validData(lot), rework_note: "x".repeat(501) })?.rework_note ?? "", /Text, at most 500 characters/);
+    const bad = (field) => validateDefinition({ ...def, fields: { ...def.fields, ...field } }, {}).filter((p) => /maxLength/.test(p.path)).map((p) => p.message).join("\n");
+    assert.match(bad({ qty: { ...def.fields.qty, maxLength: 5 } }), /only a text or a long text field has a longest length/);
+    assert.match(bad({ lot_no: { ...def.fields.lot_no, maxLength: 2001 } }), /1 to 2000 characters/);
+    assert.match(bad({ rework_note: { ...def.fields.rework_note, maxLength: 0 } }), /1 to 20000 characters/);
+});
+
+test("a long text's height: at least its rows, growing to maxRows; only a long text has one", () => {
+    const def = structuredClone(lot);
+    def.form = { sections: [{ label: "Details", fields: Object.keys(def.fields).map((f) => (f === "rework_note" ? { field: f, rows: 3, maxRows: 12 } : f)) }] };
+    assert.deepEqual(layoutProblems(def), []);
+    const stored = storeForm(normalizeForm(def), def).sections[0].fields.find((e) => e.field === "rework_note");
+    assert.deepEqual([stored.rows, stored.maxRows], [3, 12]);
+    const said = (entry) => layoutProblems({ ...def, form: { sections: [{ label: "Details", fields: Object.keys(def.fields).map((f) => (f === entry.field ? entry : f)) }] } }).map((p) => p.message).join("\n");
+    assert.match(said({ field: "rework_note", rows: 6, maxRows: 4 }), /largest height is 6 to 40 lines/);
+    assert.match(said({ field: "rework_note", maxRows: 41 }), /largest height is 3 to 40 lines/);
+    assert.match(said({ field: "lot_no", rows: 4 }), /only a long text has a height in lines/);
+});
+
+// A lot's data that passes, but for what a test changes.
+function validData(def) {
+    const out = {};
+    for (const [k, f] of Object.entries(def.fields)) {
+        if (!f.required) continue;
+        out[k] = f.type === "integer" || f.type === "decimal" ? 1 : f.type === "enum" ? f.values[0] : f.type === "ref" ? "00000000-0000-4000-8000-000000000000" : f.type === "date" ? "2026-01-01" : f.type === "boolean" ? true : "x";
+    }
+    return out;
+}

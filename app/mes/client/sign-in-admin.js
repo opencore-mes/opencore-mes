@@ -2,12 +2,15 @@
 // What needs a look (ids locked in the last day, wrong passwords spread over many ids), then a person
 // found by name or sign-in id, with their sign-in as it stands, and what may be done for them: a one-time
 // link to set a password (shown once, to hand over), their second factor taken off (a lost phone), a lock
-// lifted, their sessions ended. Each is in the audit trail, by whoever did it.
+// lifted, their sessions ended. Each is in the audit trail, by whoever did it. And setup codes (five letters
+// for a printed slip) for everyone who has no password here and has never signed in, a department at a
+// time, downloaded as a file for slips or a mail merge.
 import { icon } from "./icons.js";
 import { plant } from "./format.js";
 import { titleTab } from "./shell.js";
 import { confirmDialog, askDialog } from "./dialog.js";
 import { windowTable } from "./window-rows.js";
+import { setupCodesCsv } from "./people-file.js";
 
 const A = "signin.admin";
 const when = (at) => (at ? plant().dateTime(at) : "never");
@@ -24,9 +27,41 @@ export function registerSignInAdmin(juris) {
         const done = (words) => { api.setValue(`${A}.said`, { ok: true, words }); load(api.peek(`${A}.q`) ?? ""); alerts(); };
         const failed = (e) => api.setValue(`${A}.said`, { ok: false, words: e.message });
         const link = async (p) => {
-            const hours = await askDialog(api, { title: `A password link for ${p.name}`, message: "A one-time link to set a password: shown once here, for you to hand over yourself (in person, or a message only they read). It replaces any earlier link of theirs.", label: "It lasts (hours)", type: "number", value: "72", required: true, confirm: "Make the link" });
+            const hours = await askDialog(api, { title: `A password link for ${p.name}`, message: "A one-time link to set a password: shown once here, for you to hand over yourself (in person, or a message only they read). It replaces any earlier link of theirs.", label: "It lasts (days, 1 to 14)", type: "number", value: String(api.getState("signing.linkDays", 3) ?? 3), required: true, confirm: "Make the link" });
             if (hours === null) return;
-            api.call("auth.admin.link", { id: p.id, hours: Number(hours) }).then((r) => { api.setValue(`${A}.link`, { name: p.name, url: `${globalThis.location.origin}${r.path}`, hours: r.hours }); done(`A link for ${p.name}, good for ${r.hours} hours.`); }, failed);
+            const days = Number(hours);
+            api.call("auth.admin.link", { id: p.id, days }).then((r) => { api.setValue(`${A}.code`, null); api.setValue(`${A}.link`, { name: p.name, url: `${globalThis.location.origin}${r.path}`, hours: r.hours }); done(`A link for ${p.name}, good for ${r.days} day${r.days === 1 ? "" : "s"}.`); }, failed);
+        };
+        // Setup codes (§8.2): how many would get one, then the codes made and downloaded.
+        const where = () => `${globalThis.location.origin}/password?setup=1`;
+        const counted = () => {
+            const c = api.peek(`${A}.codes`) ?? {};
+            api.setValue(`${A}.codes.count`, null);
+            api.call("auth.admin.setupCodes", { department: c.department || null, count: true }).then((r) => api.setValue(`${A}.codes.count`, r.count), failed);
+        };
+        const daysOf = (text) => Number(String(text ?? "").trim());
+        const makeCodes = async () => {
+            const c = api.peek(`${A}.codes`) ?? {};
+            const dept = (api.peek(`${A}.departments`) ?? []).find((d) => d.id === c.department);
+            const n = c.count ?? 0;
+            const days = daysOf(c.days ?? api.getState("signing.linkDays", 3));
+            if (!(await confirmDialog(api, { title: `Setup codes for ${n} ${n === 1 ? "person" : "people"}?`, message: `Each of them${dept ? ` in ${dept.name}` : ""} who has no password here and has never signed in gets a new code, good for ${days} day${days === 1 ? "" : "s"}, downloaded as a file for printed slips or a mail merge. A code or link they were given before stops working. The file holds the codes: print the slips, hand each to its person, then delete the file.`, confirm: "Make the codes and download" }))) return;
+            api.call("auth.admin.setupCodes", { department: c.department || null, days }).then((r) => {
+                const url = URL.createObjectURL(new Blob([setupCodesCsv(r.people, { expires: plant().dateTime(r.expiresAt), address: where() })], { type: "text/csv;charset=utf-8" }));
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `setup-codes-${c.department || "everyone"}-${new Date().toISOString().slice(0, 10)}.csv`;
+                a.click();
+                setTimeout(() => URL.revokeObjectURL(url), 1000);
+                done(`${r.people.length} setup code${r.people.length === 1 ? "" : "s"}, good until ${plant().dateTime(r.expiresAt)}: downloaded as ${a.download}.`);
+                counted();
+            }, failed);
+        };
+        if (!api.isServer) api.onMount(() => { api.call("auth.admin.departments").then((d) => api.setValue(`${A}.departments`, d), () => {}); counted(); });
+        const code = async (p) => {
+            const days = await askDialog(api, { title: `A setup code for ${p.name}`, message: "Five letters they type with their sign-in id to set a password, at any station: shown once here, for you to hand over yourself (on paper, or in person). It replaces any earlier code or link of theirs.", label: "It lasts (days, 1 to 14)", type: "number", value: String(api.getState("signing.linkDays", 3) ?? 3), required: true, confirm: "Make the code" });
+            if (days === null) return;
+            api.call("auth.admin.setupCodes", { id: p.id, days: daysOf(days) }).then((r) => { api.setValue(`${A}.link`, null); api.setValue(`${A}.code`, { name: p.name, id: p.id, code: r.people[0].code, expiresAt: r.expiresAt }); done(`A setup code for ${p.name}, good until ${plant().dateTime(r.expiresAt)}.`); }, failed);
         };
         const resetMfa = async (p) => {
             const reason = await askDialog(api, { title: `Take off ${p.name}'s second factor?`, message: "They sign in with their password alone until they set up a new authenticator (at their next sign-in, where the plant requires one). Do this only once you are sure it is them asking.", label: "Why (a lost phone, a new one)", required: true, confirm: "Take it off", danger: true });
@@ -68,6 +103,33 @@ export function registerSignInAdmin(juris) {
                     ] } },
                 ] } } : { span: {} };
             },
+            () => {
+                const c = api.getState(`${A}.code`, null);
+                return c ? { section: { className: "panel signin-link", children: [
+                    { p: { textContent: `${c.name}'s setup code, good until ${plant().dateTime(c.expiresAt)}, once. Write it down now: it is not shown again.` } },
+                    { p: { className: "signin-code", children: [{ span: { className: "muted small", textContent: `Sign-in id ${c.id}, code ` } }, { code: { textContent: c.code } }] } },
+                    { p: { className: "muted small", textContent: `They open ${where()} (or "I have a setup code" on the sign-in page), type both, and choose their password.` } },
+                    { div: { className: "row-actions", children: [{ button: { type: "button", className: "btn ghost", textContent: "Done", onclick: () => api.setValue(`${A}.code`, null) } }] } },
+                ] } } : { span: {} };
+            },
+            { section: { className: "panel signin-codes", children: [
+                { h3: { className: "icon-text", children: [icon("lock"), { span: "Setup codes for people with no password yet" }] } },
+                { p: { className: "muted small", textContent: "For people just added who have no mail or computer of their own: each gets five letters on a printed slip, and types them with their sign-in id at any station to choose a password. Only those who have no password here and have never signed in get one." } },
+                { div: { className: "signin-codes-form", children: [
+                    { label: { children: [{ span: "Who" }, { select: { "aria-label": "Department", onchange: (e) => { api.setValue(`${A}.codes.department`, e.target.value); counted(); }, children: () => [
+                        { option: { key: "", value: "", textContent: "Everyone" } },
+                        ...(api.getState(`${A}.departments`, []) ?? []).map((d) => ({ option: { key: d.id, value: d.id, textContent: d.name, selected: d.id === api.peek(`${A}.codes.department`) } })),
+                    ] } }] } },
+                    { label: { children: [{ span: "Good for (days)" }, { input: { type: "number", min: 1, max: 14, value: String(api.getState("signing.linkDays", 3) ?? 3), oninput: (e) => api.setValue(`${A}.codes.days`, e.target.value) } }] } },
+                    () => {
+                        const n = api.getState(`${A}.codes.count`, null);
+                        return { div: { className: "signin-codes-go", children: [
+                            { span: { className: "small", textContent: n === null ? "Counting…" : n ? `${n} ${n === 1 ? "person has" : "people have"} no password here and ${n === 1 ? "has" : "have"} never signed in.` : "Everyone here has a password or has signed in." } },
+                            { button: { type: "button", className: "btn", disabled: !n, children: [icon("arrowDown"), { span: "Make codes and download" }], onclick: makeCodes } },
+                        ] } };
+                    },
+                ] } },
+            ] } },
             { input: { type: "search", className: "signin-find", placeholder: "Find a person: a name or sign-in id", "aria-label": "Find a person", value: () => api.getState(`${A}.q`, "") ?? "", oninput: (e) => typed(e.target.value) } },
             () => {
                 const rows = api.getState(`${A}.rows`, null);
@@ -85,6 +147,7 @@ export function registerSignInAdmin(juris) {
                             { td: { className: "small", textContent: `${when(p.lastSignIn)}${p.sessions ? ` · ${p.sessions} session${p.sessions === 1 ? "" : "s"}` : ""}` } },
                             { td: { className: "signin-actions", children: [
                                 p.active ? { button: { type: "button", className: "btn small", textContent: "Password link", onclick: () => link(p) } } : { span: {} },
+                                p.active ? { button: { type: "button", className: "btn small", textContent: "Setup code", onclick: () => code(p) } } : { span: {} },
                                 p.mfa ? { button: { type: "button", className: "btn small", textContent: "Reset second factor", onclick: () => resetMfa(p) } } : { span: {} },
                                 p.lockedUntil ? { button: { type: "button", className: "btn small", textContent: "Unlock", onclick: () => unlock(p) } } : { span: {} },
                                 p.sessions ? { button: { type: "button", className: "btn ghost small", textContent: "End sessions", onclick: () => end(p) } } : { span: {} },

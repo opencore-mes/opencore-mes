@@ -10,7 +10,7 @@
 import pg from "pg";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 
 const base = process.env.DATABASE_URL ?? "postgres:///openmes_test";
 const url = `${base}_suites`;
@@ -39,6 +39,12 @@ try {
     const audited = olga ? await db.query("SELECT actor, action FROM mes.audit_log WHERE object = 'person' AND record_id = $1 ORDER BY seq", [olga.id]) : [];
     step("its sample on Olga's Person is loaded through the record services, as the seed's designer, audited",
         olga?.data.hello_nickname === "Ollie" && olga.data.name === "Olga Ortiz" && audited.some((a) => a.action === "update" && a.actor !== "platform:organization"), { olga: olga?.data, audited });
+    const greeters = await db.query("SELECT g.name, g.kind, (SELECT string_agg(m.user_id, ',') FROM mes.group_members m WHERE m.group_id = g.id) AS members FROM mes.groups g WHERE g.id = 'hello_greeters'");
+    const role = await db.query("SELECT 1 FROM mes.assignments WHERE subject_kind = 'group' AND subject_id = 'hello_greeters' AND object = 'person' AND role = 'viewer'");
+    const [query] = await db.query("SELECT status, body->>'sql' AS sql FROM mes.queries WHERE name = 'hello_people'");
+    step("its named query is published with its designs (a screen's table or chart reads it)", query?.status === "published" && /FROM person/.test(query.sql ?? ""), query);
+    step("the group its pack brings is made, the seed's people it names in it (one it names that the seed has not, left out), holding the role the pack suggests to it",
+        greeters[0]?.name === "Greeters" && greeters[0].kind === "group" && greeters[0].members === "olga" && role.length === 1, { greeters, role });
 } catch (error) {
     step("the test ran to the end", false, { error: error.stack ?? error.message });
 } finally {

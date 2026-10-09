@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design · OpenCore MES</title>
+<meta name="description" content="Every new field, rule and screen waits on a vendor. In OpenCore MES your engineers design objects, rules, screens, routes, OEE, QMS and SPC themselves, with an AI that drafts.">
+<meta name="theme-color" content="#2b303a">
+<meta property="og:title" content="Design · OpenCore MES">
+<meta property="og:description" content="Every new field, rule and screen waits on a vendor. In OpenCore MES your engineers design objects, rules, screens, routes, OEE, QMS and SPC themselves, with an AI that drafts.">
+<meta property="og:url" content="https://opencoremes.com/design">
+<meta property="og:type" content="website">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="canonical" href="https://opencoremes.com/design">
+<link rel="stylesheet" href="/site.css">
+<script src="/glow.js" defer></script>
+</head>
+<body>
+<div class="bg-bricks" aria-hidden="true"><div class="bgb k1"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k2"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k3"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k4"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k5"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k6"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div><div class="bgb k7"><div class="brk"><i class="fr"></i><i class="ba"></i><i class="ri"></i><i class="le"></i><i class="to"></i><i class="bo"></i></div></div></div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></symbol>
+    <symbol id="i-pulse" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></symbol>
+    <symbol id="i-warning" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-server" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-code" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 18 6-6-6-6"/><path d="m8 6-6 6 6 6"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-test" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6M10 3v6L4.5 18.5A2 2 0 0 0 6.2 21.5h11.6a2 2 0 0 0 1.7-3L14 9V3"/><path d="M7 15h10"/></symbol>
+    <symbol id="i-gauge" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 14l4-4"/><path d="M3.3 19a10 10 0 1 1 17.4 0"/></symbol>
+    <symbol id="i-clipboard" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M3 8h18" stroke-dasharray="2 3"/><path d="M3 16h18" stroke-dasharray="2 3"/><path d="m6 13 3-2 3 1 3-4 3 2"/></symbol>
+    <symbol id="i-zoom" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3M11 8v6M8 11h6"/></symbol>
+    <symbol id="i-steps" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6l6 6-6 6M13 6l6 6-6 6"/></symbol>
+    <symbol id="i-branch" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="7" r="2"/><path d="M6 7v10"/><path d="M18 9c0 4-3 6-7 6H8"/></symbol>
+  </defs>
+</svg>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="OpenCore MES home">
+      <svg viewBox="0 0 512 512" aria-hidden="true"><rect width="512" height="512" rx="102" fill="#2b303a"/><path fill="#fff" d="M138 374V138h47l71 101 71-101h47v236h-47V222l-71 100-71-100v152z"/></svg>
+      OpenCore MES
+    </a>
+    <nav class="links" aria-label="Main">
+      <a href="/design" aria-current="page">Design</a>
+      <a href="/control">Control</a>
+      <a href="/floor">Floor</a>
+      <a href="/ai">AI</a>
+      <a href="/connect">Connect</a>
+      <a href="/scale">Scale</a>
+      <a href="/editions">Editions</a>
+    </nav>
+    <a class="btn primary" href="https://demo.opencoremes.com/">Try the demo</a>
+    <details class="menu">
+      <summary aria-label="Every page, and the other sites"><svg class="icon"><use href="#i-menu"/></svg></summary>
+      <nav aria-label="Pages">
+          <a href="/">Home</a>
+          <a href="/design" aria-current="page"><b>Design</b><small>Changes wait on a vendor</small></a>
+          <a href="/control"><b>Control</b><small>Changes nobody can trace</small></a>
+          <a href="/floor"><b>Floor</b><small>Stale screens and paper</small></a>
+          <a href="/ai"><b>AI</b><small>Answers that take a week</small></a>
+          <a href="/connect"><b>Connect</b><small>Glue for every machine</small></a>
+          <a href="/scale"><b>Scale</b><small>Growth means downtime</small></a>
+          <a href="/editions"><b>Editions</b><small>Paying for what you skip</small></a>
+          <a href="/about"><b>About</b><small>Who makes it</small></a>
+          <hr>
+          <a href="https://trainings.opencoremes.com/">Courses</a>
+          <a href="https://suites.opencoremes.com/">Suites store</a>
+          <a href="https://github.com/opencore-mes/opencore-mes" rel="noopener">Source on GitHub</a>
+      </nav>
+    </details>
+  </div>
+</header>
+<main>
+  <section class="page-hero hero">
+    <div class="wrap">
+      <span class="eyebrow problem">The problem</span>
+      <h1>Every new field, rule and screen waits on a vendor.</h1>
+      <p class="lede">The people who know the process cannot change the system that runs it. OpenCore MES lets them.</p>
+    </div>
+  </section>
+
+  <section class="sol alt" id="designs">
+    <div class="wrap">
+      <span class="eyebrow">Solution</span>
+      <h2 style="margin-top:16px">Everything is a design.</h2>
+      <p class="sub">Designed in the browser, never written into the product.</p>
+      <ul class="checks">
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Objects.</b> Lots, machines, work orders: fields, states, roles.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Screens and transactions.</b> Station screens, move-in, track-out, built from blocks.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Conditions in words.</b> Built from the fields, read back in plain words; no code.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Copy and change.</b> Any design is the start of the next.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>Named queries.</b> The queries the plant relies on, approved like the rest.</span></li>
+        <li><svg class="icon"><use href="#i-check"/></svg><span><b>An AI that drafts.</b> Describe it; it drafts the change. <a href="/ai">AI</a></span></li>
+      </ul>
+      <p class="in-demo" style="margin-top:16px"><span>In the demo:</span> <a href="https://demo.opencoremes.com/design" target="_blank" rel="noopener">The designer<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></p>
+    </div>
+  </section>
+
+  <section class="sol" id="rules">
+    <div class="wrap two">
+      <div class="rule-mock" role="img" aria-label="A rule kept in the Lot object's design warns on the form while typing; on the server the same rule refuses the save, whether it comes from a screen or from the ERP service">
+        <div class="obj">
+          <div class="kind">Object · Lot · version 7</div>
+          <div class="parts"><span>Fields</span><span>States</span><span>Roles</span><span class="on">Rules</span><span>Screens</span></div>
+          <pre><span class="c">// scrap_within_lot.js</span>
+<span class="k">export default function</span> scrap_within_lot(ctx) {
+  <span class="k">if</span> (ctx.data.scrap_qty &gt; ctx.record.qty)
+    <span class="k">throw</span> Object.assign(
+      <span class="k">new</span> Error(<span class="c">"More scrap than the lot holds."</span>),
+      { field: <span class="c">"scrap_qty"</span> });
+  <span class="k">return</span> ctx;
+}</pre>
+        </div>
+        <div class="runs">
+          <div class="run">
+            <div class="kind"><svg class="icon"><use href="#i-pulse"/></svg>On the form</div>
+            <div class="field"><span>Scrap</span><b>140 kg</b></div>
+            <div class="warn-text"><svg class="icon"><use href="#i-warning"/></svg>More scrap than the lot holds.</div>
+          </div>
+          <div class="run">
+            <div class="kind"><svg class="icon"><use href="#i-server"/></svg>On the server</div>
+            <div class="refused"><svg class="icon"><use href="#i-x"/></svg>From a screen: refused</div>
+            <div class="refused"><svg class="icon"><use href="#i-x"/></svg>From the ERP: refused</div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <span class="eyebrow">Solution</span>
+        <h2 style="margin-top:16px">The object holds its rules.</h2>
+        <p class="sub">A short function in the object's design, run everywhere.</p>
+        <ul class="points">
+          <li><svg class="icon"><use href="#i-code"/></svg><div><b>One place to look</b><span>Every rule beside the fields it guards.</span></div></li>
+          <li><svg class="icon"><use href="#i-warning"/></svg><div><b>Warned as people type</b><span>The form runs it before anything is sent.</span></div></li>
+          <li><svg class="icon"><use href="#i-shield"/></svg><div><b>Enforced on every save</b><span>Screens, services, imports: nothing gets around it.</span></div></li>
+          <li><svg class="icon"><use href="#i-test"/></svg><div><b>Tested before approval</b><span>Its test cases run before a change can be submitted.</span></div></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="sol models alt" id="models">
+    <div class="wrap">
+      <span class="eyebrow">Solution</span>
+      <h2 style="margin-top:16px">OEE, quality and SPC are models, not modules.</h2>
+      <p class="sub">Built from objects, rules and screens, shaped to how your plant works. A new formula is a change, not a vendor release.</p>
+      <div class="grid3">
+        <div class="card">
+          <svg class="icon"><use href="#i-gauge"/></svg>
+          <h3>OEE</h3>
+          <p>Downtime by reason, counts by shift, a scheduled service works it out.</p>
+          <div class="made"><span>objects</span><span>scheduled service</span><span>screen</span></div>
+        </div>
+        <div class="card">
+          <svg class="icon"><use href="#i-clipboard"/></svg>
+          <h3>QMS</h3>
+          <p>Deviations, NCRs, CAPA: their states, signatures and links to the lot.</p>
+          <div class="made"><span>objects</span><span>states</span><span>rules</span><span>signatures</span></div>
+        </div>
+        <div class="card">
+          <svg class="icon"><use href="#i-chart"/></svg>
+          <h3>SPC</h3>
+          <p>Limits checked on every reading; out of limits sets off a plan.</p>
+          <div class="made"><span>objects</span><span>rules</span><span>flow template</span><span>screen</span></div>
+        </div>
+      </div>
+      <p class="in-demo" style="margin-top:20px"><span>In the demo:</span> <a href="https://demo.opencoremes.com/s/semi_station_metrology" target="_blank" rel="noopener">SPC at the metrology station<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></p>
+    </div>
+  </section>
+
+  <section class="sol flows" id="flows">
+    <div class="wrap">
+      <span class="eyebrow">Solution</span>
+      <h2 style="margin-top:16px">Routes and plans, drawn and approved.</h2>
+      <p class="sub">How a lot goes through the line, and what happens when a reading falls out of limits, on one canvas.</p>
+      <figure class="shot wide">
+        <a class="frame zoom" href="#zoom-flow-ocap" title="Zoom in"><img src="/img/flow-ocap.webp" width="1600" height="1002" alt="The Flow designer showing an SPC out-of-control plan: measure again, decisions, a calibration wait with a retry, a disposition screen, an investigation sub flow, and the Released and Scrapped ends" loading="lazy"><span class="zoom-hint" aria-hidden="true"><svg class="icon"><use href="#i-zoom"/></svg></span></a>
+        <figcaption><b>An SPC out-of-control plan</b>, live on the demo.</figcaption>
+        <a class="lightbox" id="zoom-flow-ocap" href="#_" title="Close" aria-label="Close the large view"><img loading="lazy" src="/img/flow-ocap.webp" width="1600" height="1002" alt="The Flow designer showing an SPC out-of-control plan"><span class="lb-cap"><b>An SPC out-of-control plan</b>, live on the demo.</span><span class="lb-close" aria-hidden="true"><svg class="icon"><use href="#i-x"/></svg></span></a>
+      </figure>
+      <div class="grid3">
+        <div class="card">
+          <svg class="icon"><use href="#i-steps"/></svg>
+          <h3>Routes</h3>
+          <p>Each step offers its transactions; the rest are refused.</p>
+        </div>
+        <div class="card">
+          <svg class="icon"><use href="#i-branch"/></svg>
+          <h3>Plans</h3>
+          <p>Set off by a reading, a tool down or a date; each step waits for its people.</p>
+        </div>
+        <div class="card">
+          <svg class="icon"><use href="#i-test"/></svg>
+          <h3>Proved first</h3>
+          <p>Scenarios walk a lot through it in a sandbox before approval.</p>
+        </div>
+      </div>
+      <p class="in-demo" style="margin-top:20px"><span>In the demo:</span> <a href="https://demo.opencoremes.com/design/view/flow/semi_back_end" target="_blank" rel="noopener">The back-end route<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a> <a href="https://demo.opencoremes.com/design/view/flow/semi_ocap_die_saw" target="_blank" rel="noopener">An out-of-control plan<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></a></p>
+    </div>
+  </section>
+
+  <section class="final">
+    <div class="wrap">
+      <h2>Designed. Now approve it.</h2>
+      <p class="sub">Nothing a designer or the AI makes reaches the plant until people sign.</p>
+      <div class="cta"><a class="btn primary" href="/control">Control: how changes go live <svg class="icon"><use href="#i-arrow"/></svg></a></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 OpenCore MES. "OpenCore MES" is a trademark of its owner.</span>
+    <span><a href="/design">Design</a> · <a href="/control">Control</a> · <a href="/floor">Floor</a> · <a href="/ai">AI</a> · <a href="/connect">Connect</a> · <a href="/scale">Scale</a> · <a href="/editions">Editions</a> · <a href="/about">About</a></span>
+    <span><a href="https://demo.opencoremes.com/">Live demo</a> · <a href="https://trainings.opencoremes.com/">Courses</a> · <a href="https://suites.opencoremes.com/">Suites store</a> · <a href="https://github.com/opencore-mes/opencore-mes" rel="noopener">Source on GitHub</a> · <a href="mailto:contact@opencoremes.com?subject=OpenCore%20MES">Contact</a></span>
+  </div>
+</footer>
+</body>
+</html>

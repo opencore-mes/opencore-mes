@@ -7,7 +7,7 @@
 //
 //   DATABASE_URL=postgres:///openmes_test node app/mes/test/migrate.mjs
 import pg from "pg";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { migrate } from "../db/migrate.mjs";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL ?? "postgres:///openmes_test" });

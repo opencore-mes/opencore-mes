@@ -16,12 +16,16 @@
 //   events.flush(db)          copies what the database lacks; answers how many
 //   events.state()            { file, seq, pending } for /healthz
 //
+// A file past `maxBytes` (50 MB) is set aside as `<file>.<time>` once all it holds is in the database, and the new
+// one begins with an `event_log.rotated` event carrying the chain on (COMPLIANCE.md G9). `onEvent(event)` hears
+// every event written (alerts.js: a webhook, the journal), after it is in the file.
+//
 // A crash cannot log itself: a marker file says an instance is running, removed by a clean stop. A
 // marker found at start is an unclean stop, logged then.
 //
 // One file per instance name: two processes must never share an instance name and a directory,
 // or their chains fork.
-import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { canonical, sha256 } from "./audit.js";
 
@@ -42,11 +46,12 @@ export function readEvents(file) {
     });
 }
 
-// Recomputes a file's chain: { ok, checked, brokenAt } (brokenAt: the line number, from 1).
+// Recomputes a file's chain: { ok, checked, brokenAt } (brokenAt: the line number, from 1). A file begun by a
+// rotation carries on from the chain of the file before it: its first event says where.
 export function verifyEvents(file) {
-    let prev = GENESIS;
-    let seq = 0;
     const events = readEvents(file);
+    let prev = events[0]?.kind === "event_log.rotated" ? events[0].prev : GENESIS;
+    let seq = events[0]?.kind === "event_log.rotated" ? events[0].seq - 1 : 0;
     for (const [i, e] of events.entries()) {
         if (e.bad !== undefined || e.prev !== prev || e.seq !== seq + 1 || e.hash !== hashOf(e)) return { ok: false, checked: events.length, brokenAt: i + 1 };
         prev = e.hash;
@@ -74,7 +79,7 @@ function lastEvent(file) {
     }
 }
 
-export function createEventLog({ dir, instance = null, build = null, pid = null, runtime = null, log = console, now = () => new Date() }) {
+export function createEventLog({ dir, instance = null, build = null, pid = null, runtime = null, log = console, now = () => new Date(), maxBytes = 50 * 1024 * 1024, onEvent = null }) {
     const name = instance ?? "local";
     mkdirSync(dir, { recursive: true });
     const file = path.join(dir, instance ? `event.${instance}.log` : "event.log");
@@ -92,6 +97,15 @@ export function createEventLog({ dir, instance = null, build = null, pid = null,
             ...(incident ? { incident } : {}), ...(details ? { details } : {}), prev,
         };
         event.hash = hashOf(event);
+        // Set aside once too large, when the database holds all it has; the next file carries the chain on.
+        if (kind !== "event_log.rotated" && ingested !== null && pending.length === 0 && existsSync(file) && statSync(file).size > maxBytes) {
+            const aside = `${file}.${now().toISOString().replace(/[:.]/g, "-")}`;
+            try {
+                renameSync(file, aside);
+                emit("event_log.rotated", { message: `The event log's file was set aside as ${path.basename(aside)}; this one carries its chain on.`, details: { previous: path.basename(aside) } });
+                return emit(kind, { severity, message, incident, details });
+            } catch (error) { log.error?.(`event log: could not set ${file} aside: ${error.message}`); }
+        }
         try {
             appendFileSync(file, `${JSON.stringify(event)}\n`);
         } catch (error) {
@@ -102,6 +116,7 @@ export function createEventLog({ dir, instance = null, build = null, pid = null,
         seq = event.seq;
         prev = event.hash;
         pending.push(event);
+        try { onEvent?.(event); } catch (error) { log.error?.(`event log: a listener failed on ${kind}: ${error.message}`); }
         return event;
     }
 

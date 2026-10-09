@@ -1,0 +1,293 @@
+<!-- The guide to People & departments in a change request (DESIGN.md §33): organization-editor.js, each of
+     its tabs (ORG_VIEWS). Drawn through an allowlist: an element with data-highlight="<CSS selector>"
+     outlines what the selector finds on the panel. -->
+<article data-title="People & departments">
+  <p>The plant's organization as one draft: its departments and who approves for each, its people, who
+  holds each role, how changes are approved, and the plant's formats, look, retention and sign-in. You
+  change it in a change request like any other design; <strong>governance</strong> and the departments
+  concerned approve it, and nothing changes for anyone until it executes. Outside a change, the People
+  &amp; departments page shows it read only, with <em>Change people &amp; departments</em> (or
+  <em>Open the change in progress</em>) to start one.</p>
+
+  <h3>Everywhere in it</h3>
+  <dl>
+    <dt data-highlight=".editor-head .subtabs">The tabs</dt>
+    <dd>Changes, Departments, People, Roles, Approvals, Formats, Theme, Retention, Integrity, Sign-in and
+    JSON. Click one to open it in this window.</dd>
+    <dt data-highlight=".editor-head .tab-more-btn">… more</dt>
+    <dd>When the tabs do not all fit, the last ones are under this button: click it and pick one.</dd>
+    <dt data-highlight=".editor-head .tab-diff">The number on a tab</dt>
+    <dd>How many things on that tab differ from the live organization. The number on Changes counts them
+    all.</dd>
+    <dt data-highlight=".editor .diff-added, .editor .diff-changed">Marked changes</dt>
+    <dd>A department, a person or an object's roles that this change adds or alters is marked, so you see
+    what you touched.</dd>
+    <dt data-highlight=".el-picker">This window shows</dt>
+    <dd>When the change holds more than People &amp; departments, pick here what this window shows.</dd>
+    <dt data-highlight=".undo-redo">Undo, Redo</dt>
+    <dd>Take back the last edit, or bring it again (⌘Z or Ctrl+Z, ⇧⌘Z or Ctrl+Y, outside a text box). Any
+    edit on any tab is one step.</dd>
+    <dt data-highlight=".editor .pick">Lists of people and groups</dt>
+    <dd>The chosen ones show as chips; × on a chip removes it. Type to find more, then press Enter or click
+    one to add it; Backspace in the empty box removes the last. Past 30, the list shows a count: type to
+    find one.</dd>
+    <dt>Remove</dt>
+    <dd>Asks you to confirm first. What you remove leaves only this change; Undo brings it back.</dd>
+  </dl>
+
+  <h3>Changes</h3>
+  <dl>
+    <dt data-highlight=".changes-view > p">The summary</dt>
+    <dd>How many differences from the live organization: changed, added, removed. Reviewers and approvers
+    read this first.</dd>
+    <dt data-highlight=".changes-group">By tab</dt>
+    <dd>The differences grouped by the tab they are on, with how many.</dd>
+    <dt data-highlight=".changes-head .mini">Open Departments, Open People…</dt>
+    <dd>Opens that tab in this window, to see or change it there.</dd>
+    <dt data-highlight=".change-item">Each difference</dt>
+    <dd>Click it to fold or unfold it: lines taken out are marked −, lines added +.</dd>
+  </dl>
+
+  <h3>Departments</h3>
+  <dl>
+    <dt data-highlight=".org-impact">What this changes for people</dt>
+    <dd>Shown when the draft moves people's roles: someone who leaves a department loses its roles, and
+    joining one gives its roles. People new in this change are only counted.</dd>
+    <dt data-highlight=".org-impact button.mini">Keep them</dt>
+    <dd>Gives the roles a person would lose to that person directly, so the move takes nothing away.</dd>
+    <dt data-highlight=".editor-head + div > label.ed-field">Governance</dt>
+    <dd>The department that approves what nobody else stewards, new departments and new people. Pick it in
+    the drop-down.</dd>
+    <dt data-highlight="fieldset.tx-card:not(.org-impact)">A department</dt>
+    <dd>One box per department: its name, with its id beside it. A department is approved by its own
+    approvers and by governance when it changes.</dd>
+    <dt data-highlight="fieldset.tx-card > label.ed-field">Name</dt>
+    <dd>What everyone sees. The id beside the heading never changes.</dd>
+    <dt data-highlight="[aria-label='Members']">Members</dt>
+    <dd>Who belongs to it, and so holds the roles given to it. Type a name or a sign-in id to add someone.
+    Someone you take out leaves its approval steps too.</dd>
+    <dt data-highlight=".org-step">Approval, in order</dt>
+    <dd>The steps of the department's approval, signed one after the other. Each step is signed by one of
+    its approvers: never the change's author or reviewer, and never whoever signed the step before.</dd>
+    <dt data-highlight=".org-step > input[type='text']">A step's name</dt>
+    <dd>What the step is called, e.g. Manager or Quality lead.</dd>
+    <dt data-highlight=".org-step .pick">Its approvers</dt>
+    <dd>Chosen among the department's members only. With no members yet, it says to add members first.</dd>
+    <dt data-highlight=".org-step button[title='Earlier']">Earlier (the arrow)</dt>
+    <dd>Moves the step one place up, to be signed sooner.</dd>
+    <dt data-highlight=".org-step .linkish">remove</dt>
+    <dd>Takes the step out, after you confirm. Shown only while the department has two steps or more.</dd>
+    <dt data-highlight="fieldset.tx-card > .btn.ghost">+ step</dt>
+    <dd>Adds a step at the end, with no approvers yet.</dd>
+    <dt data-highlight=".editor .add-row">Add a department</dt>
+    <dd>Type its id (lower case, starting with a letter, e.g. <code>it</code>) and its name, then press Add.
+    It starts with one step, Approver: add its members and approvers.</dd>
+  </dl>
+
+  <h3>People</h3>
+  <dl>
+    <dt data-highlight=".org-people-bar .add-row">Add a person</dt>
+    <dd>Type their sign-in id as your directory knows it (lower case letters, digits, - and _, e.g.
+    <code>mark</code> or <code>104523</code>) and their name, then press Add. Put them in a department on the
+    Departments tab.</dd>
+    <dt data-highlight=".org-people-bar label[title^='A CSV']">Import</dt>
+    <dd>Choose a CSV (as Export writes it, or saved from Excel) with the columns id, name, active,
+    departments (department ids, separated by spaces or commas). You see what it would do and confirm with
+    <em>Put them in this change</em>. New people are added, the others take what their row says; people
+    not in the file stay as they are.</dd>
+    <dt data-highlight=".org-people-bar button[title^='Everyone here']">Export</dt>
+    <dd>Downloads everyone in this draft as <code>people-&lt;date&gt;.csv</code>, which Excel opens. Edit it,
+    then Import it back.</dd>
+    <dt data-highlight=".org-import-note">After an import</dt>
+    <dd>Says what went into the change and how many rows were not taken, or why nothing was (every row
+    already as it says, an unknown department). <em>dismiss</em> hides it.</dd>
+    <dt data-highlight=".org-impact">What this changes for people</dt>
+    <dd>The roles people lose or gain through the departments they move between, as on the Departments tab,
+    with Keep them.</dd>
+    <dt data-highlight=".people-find">Find people</dt>
+    <dd>Type at least two letters: the start of a name or a department, or any part of a sign-in id. With
+    nothing typed, the list shows only the people this change adds or changes.</dd>
+    <dt data-highlight=".win-box .ed-table">The list</dt>
+    <dd>Each person found: Id, Name, Active, Departments. It draws more rows as you scroll; the count is
+    below it.</dd>
+    <dt data-highlight=".win-box .ed-table td:nth-child(2) input">Name</dt>
+    <dd>Change it in place.</dd>
+    <dt data-highlight=".win-box .ed-table td:nth-child(3) input">Active</dt>
+    <dd>Untick it when someone leaves: once the change executes, they can no longer sign in. People are
+    never deleted, because the audit trail names them.</dd>
+    <dt data-highlight=".win-box .ed-table td:nth-child(4)">Departments</dt>
+    <dd>Where they belong, read only here: change it with a department's Members, or by Import.</dd>
+  </dl>
+
+  <h3>Roles</h3>
+  <dl>
+    <dt data-highlight=".org-roles-modes">By object, By group or person</dt>
+    <dd>Two ways to the same roles: each object with who holds its roles, or one department, group or
+    person with everything they hold. A change to an object's roles is approved by that object's
+    stewards.</dd>
+    <dt data-highlight=".org-roles-q">Find an object</dt>
+    <dd>Type part of an object's name, a role, or who holds one. Objects this change touches come first.</dd>
+    <dt data-highlight=".org-roles-row">An object</dt>
+    <dd>Its roles and their holders on one line; click it to unfold. Besides the designed objects, Designer,
+    Queries, Sign-in, Privacy and Data integrity hold the platform's own roles (designer, reviewer, analyst,
+    administrator, officer).</dd>
+    <dt data-highlight=".org-role">A role</dt>
+    <dd>Who holds it: departments, groups or people. Type to give it to another; × takes it away.</dd>
+    <dt data-highlight=".auto-more">Show more</dt>
+    <dd>Thirty objects are drawn at a time; more come as you scroll to it, or when you press it.</dd>
+    <dt data-highlight=".org-roles-modes + div > .pick:first-child">Find a department, a group or a person</dt>
+    <dd>In By group or person: pick who, to see and change every role they hold.</dd>
+    <dt data-highlight=".org-held:not(.muted)">… holds</dt>
+    <dd>The roles given to them directly. × (Take it away) removes one.</dd>
+    <dt data-highlight=".org-held.muted">…and through their departments and groups</dt>
+    <dd>For a person: the roles that come with where they belong, and through which. Change those on the
+    department or group.</dd>
+    <dt data-highlight="[aria-label='Give another role']">Give another role</dt>
+    <dd>Type an object and a role (e.g. <em>lot operator</em>) and pick it to give it to them directly.</dd>
+  </dl>
+
+  <h3>Certifications</h3>
+  <p>The certifications the plant recognizes: ITAR, a cleanroom grade, a customer's clearance. An object may
+  reserve records to one (its Roles &amp; policies tab). Governance approves the list.</p>
+  <dl>
+    <dt data-highlight=".org-certifications table">The list</dt>
+    <dd>Each certification's id (what designs name: itar), its name and what it is for, and the objects that
+    require it. One an object requires says <em>in use</em> and cannot be removed.</dd>
+    <dt data-highlight=".org-certifications .add-row">Id, Name, Add</dt>
+    <dd>Type an id (lower case letters, digits and _) and a name, then Add.</dd>
+  </dl>
+  <p>Who holds one is kept as Certification records (Organization, in the navigator): the person, which
+  certification, valid from and until, revoked or reinstated. It counts while it is active and in date.</p>
+
+  <h3>Approvals</h3>
+  <dl>
+    <dt data-highlight=".editor-head + div > table.grid">Standing approvers</dt>
+    <dd>For each kind of design (objects, rule scripts, services, connections, transactions, screens,
+    report layouts, named queries, people &amp; departments), tick the departments that also approve every
+    change to it, whoever stewards it. They join the stewards; they do not replace them.</dd>
+    <dt data-highlight=".editor-head + div > h4 + p + .pick">Reads every record</dt>
+    <dd>People, departments or groups who may read every object's records, those designed later included,
+    except fields a policy hides. They write nothing through this; for IT or an auditor. Approved by
+    governance.</dd>
+    <dt data-highlight=".approval-levels">Approval level</dt>
+    <dd>How much approval a change needs before it executes. Pick one; every change is still signed and
+    kept in the audit trail.</dd>
+    <dt data-highlight=".approval-level:nth-child(1)">Full</dt>
+    <dd>A reviewer who did not design it, then an approver of each department it touches, in their steps.
+    Keep it if the plant answers to regulators (Part 11, Annex 11).</dd>
+    <dt data-highlight=".approval-level:nth-child(2)">One approval</dt>
+    <dd>No review: the first signature by an approver of a department it touches (never its designer)
+    executes it.</dd>
+    <dt data-highlight=".approval-level:nth-child(3)">None</dt>
+    <dd>Its designer signs it and it executes: for a small plant with nobody else to ask.</dd>
+    <dt data-highlight=".approval-levels + h4 + p + .ed-field">Setup is open</dt>
+    <dd>While the plant is being set up, a designer's change executes on their own signature, each one
+    marked in the audit trail. Untick it to end setup; it ends once someone besides the designers can
+    review.</dd>
+    <dt data-highlight=".approval-levels + h4 + p + .ed-field + h4 + p + .ed-field">Emergency changes: Allowed</dt>
+    <dd>Ticked, a change that cannot wait may be submitted as an emergency, with a reason: one approver's
+    signature makes it live, and it is reviewed afterwards.</dd>
+    <dt data-highlight=".approval-levels ~ .ed-field:last-child">Reviewed afterwards within (days)</dt>
+    <dd>How long the after-the-fact review of an emergency change may take: 1 to 30 days, 3 when empty.</dd>
+  </dl>
+
+  <h3>Formats</h3>
+  <dl>
+    <dt data-highlight=".org-formats > div:nth-of-type(1)">Locale</dt>
+    <dd>How numbers are written (1,250.5 or 1.250,5). Type one, such as <code>de-DE</code>, or pick from the
+    suggestions; empty means en-US.</dd>
+    <dt data-highlight=".org-formats > div:nth-of-type(2)">Dates written</dt>
+    <dd>The order of day, month and year on every page and in forms. Stored dates stay YYYY-MM-DD.</dd>
+    <dt data-highlight=".org-formats > div:nth-of-type(3)">Times</dt>
+    <dd>24-hour (14:05) or 12-hour (2:05 PM).</dd>
+    <dt data-highlight=".org-formats > div:nth-of-type(4)">The week begins on</dt>
+    <dd>The first day of the week in calendars.</dd>
+    <dt data-highlight=".org-formats > div:nth-of-type(5)">The plant's clock (time zone)</dt>
+    <dd>Times are shown on this clock, wherever a person is. Type or pick a zone such as
+    <code>Europe/Paris</code>; empty means the server's.</dd>
+    <dt data-highlight=".org-formats-sample">Reads as</dt>
+    <dd>Now, a number and a date written the way you set them. Pages follow when next opened, once the
+    change executes.</dd>
+  </dl>
+
+  <h3>Theme</h3>
+  <dl>
+    <dt data-highlight=".org-theme > .theme-grid:nth-of-type(1) > .ed-field:nth-child(1)">Light or dark</dt>
+    <dd>Each person chooses, or always light, or always dark for everyone (a shop floor's screens, a
+    control room).</dd>
+    <dt data-highlight="input[placeholder='OpenCore MES']">Name in the top bar</dt>
+    <dd>Up to 40 characters; empty shows OpenCore MES.</dd>
+    <dt data-highlight="input[placeholder='PLT1 · POC']">Label beside it</dt>
+    <dd>The site, plant or line, e.g. Plant 1 · Lyon.</dd>
+    <dt data-highlight=".org-theme > .theme-grid:nth-of-type(2)">Light, Dark</dt>
+    <dd>The colours for each scheme: Accent (links, buttons, the current step), OK, Warn and Danger, which
+    draw the states' tones.</dd>
+    <dt data-highlight=".theme-color">A colour</dt>
+    <dd>Pick it with the swatch, or type it as <code>#rrggbb</code>. Empty the text box to go back to the
+    default.</dd>
+    <dt data-highlight=".theme-preview">The preview</dt>
+    <dd>A top bar, a button, state badges and a link, drawn with your colours.</dd>
+    <dt data-highlight=".org-theme .theme-checks">Contrast</dt>
+    <dd>Each colour must read at 4.5:1 or better against its background; one that does not is named with
+    its ratio.</dd>
+  </dl>
+
+  <h3>Retention</h3>
+  <dl>
+    <dt data-highlight=".retention-table">Kind</dt>
+    <dd>Each kind of data the plant keeps, with what it covers.</dd>
+    <dt data-highlight=".retention-table input">Kept for</dt>
+    <dd>Type days (<code>365</code>), years (<code>2 years</code>) or <code>forever</code>; empty keeps the
+    default. Below it: the default and the least it may be.</dd>
+    <dt data-highlight=".retention-table td.small">Past it</dt>
+    <dd><em>removed</em>: the platform deletes what is older, every few hours. <em>counted, kept</em>:
+    archived records and the audit trail are never deleted; the Data retention page counts what is past
+    its period.</dd>
+    <dt data-highlight=".org-retention .theme-checks">Problems</dt>
+    <dd>A period that does not read, is below the least allowed or above the most, or an audit trail kept
+    for less time than the records it describes, is named here.</dd>
+  </dl>
+
+  <h3>Integrity</h3>
+  <dl>
+    <dt data-highlight="select[aria-label='Report object']">Report object</dt>
+    <dd>Where a closed data integrity finding raises its non-conformance report: one of the plant's
+    objects, through its own policies and rules. None keeps the reports on the Data integrity page and in
+    the audit trail.</dd>
+    <dt data-highlight=".org-integrity .ed-table">Part of the report</dt>
+    <dd>For each part (what happened, why, the decision, the action taken, the finding), pick the object's
+    field that takes it, or Not kept. A field takes one part only.</dd>
+    <dt data-highlight=".org-integrity .ed-table ~ .org-integrity-object">Required fields: always</dt>
+    <dd>A required field no part fills gets the same value every time, such as a severity or a category:
+    pick it or type it.</dd>
+    <dt data-highlight=".org-integrity .theme-checks">Problems</dt>
+    <dd>What is missing or wrong in this setting. Who reviews findings is a role: Roles, Data
+    integrity.</dd>
+  </dl>
+
+  <h3>Sign-in</h3>
+  <dl>
+    <dt data-highlight="input[aria-label='The id is called']">The id is called</dt>
+    <dd>What the sign-in page calls the id people type: Windows user name, Employee number, Badge number.
+    Empty shows Username.</dd>
+    <dt data-highlight="input[aria-label='Shown in the empty box']">Shown in the empty box</dt>
+    <dd>A hint in the empty id box, such as <code>PLANT\username</code> or 6 digits.</dd>
+    <dt data-highlight=".org-signin .pick">The plant's domains</dt>
+    <dd>Type a domain (<code>PLANT</code>, <code>plant.local</code>) and press Enter or pick
+    <em>Add "…"</em>; commas add several. Typed before a \ or / or after an @, a listed domain is dropped:
+    <code>PLANT\jdoe</code> signs in as <code>jdoe</code>. × removes one.</dd>
+    <dt data-highlight=".org-signin-sample">The sample</dt>
+    <dd>The id box as the sign-in page will show it, and an example of a domain dropped.</dd>
+    <dt data-highlight=".org-signin .theme-checks">Problems</dt>
+    <dd>A label too long or a domain that does not read is named here.</dd>
+  </dl>
+
+  <h3>JSON</h3>
+  <dl>
+    <dt data-highlight=".editor .code-editor">The organization as JSON</dt>
+    <dd>All of it as data. Edit it here for a large change at once.</dd>
+    <dt data-highlight=".editor .code-editor + .btn">Apply JSON</dt>
+    <dd>Replaces the draft with what you wrote; every check runs on it as on any other edit. If it does not
+    read, an error says why and the draft stays as it was.</dd>
+  </dl>
+</article>

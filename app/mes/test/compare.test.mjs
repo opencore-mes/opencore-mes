@@ -54,3 +54,21 @@ test("inside the tabs: which fields, policies and layout places are new or chang
     assert.equal(m.layout.qty, "changed");
     assert.equal(m.layout.item, undefined, "a field that did not move is not marked");
 });
+
+// A change's differences are drawn by ChangesView for every kind an editor opens it for, each grouped by its
+// kind's tabs: a kind with none failed to draw (a flow's change, opened by its reviewer).
+test("every kind an editor shows the differences of has its tabs, and a flow's fall on them", async () => {
+    const { readFileSync, readdirSync } = await import("node:fs");
+    const dir = new URL("../client/", import.meta.url);
+    const designer = readFileSync(new URL("designer.js", dir), "utf8");
+    const map = /const tabs = \{([^}]*)\}\[kind\]/.exec(designer)?.[1] ?? "";
+    const known = new Set([...map.matchAll(/(\w+):/g)].map((m) => m[1]));
+    const asked = new Set(["service", "connection"]); // integration-editor.js passes its own kind, one of these
+    for (const file of readdirSync(dir).filter((f) => f.endsWith(".js"))) {
+        for (const m of readFileSync(new URL(file, dir), "utf8").matchAll(/ChangesView: \{[^}]*kind: "(\w+)"/g)) asked.add(m[1]);
+    }
+    for (const kind of asked) assert.ok(known.has(kind), `ChangesView has no tabs for ${kind}`);
+    const { flowChanges, FLOW_TABS } = await import("../client/compare.js");
+    const changes = flowChanges(null, { label: "OCAP", kind: "plan", nodes: { start: { kind: "start" } }, edges: [], participants: { record_1: { object: "deviation", as: "subject" } }, stewards: ["engineering"] });
+    assert.ok(changes.length > 0 && changes.every((c) => Object.hasOwn(FLOW_TABS, c.tab)), JSON.stringify(changes.map((c) => c.tab)));
+});

@@ -19,7 +19,7 @@
 //   DATABASE_URL=postgres:///openmes_test node app/mes/test/organization.mjs   (after a reset)
 import pg from "pg";
 import { randomBytes } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL ?? "postgres:///openmes_poc" });
@@ -52,6 +52,8 @@ const MARK = `mark_t${tag}`;
 
 try {
     // ---- 1. the draft is the organization as it is ----
+    // The version it starts from (an earlier suite on this database may have changed it already).
+    const [{ version: before }] = await db.query("SELECT version FROM mes.organization WHERE status = 'published'");
     const { id } = await call("dana", "design.start", { organization: true });
     let change = await call("dana", "design.change", { id, as: "dana" });
     const org = change.content.organization;
@@ -124,7 +126,7 @@ try {
     const [mark] = await db.query("SELECT name, active FROM mes.users WHERE id = $1", [MARK]);
     const [role] = await db.query("SELECT 1 FROM mes.assignments WHERE subject_kind = 'user' AND subject_id = $1 AND object = 'lot' AND role = 'operator'", [MARK]);
     const [settings] = await db.query("SELECT version, body FROM mes.organization WHERE status = 'published'");
-    step("the tables follow: Mark exists, in Production, a lot operator; the organization is version 2", mark?.active && role && settings.version === 2 && settings.body.standing.service?.includes("it"), { mark, settings });
+    step("the tables follow: Mark exists, in Production, a lot operator; the organization is one version on", mark?.active && role && settings.version === before + 1 && settings.body.standing.service?.includes("it"), { mark, settings });
     const audit = await db.query("SELECT after FROM mes.audit_log WHERE object = '$change' AND record_id = $1 AND action = 'change:approve' ORDER BY seq", [id]);
     step("each step's signature is audited with its step", audit.some((a) => a.after.department === "it" && a.after.step === "Specialist") && audit.some((a) => a.after.step === "Manager"), audit);
 

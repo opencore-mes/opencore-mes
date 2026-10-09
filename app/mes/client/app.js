@@ -3,6 +3,7 @@
 import { registerShell } from "./shell.js";
 import { registerRecords } from "./records.js";
 import { registerGuides } from "./guide.js";
+import { registerEmbed } from "./embed.js";
 import { registerFlowTask } from "./flow-task.js";
 import { registerDesigner } from "./designer.js";
 import { registerDbStatus } from "./db-status.js";
@@ -10,6 +11,10 @@ import { registerAnalytics } from "./analytics.js";
 import { registerQuery } from "./query.js";
 import { registerReports } from "./reports.js";
 import { registerSignInAdmin } from "./sign-in-admin.js";
+import { registerDatabaseAdmin } from "./database-admin.js";
+import { registerRetentionPage } from "./retention-page.js";
+import { registerIntegrityPage } from "./integrity-page.js";
+import { registerSuiteGuide } from "./suite-guide.js";
 import { registerChartView } from "./chart-view.js";
 import { registerAttach } from "./attach.js";
 import { registerUpdates } from "./updates.js";
@@ -17,6 +22,7 @@ import { registerTransfer } from "./transfer.js";
 import { registerModelFile } from "./model-file.js";
 import { registerTransactionScreen } from "./transaction.js";
 import { registerScreens } from "./screen.js";
+import { registerMedia, registerStepDone } from "./media.js";
 import { registerDialog } from "./dialog.js";
 import { registerWindowRows, windowTable, windowRows } from "./window-rows.js";
 import { registerCopyCell } from "./copy-cell.js";
@@ -26,7 +32,7 @@ import { registerSandbox } from "./sandbox.js";
 import { titleTab } from "./shell.js";
 import { confirmDialog, askDialog } from "./dialog.js";
 import { useSuites } from "./suite-registry.js";
-import { plant } from "./format.js";
+import { plant, noun } from "./format.js";
 import { icon } from "./icons.js";
 
 // Every live call's arguments, built in one place so a preload and the component that makes the call
@@ -36,11 +42,12 @@ export const args = {
     def: (object, as) => ({ object, as }),
     list: (object, as, archived = false) => (archived ? { object, as, archived: true } : { object, as }),
     // An object's list, a page at a time, filtered by what was typed (§10.1).
-    listPage: (object, as, page = 1, q = "") => (q ? { object, as, page, q } : { object, as, page }),
+    listPage: (object, as, page = 1, q = "", sort = null) => ({ object, as, page, ...(q ? { q } : {}), ...(sort ? { sort } : {}) }),
     record: (object, id, as) => ({ object, id, as }),
     prefs: (as) => ({ as }),
     design: (as) => ({ as }),
     change: (id, as) => ({ id, as }),
+    suiteGuide: (suite, as) => ({ suite, as }),
     designView: (kind, name, as, also = []) => ({ kind, name, as, ...(also.length ? { with: also } : {}) }),
     // ?with=lot,machine: the objects shown beside a viewed design, in order, without repeats.
     viewWith: (query) => [...new Set(String(query?.with ?? "").split(",").map((s) => s.trim()).filter(Boolean))],
@@ -91,7 +98,7 @@ export const routes = [
         path: "/o/:object/new", name: "new", component: "RecordNew",
         props: (params) => ({ key: `new-${params.object}`, object: params.object }),
         preload: ({ params, viewer }) => (viewer ? [["defs.get", args.def(params.object, viewer)], ["records.list", args.list(params.object, viewer)], ...shell(viewer)] : []),
-        head: { title: "New", titleFrom: (def) => `New ${def.label.toLowerCase()}` },
+        head: { title: "New", titleFrom: (def) => `New ${noun(def.label)}` },
     },
     // Before the record's route, so "analytics" is not read as a record id. Its numbers load in the
     // browser; the page preloads the definition for its title.
@@ -144,12 +151,27 @@ export const routes = [
         preload: ({ params, viewer }) => (viewer ? [["flows.task", args.flowTask(params.run, viewer)], ...shell(viewer)] : []),
         head: { title: "Plan", titleFrom: (t) => (t ? `${t.label}: ${t.nodeLabel}` : "Plan") },
     },
+    // The installed suites' designs, samples and guides (§29.6, §29.8): their own page, out of the designer's way.
+    { path: "/design/suites", name: "suites", component: "SuitesPage", preload: ({ viewer }) => (viewer ? [["design.home", args.design(viewer)], ...shell(viewer)] : []), head: { title: "Suites" } },
     { path: "/design/people", name: "people", component: "PeoplePage", preload: ({ viewer }) => (viewer ? [["design.organization", args.organization(viewer)], ["design.home", args.design(viewer)], ...shell(viewer)] : []), head: { title: "People & departments" } },
     // Client-loaded (it refreshes itself), so it preloads only the shell.
     { path: "/design/model", name: "modelFile", component: "ModelFilePage", preload: ({ viewer }) => shell(viewer), head: { title: "Model file" } },
     { path: "/design/integration", name: "integration", component: "IntegrationMonitor", preload: ({ viewer }) => shell(viewer), head: { title: "Integration monitor" } },
     // Sign-in administration (§8.2): client-loaded, for its administrators.
     { path: "/design/sign-in", name: "signInAdmin", component: "SignInAdmin", preload: ({ viewer }) => shell(viewer), head: { title: "Sign-in administration" } },
+    // The Database area (§38): client-loaded, for its administrators.
+    { path: "/design/database", name: "databaseAdmin", component: "DatabaseAdmin", preload: ({ viewer }) => shell(viewer), head: { title: "Database" } },
+    // Data retention (§27.8): client-loaded, for privacy officers.
+    { path: "/design/retention", name: "retention", component: "RetentionPage", preload: ({ viewer }) => shell(viewer), head: { title: "Data retention" } },
+    // The data integrity review (§7.7): client-loaded, for integrity reviewers.
+    { path: "/design/integrity", name: "integrity", component: "IntegrityPage", preload: ({ viewer }) => shell(viewer), head: { title: "Data integrity" } },
+    // An installed suite's set-up guide (§29.8).
+    {
+        path: "/design/suites/:suite/guide", name: "suiteGuide", component: "SuiteGuidePage",
+        props: (params) => ({ key: `guide-${params.suite}`, suite: params.suite }),
+        preload: ({ params, viewer }) => (viewer ? [["design.suiteGuide", args.suiteGuide(params.suite, viewer)], ...shell(viewer)] : []),
+        head: { title: "Set-up guide", titleFrom: (g) => g?.title },
+    },
     // A change's sandbox (§5.11): its draft on copies of real records, nothing live written.
     {
         path: "/design/c/:id/sandbox", name: "sandbox", component: "SandboxView",
@@ -180,7 +202,7 @@ export function guard(to, ctx) {
     const signedIn = Boolean(ctx?.viewer);
     // Signed out: to the sign-in, saying where they were going (the demo, which has no sign-in page,
     // signs them in and takes them there).
-    if (!signedIn && to.name !== "login" && !(to.name === "password" && to.query?.token)) return to.path && to.path !== "/" ? `/login?to=${encodeURIComponent(to.path)}` : "/login";
+    if (!signedIn && to.name !== "login" && !(to.name === "password" && (to.query?.token || to.query?.setup === "1"))) return to.path && to.path !== "/" ? `/login?to=${encodeURIComponent(to.path)}` : "/login";
     if (signedIn && to.name === "login") return "/";
     return undefined;
 }
@@ -251,6 +273,7 @@ export function register(juris) {
     registerAttach(juris);
     registerRecords(juris, { args });
     registerGuides(juris);
+    registerEmbed(juris);
     registerFlowTask(juris, { args });
     registerDesigner(juris, { args });
     registerDbStatus(juris);
@@ -258,11 +281,17 @@ export function register(juris) {
     registerQuery(juris);
     registerReports(juris);
     registerSignInAdmin(juris);
+    registerDatabaseAdmin(juris);
+    registerRetentionPage(juris);
+    registerIntegrityPage(juris, { args });
+    registerSuiteGuide(juris, { args });
     registerUpdates(juris);
     registerTransfer(juris);
     registerModelFile(juris);
     registerTransactionScreen(juris, { args });
     registerScreens(juris, { args });
+    registerMedia(juris);
+    registerStepDone(juris);
     registerDialog(juris);
     registerWindowRows(juris);
     registerCopyCell(juris);

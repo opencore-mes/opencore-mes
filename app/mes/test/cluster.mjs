@@ -10,7 +10,7 @@
 //   3. a design change executed on A is the definition B and C serve at once
 import pg from "pg";
 import { randomBytes } from "node:crypto";
-import { liveKey } from "../../../src/live-protocol.js";
+import { liveKey } from "@opencore-mes/juris-kit/live-protocol.js";
 
 const writes = Number(process.argv[2] ?? 100);
 const [A, B, C] = [process.env.A ?? "http://127.0.0.1:3401", process.env.B ?? "http://127.0.0.1:3402", process.env.C ?? "http://127.0.0.1:3403"];

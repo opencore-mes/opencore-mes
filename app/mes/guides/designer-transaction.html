@@ -1,0 +1,306 @@
+<!-- The transaction editor's guide (DESIGN.md §33, §25): a transaction in a change request, or live and
+     read only. Drawn through an allowlist: data-highlight="<CSS selector>" outlines what the selector
+     finds in the change page. -->
+<article data-title="The transaction editor">
+  <p>A transaction is a form people fill in, scan into or press a button for: <strong>inputs</strong>,
+  <strong>checks</strong> that must hold, and <strong>steps</strong> that write records, all or nothing,
+  through each object's own policies and rules. You design it here, inside a change; it reaches the
+  plant only once the change is reviewed, approved and executed.</p>
+
+  <h3>Its tabs</h3>
+  <dl>
+    <dt data-highlight=".subtabs">The tabs</dt>
+    <dd>The transaction's settings, by topic. A number on a tab counts what differs there from the live
+    version; a new transaction counts everything.</dd>
+    <dt data-highlight=".subtabs .tab-diff">The numbers</dt>
+    <dd>Differences from the published version on that tab. Changes lists them all, line by line.</dd>
+  </dl>
+
+  <h3 data-highlight=".subtabs .subtab:nth-child(1)">Copilot</h3>
+  <dl>
+    <dt data-highlight=".copilot">The copilot</dt>
+    <dd>An AI that drafts, checks and explains, working on the whole change as you. It never submits,
+    reviews or approves. A live design shows no copilot: press Change it first.</dd>
+    <dt data-highlight=".copilot-off">Not set up</dt>
+    <dd>Shown when this installation has no AI configured: it says what is missing.</dd>
+    <dt data-highlight=".copilot-log">The conversation</dt>
+    <dd>What you asked, its answers, and each design tool it used (a tick when it worked, a cross when
+    not). It is kept with the change: come back any time and it picks up there.</dd>
+    <dt data-highlight=".copilot-input textarea">The box</dt>
+    <dd>Type what you want ("add a check that the machine is up"). <kbd>Ctrl</kbd>+<kbd>Enter</kbd>
+    (<kbd>⌘</kbd>+<kbd>Enter</kbd> on a Mac) sends it. What you type is kept if you leave the tab.</dd>
+    <dt data-highlight=".copilot-input .att-btn">Attach</dt>
+    <dd>Adds up to five files for it to read: pictures, PDFs, CSV files or Excel workbooks. You can
+    also paste or drop one into the box; × takes one off.</dd>
+    <dt data-highlight=".copilot-buttons .btn.primary">Send</dt>
+    <dd>Saves your unsaved edits first, so it works on what you see, then sends. What it saves shows in
+    every window at once.</dd>
+    <dt data-highlight=".copilot-buttons .btn.ghost">New conversation</dt>
+    <dd>Deletes the conversation kept with this change, after asking. The draft stays as it is.</dd>
+  </dl>
+
+  <h3 data-highlight=".subtabs .subtab:nth-child(2)">Changes</h3>
+  <dl>
+    <dt data-highlight=".changes-view > p">The count</dt>
+    <dd>How many differences from the published version: changed, added, removed. A new transaction
+    says so; one that matches what is live says "Nothing differs".</dd>
+    <dt data-highlight=".changes-head">By tab</dt>
+    <dd>Differences grouped by the tab where each is edited. <em>Open …</em> takes this window to that
+    tab.</dd>
+    <dt data-highlight=".change-item">A difference</dt>
+    <dd>Click its line to fold or unfold it. Lines starting with + are the draft, lines with − the
+    published version. A green edge is added, amber changed.</dd>
+  </dl>
+
+  <h3 data-highlight=".subtabs .subtab:nth-child(3)">General</h3>
+  <dl>
+    <dt data-highlight=".ed-grid > label.ed-field:nth-child(1)">Name</dt>
+    <dd>Its fixed name, set when it was created. Its screen opens at <code>/t/</code> and this name.</dd>
+    <dt data-highlight=".ed-grid > label.ed-field:nth-child(2)">Label</dt>
+    <dd>What its button and its screen say, such as <em>Move in</em>.</dd>
+    <dt data-highlight=".ed-grid > label.ed-field:nth-child(3)">Description</dt>
+    <dd>One line shown under the title: what it does.</dd>
+    <dt data-highlight=".ed-grid > label.ed-field:nth-child(4)">Appears on</dt>
+    <dd>Pick an object to put a button for this transaction on its records; the record is filled in when
+    the button is pressed. <em>Only in the navigator</em>: no button on records.</dd>
+    <dt data-highlight=".ed-field[aria-label='…while they are']">…while they are</dt>
+    <dd>Tick the states in which the button shows. None ticked: in every state.</dd>
+    <dt data-highlight=".ed-field[aria-label='…only when']">…only when</dt>
+    <dd>A condition on the record (read as <code>{"record": "field"}</code>): the button shows only
+    where it holds. None: always.</dd>
+    <dt data-highlight=".ed-grid > label.ed-field:nth-child(7)">…filling in</dt>
+    <dd>The input the record goes into: a reference input to that object that is not filled in from
+    another one.</dd>
+    <dt data-highlight=".ed-field[aria-label='Confirm first']">Confirm first</dt>
+    <dd>Ticked, the person sees what will change and confirms before it runs (recommended). Off, it runs
+    as soon as the button is pressed.</dd>
+    <dt data-highlight="input[placeholder^='none (e.g. Performed']">Electronic signature</dt>
+    <dd>Type the signature's meaning (<em>Performed</em>) to have the person sign as they confirm,
+    recorded with the run. Empty it to sign nothing.</dd>
+    <dt data-highlight=".ed-field[aria-label='Verified by a second person']">Verified by a second person</dt>
+    <dd>Shown once it is signed. Ticked, a second person signs in beside the one running it and verifies;
+    both re-enter their passwords at every submit.</dd>
+    <dt data-highlight="input[placeholder='e.g. Verified']">…their signature means</dt>
+    <dd>What the second person signs to, such as <em>Verified</em>.</dd>
+    <dt data-highlight=".ed-field[aria-label='…who may verify: departments']">…who may verify: departments</dt>
+    <dd>Tick the departments whose members may verify. The one running it never verifies their own.</dd>
+    <dt data-highlight=".ed-field[aria-label='…or roles']">…or roles</dt>
+    <dd>Roles on objects, written <code>object.role</code> (<code>lot.supervisor</code>): anyone holding
+    one may verify too. A tag list: suggestions are the roles the objects declare.</dd>
+    <dt data-highlight=".ed-grid > label.ed-field:nth-child(14)">Fill the window</dt>
+    <dd><em>No</em>: the usual page. <em>On request</em>: its screen has a Maximize button that sets the
+    navigator, top bar and tabs aside. <em>Always at first</em>: it opens maximized. Each device
+    remembers the person's choice.</dd>
+    <dt data-highlight=".ed-grid > label.ed-field:nth-child(15)">Input flow</dt>
+    <dd>How the form is filled from a keyboard or scanner: which input comes next and what moves on.
+    Pick one drawn in the Flow designer (kind <em>input</em>); <em>none</em> goes from input to input
+    with Enter, in the form's order.</dd>
+    <dt data-highlight=".ed-grid a[href*='/t/']">Open its screen</dt>
+    <dd>Shown once it is published: opens the live version, not your draft.</dd>
+  </dl>
+
+  <h3 data-highlight=".subtabs .subtab:nth-child(4)">Inputs</h3>
+  <dl>
+    <dt data-highlight=".ed-table">The inputs</dt>
+    <dd>What the person enters or scans, one row each. A row tinted green is new in this change, amber
+    changed.</dd>
+    <dt data-highlight=".ed-table td:nth-child(1) code">Input</dt>
+    <dd>Its name, read by checks and steps as <code>{"input": "name"}</code>. Fixed once added.</dd>
+    <dt data-highlight=".ed-table td:nth-child(2) input">Label</dt>
+    <dd>What the form says beside it.</dd>
+    <dt data-highlight=".ed-table td:nth-child(3) select">Type</dt>
+    <dd>Text, a number, a date, a yes/no, a list of values (enum), an image, a reference to a record
+    (ref), or <em>rows</em>: a table the person fills in line by line. Changing it clears what no longer
+    applies.</dd>
+    <dt data-highlight=".ed-table td:nth-child(4) input[type=checkbox]">Required</dt>
+    <dd>Ticked, it must be filled in before the transaction runs. To make it required only sometimes,
+    use <em>Required when</em> on the Layout tab.</dd>
+    <dt data-highlight=".ed-table td:nth-child(5) select">Refers to</dt>
+    <dd>For a reference: the object whose record it names (a lot, a machine).</dd>
+    <dt data-highlight=".ed-table td:nth-child(5) .pick">Values</dt>
+    <dd>For an enum: the values offered, as a tag list. Tick <em>several values</em> to let the person
+    pick more than one.</dd>
+    <dt data-highlight=".tx-rows-spec">Rows</dt>
+    <dd>For a table input: its columns as tags written <code>name:type</code> (string, integer, decimal,
+    boolean or date; string when left out), and the least and most rows allowed.</dd>
+    <dt data-highlight=".ed-table td:nth-child(6) select">Filled in from</dt>
+    <dd><em>Entered</em>: the person types or scans it. Or a field of a record another input names
+    (the lot's machine): it is shown, filled in, and not typed.</dd>
+    <dt data-highlight=".ed-table td:nth-child(7) .btn">Remove</dt>
+    <dd>Takes the input out of the draft, after asking.</dd>
+    <dt data-highlight=".add-row">New input, Add</dt>
+    <dd>Type a name in lower case (letters, digits, _; such as <code>good_qty</code>) and press Add. It
+    starts as text; set its type in its row.</dd>
+  </dl>
+
+  <h3 data-highlight=".subtabs .subtab:nth-child(5)">Layout</h3>
+  <dl>
+    <dt data-highlight=".layout-editor">The form</dt>
+    <dd>The inputs laid out as the form shows them, on a row of 12 columns; on a narrow screen each
+    takes the whole row.</dd>
+    <dt data-highlight=".lay-tabs">Its tabs</dt>
+    <dd>Click one to lay it out; <em>+ tab</em> adds a tab.</dd>
+    <dt data-highlight=".lay-tab-head">The tab's head</dt>
+    <dd>With more than one tab: its label, <em>move</em> left or right, and <em>Remove tab</em> (its
+    inputs go to the tray).</dd>
+    <dt data-highlight=".lay-section-head">A section's head</dt>
+    <dd>Its label; <em>can fold</em> and <em>folded at first</em>; the arrows move it up or down; the
+    drop-down moves it to another tab; Remove takes it off (its inputs go to the tray).</dd>
+    <dt data-highlight=".lay-card">An input's card</dt>
+    <dd>Drag it to move it, within a section or to another. Click it to select it and set it below. A
+    green edge is new in this change, amber changed.</dd>
+    <dt data-highlight=".lay-card-tools">Its buttons</dt>
+    <dd>The arrows move it earlier or later; − and + make it narrower or wider (each kind of control has
+    a narrowest width).</dd>
+    <dt data-highlight=".layout-editor > .btn">Add section</dt>
+    <dd>Adds an empty section to the tab shown. Drop inputs into it.</dd>
+    <dt data-highlight=".lay-tray">Not on the form</dt>
+    <dd>Inputs not placed yet: drag one onto a section, or use <em>place in…</em>. Drag a card here to
+    take it off.</dd>
+    <dt data-highlight=".lay-inspector">The selected input</dt>
+    <dd>Its width, how it is drawn (a drop-down, radio list, scan field, stepper…), rows for a text box,
+    help text under it and a placeholder while empty. <em>Take it off the form</em> sends it to the
+    tray.</dd>
+    <dt data-highlight=".lay-rule">Shown, enabled, required when</dt>
+    <dd>Condition boxes over the form as it is filled and the person. Empty: always shown, always enabled,
+    required only as the Inputs tab says. The server checks <em>required when</em> too.</dd>
+    <dt data-highlight=".layout-editor .preview">Preview</dt>
+    <dd>The form as the draft draws it, its inputs disabled.</dd>
+  </dl>
+
+  <h3 data-highlight=".subtabs .subtab:nth-child(6)">Checks</h3>
+  <dl>
+    <dt data-highlight=".tx-card">A check</dt>
+    <dd>What must hold before anything changes. Each is checked again, under lock, the moment it runs.
+    A failing one refuses the run with its words.</dd>
+    <dt data-highlight=".ed-field[aria-label='Must hold']">Must hold</dt>
+    <dd>A condition box over the inputs, the records they name (<code>{"lookup": "machine.state"}</code>),
+    the person, and counts of records, as they were before any step.</dd>
+    <dt data-highlight=".tx-card input[placeholder='The machine is down.']">Otherwise, say</dt>
+    <dd>What the person reads when it does not hold: what is wrong, and what to do.</dd>
+    <dt data-highlight=".tx-card > label.ed-field:nth-child(4)">On the input</dt>
+    <dd>The input the message is shown under, or <em>the whole form</em>.</dd>
+    <dt data-highlight=".tx-card legend .linkish">remove</dt>
+    <dd>Takes the check out, after asking.</dd>
+    <dt data-highlight=".editor > div > button.btn">Add check</dt>
+    <dd>Adds a check (the first input must not be empty) for you to change.</dd>
+  </dl>
+
+  <h3 data-highlight=".subtabs .subtab:nth-child(7)">Steps</h3>
+  <dl>
+    <dt data-highlight=".tx-card">A step</dt>
+    <dd>Each writes one record through its object's state machine, policies, rules and audit trail, as the
+    person running it. They run in order, all or nothing. The object's policies must grant the write
+    "only through transactions" naming this one.</dd>
+    <dt data-highlight=".tx-card legend button[title='Earlier'], .tx-card legend button[title='Later']">Earlier, Later</dt>
+    <dd>Move the step up or down the order.</dd>
+    <dt data-highlight=".tx-card legend .linkish">remove</dt>
+    <dd>Takes the step out, after asking.</dd>
+    <dt data-highlight=".tx-card .ed-row > :nth-child(1)">On the record in</dt>
+    <dd>A step that changes a record: the reference input naming it. (On a step that creates a record,
+    this place is <em>Creates a</em>: the object it makes.)</dd>
+    <dt data-highlight=".tx-card .ed-row > :nth-child(2)">then takes the action</dt>
+    <dd>A transition of that object (from which states, to which), or <em>none</em> to only set fields.
+    (On a step that creates a record: <em>How many</em>, one, or one per row of a table input, its
+    fields then reading the row as <code>{"row": "field"}</code>.)</dd>
+    <dt data-highlight=".tx-sets">Sets</dt>
+    <dd>The fields the step writes, each <code>field = value</code>.</dd>
+    <dt data-highlight=".tx-set .expr-input">A value</dt>
+    <dd>Written as JSON on one line: <code>{"input": "machine"}</code>, a number, <code>"text"</code>, or
+    an expression. Outlined red until it reads; applied as soon as it does.</dd>
+    <dt data-highlight=".tx-set button[title^='Don']">× (Don't set it)</dt>
+    <dd>Stops setting that field.</dd>
+    <dt data-highlight=".tx-sets .mini-select">+ set a field</dt>
+    <dd>Pick a field to set. One named like an input starts as that input.</dd>
+    <dt data-highlight=".tx-card .ed-field[aria-label='Only when']">Only when</dt>
+    <dd>A condition box: the step runs only where it holds. None: always.</dd>
+    <dt data-highlight=".tx-card > label.ed-field">A suite's step: its settings</dt>
+    <dd>A step an installed suite adds: each setting a value or an expression, <em>(needed)</em> where
+    it must be given. One that cannot be undone runs last. If its suite is not installed, it says so,
+    and the transaction cannot run until the suite is back.</dd>
+    <dt data-highlight=".editor > div > button.btn:first-of-type">Add step</dt>
+    <dd>Adds a step that changes the record a reference input names. Greyed until there is a reference
+    input.</dd>
+    <dt data-highlight=".editor > div > button.btn:not(:first-of-type):not(:last-child)">Add: …</dt>
+    <dd>One button per step kind the installed suites add.</dd>
+    <dt data-highlight=".editor > div > button.btn:last-child">Add a step that creates a record</dt>
+    <dd>Adds a step that makes a new record of an object.</dd>
+  </dl>
+
+  <h3 data-highlight=".subtabs .subtab:nth-child(8)">Scenarios</h3>
+  <dl>
+    <dt data-highlight=".editor a.btn.primary[href*='/sandbox']">Make one in the sandbox</dt>
+    <dd>Opens the sandbox on this transaction. A scenario is recorded there: records picked from live (or
+    given), steps run as someone, and what each should give.</dd>
+    <dt data-highlight=".scenario-list > li">A scenario</dt>
+    <dd>Its name, its records, and its steps: what each does, as whom, and what it expects (it runs, or
+    it is refused with a message; a record's state after).</dd>
+    <dt data-highlight=".scenario-list .badge">passed, failed</dt>
+    <dd>Its last run by the fitness test. A failed one shows why below it. A new or changed transaction
+    without a scenario, or with one that fails, cannot be submitted.</dd>
+    <dt data-highlight=".scenario-list a.small">open in the sandbox</dt>
+    <dd>Opens the scenario in the sandbox to run it or change it.</dd>
+    <dt data-highlight=".scenario-list button.linkish">remove</dt>
+    <dd>Takes the scenario out of the draft, after asking.</dd>
+  </dl>
+
+  <h3 data-highlight=".subtabs .subtab:nth-child(9)">Callers</h3>
+  <dl>
+    <dt data-highlight=".editor h4 + .checks">Groups</dt>
+    <dd>Tick the groups whose members may run it. Nobody may until named here.</dd>
+    <dt data-highlight=".editor .pick">Users</dt>
+    <dd>People named one by one: type part of a name and pick from the suggestions; × on a name removes
+    it.</dd>
+    <dt data-highlight=".editor h4 + div .checks">Services</dt>
+    <dd>Tick the services whose scripts may run it (with <code>ctx.transactions.run</code>), as their own
+    service role. A signed transaction is a person's to run: no service is offered.</dd>
+  </dl>
+  <p>Callers still need, on each object a step writes, a role whose policy grants that write through
+  this transaction.</p>
+
+  <h3 data-highlight=".subtabs .subtab:nth-child(10)">Try it</h3>
+  <dl>
+    <dt data-highlight=".editor a.btn.primary[href*='/t/']">Open its screen</dt>
+    <dd>Runs the published version as you, with your rights; its Check button shows what would change
+    without changing anything. Your draft is not what runs. Before the change is executed there is
+    nothing to open: see the form on the Layout tab, or try the draft in the sandbox.</dd>
+  </dl>
+
+  <h3 data-highlight=".subtabs .subtab:nth-child(11)">Stewards</h3>
+  <dl>
+    <dt data-highlight=".editor .checks">Departments</dt>
+    <dd>Tick the departments that approve every change to it. A change to its inputs or steps is also
+    approved by the stewards of each object, field and transition its steps write.</dd>
+  </dl>
+
+  <h3 data-highlight=".subtabs .subtab:nth-child(12)">JSON</h3>
+  <dl>
+    <dt data-highlight=".code-editor.ce-json">The whole transaction</dt>
+    <dd>All of it as JSON, for integrators. Edit it here; nothing changes until you apply.</dd>
+    <dt data-highlight=".code-editor.ce-json ~ .btn">Apply JSON</dt>
+    <dd>Replaces the draft with it, checked like any other edit. Refused if it does not read, or if
+    the name changes.</dd>
+  </dl>
+
+  <h3>Everywhere in it</h3>
+  <dl>
+    <dt data-highlight=".expr-field">Condition boxes</dt>
+    <dd>A rule in words. Click it, or Edit (<em>Add a condition</em> while empty), to build it from rows:
+    a field, an operator, a value, in groups (all of, any of, none of), or from a pattern. JSON shows the
+    same as text; Try lets you type values and see whether it holds. Empty means what its box says
+    (always, never).</dd>
+    <dt data-highlight=".expr-problem">A condition's problem</dt>
+    <dd>Said in red under the box: what does not read, or names something unknown.</dd>
+    <dt data-highlight=".pick">Tag lists</dt>
+    <dd>Chosen values as chips; × removes one. Click into the box for suggestions, Enter or a click adds
+    one, <em>Add "…"</em> adds a new value, Backspace in the empty box removes the last. Some take only
+    values from the list.</dd>
+    <dt data-highlight=".expr-input">JSON on one line</dt>
+    <dd>A value or expression as JSON, outlined red until it reads; applied as soon as it does.</dd>
+    <dt data-highlight=".tx-card.diff-added, .tx-card.diff-changed, tr.diff-added, tr.diff-changed, .lay-card.diff-added, .lay-card.diff-changed">Diff marks</dt>
+    <dd>Green: added in this change. Amber: changed. What was removed is listed on Changes.</dd>
+    <dt data-highlight=".undo-redo">Remove, and Undo</dt>
+    <dd>Remove always asks first; nothing live changes until the change executes. Undo
+    (<kbd>⌘</kbd>+<kbd>Z</kbd> or <kbd>Ctrl</kbd>+<kbd>Z</kbd>, outside a text box) brings it back.</dd>
+  </dl>
+</article>

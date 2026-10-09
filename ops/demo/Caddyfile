@@ -10,17 +10,19 @@ Disallow: /
 	header Strict-Transport-Security "max-age=31536000"
 }
 
-# opencoremes.com: the landing page (site/), static: one small script of its own (glow.js, the pointer's
-# light), nothing from elsewhere.
+# opencoremes.com: the site (site/, built by site/src/build.mjs), static: a page per problem it answers, one
+# stylesheet and one small script of its own (glow.js, the pointer's light), nothing from elsewhere. /design is
+# design.html.
 opencoremes.com {
 	root * /srv/opencoremes-site
 	encode gzip
+	try_files {path} {path}.html
 	file_server
 	header {
 		Strict-Transport-Security "max-age=31536000"
 		X-Content-Type-Options nosniff
 		Referrer-Policy strict-origin-when-cross-origin
-		Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+		Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 		Cache-Control "public, max-age=300"
 	}
 }
@@ -29,6 +31,32 @@ opencoremes.com {
 www.opencoremes.com {
 	redir https://opencoremes.com{uri} permanent
 }
+
+# plant.trainings.opencoremes.com: the training plant (training.env), shown in a frame by the trainings beside
+# each course (DESIGN.md §37); its own pages say which site may frame them. Not for crawlers either.
+plant.trainings.opencoremes.com {
+	encode gzip
+	respond /robots.txt `User-agent: *
+Disallow: /
+` 200
+	reverse_proxy 127.0.0.1:3001
+	header Strict-Transport-Security "max-age=31536000"
+}
+
+# sandbox.trainings.opencoremes.com: the training plant's test sandbox (§5.13), which a course opens in a window
+# of its own (training.env TEST_SANDBOX_URL; it listens on the plant's port + 1000).
+sandbox.trainings.opencoremes.com {
+	encode gzip
+	respond /robots.txt `User-agent: *
+Disallow: /
+` 200
+	reverse_proxy 127.0.0.1:4001
+	header Strict-Transport-Security "max-age=31536000"
+}
+
+# Other sites on this host, a file each, installed by their own deploys: this file is rewritten by every
+# demo deploy, those files never are.
+import /etc/caddy/sites.d/*.caddy
 
 # The names it had before (openmesai.com): every address goes on to the same place under the new one,
 # for as long as those names still point here.

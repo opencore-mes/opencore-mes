@@ -1,0 +1,129 @@
+<!-- The named query editor's guide (DESIGN.md §33, §23.1): a query in a change request, tab by tab.
+     Drawn through an allowlist: an element with data-highlight="<CSS selector>" outlines what the
+     selector finds in the change's window (query-editor.js). -->
+<article data-title="The query editor">
+  <p>A <strong>named query</strong> is one SELECT over the query views, with parameters by name
+  (<code>:family</code>). It writes nothing and grants nothing: it runs as whoever it is for, and their
+  policies decide which rows and fields they get. Once live, a plan's input screen can draw a drop-down
+  from it. On a live design, or a change you may not edit, every control here is read only.</p>
+
+  <h3>Its tabs</h3>
+  <dl>
+    <dt data-highlight=".editor-head .subtabs">The tabs</dt>
+    <dd>General opens first. Click a tab to see its settings; the open one is highlighted.</dd>
+    <dt data-highlight=".editor-head .tab-diff">A number on a tab</dt>
+    <dd>How many things on that tab differ from the live version. On Changes, the total.</dd>
+    <dt>Remove, and Undo</dt>
+    <dd>Every Remove asks first. What is removed leaves this change only; nothing live changes until the
+    change executes, and Undo (<kbd>⌘Z</kbd> or <kbd>Ctrl+Z</kbd>) brings it back.</dd>
+  </dl>
+
+  <h3>Copilot</h3>
+  <dl>
+    <dt data-highlight=".copilot-log">The conversation</dt>
+    <dd>Ask the AI to write, check or explain the query. It works as you, saves into this draft, and never
+    submits. The conversation is kept with the change: it picks up here any time.</dd>
+    <dt data-highlight=".copilot-input textarea">Ask the copilot…</dt>
+    <dd>Type what you want. <kbd>⌘ Enter</kbd> or <kbd>Ctrl+Enter</kbd> sends; you can paste or drop a file
+    into the box.</dd>
+    <dt data-highlight=".copilot-input .att-btn">Attach</dt>
+    <dd>Adds a picture, a PDF, a CSV file or an Excel workbook (up to 5); × on a file takes it off.</dd>
+    <dt data-highlight=".copilot-buttons .btn.primary">Send</dt>
+    <dd>Saves your unsaved edits first, then sends. Greyed out while it works, or when no AI is set up.</dd>
+    <dt data-highlight=".copilot-buttons .btn.ghost">New conversation</dt>
+    <dd>Asks first, then deletes the conversation kept with this change. The draft stays as it is.</dd>
+  </dl>
+
+  <h3>Changes</h3>
+  <dl>
+    <dt data-highlight=".changes-view">The differences</dt>
+    <dd>What this change does to the query against the live version, grouped by tab: how many changed,
+    were added and removed. Reviewers and approvers see the same.</dd>
+    <dt data-highlight=".changes-head .mini">Open …</dt>
+    <dd>Jumps to the tab where that group is edited.</dd>
+    <dt data-highlight=".change-item summary">A difference</dt>
+    <dd>Marked new, changed or removed; click it to open or close it. Lines marked − are the live version's,
+    lines marked + the draft's.</dd>
+  </dl>
+
+  <h3>General</h3>
+  <dl>
+    <dt data-highlight=".ed-grid > .ed-field:nth-child(1)">Name</dt>
+    <dd>Fixed once created: a plan's field names the query by it.</dd>
+    <dt data-highlight=".ed-grid > .ed-field:nth-child(2)">Label</dt>
+    <dd>A text field: what designers pick it by.</dd>
+    <dt data-highlight=".ed-grid > .ed-field:nth-child(3)">Description</dt>
+    <dd>A text box: what it answers, and for whom.</dd>
+    <dt data-highlight=".ed-grid input[type=number]">At most (rows)</dt>
+    <dd>1 to 1000; 200 when empty. A list fed by the query never shows more.</dd>
+  </dl>
+
+  <h3>Query</h3>
+  <dl>
+    <dt data-highlight=".editor > div > .code-editor">The SELECT</dt>
+    <dd>One SELECT (or WITH … SELECT), one statement, over the query views: one view per object, its columns the object's fields (the schema
+    explorer on the Query page lists them). Write a parameter as <code>:name</code>; never paste a value
+    into the text.</dd>
+    <dt data-highlight=".editor > div > .code-editor .ce-status">Its marks</dt>
+    <dd>A syntax error is marked on its line and said below; click the message to go there.</dd>
+    <dt data-highlight=".editor > div > .code-editor + p.muted">Parameters it uses</dt>
+    <dd>Each <code>:name</code> found in the text.</dd>
+    <dt data-highlight=".editor > div > p > .field-error">Not declared yet</dt>
+    <dd>In red: parameters the text uses that the Parameters tab does not declare. The query cannot be
+    submitted until they are.</dd>
+    <dt data-highlight=".editor > div > p > .linkish">Declare them as text</dt>
+    <dd>Declares each as a text parameter, labelled from its name; change its type on Parameters.</dd>
+  </dl>
+
+  <h3>Parameters</h3>
+  <dl>
+    <dt data-highlight=".ed-table">The parameters</dt>
+    <dd>One row for each <code>:name</code> the SELECT uses. A value given is checked against its type and
+    bound as a parameter. Parameters are added from the Query tab, as the SELECT names them; one declared
+    that the SELECT never uses is a problem to fix.</dd>
+    <dt data-highlight=".ed-table tr.diff-added, .ed-table tr.diff-changed">Rows marked</dt>
+    <dd>A parameter new in this change is shaded green; one changed, amber.</dd>
+    <dt data-highlight=".ed-table select">Type</dt>
+    <dd>A drop-down: text, whole number, number, yes or no, or date.</dd>
+    <dt data-highlight=".ed-table input[type=text]">Label</dt>
+    <dd>A text field: the parameter in words, shown where values are typed.</dd>
+    <dt data-highlight=".ed-table input[aria-label$='is required']">Required</dt>
+    <dd>Tick it when the query must not run without this value: a required one missing runs nothing.</dd>
+    <dt data-highlight=".ed-table .btn.ghost">Remove</dt>
+    <dd>Takes the parameter out, after asking. If the SELECT still uses it, the Query tab says so.</dd>
+  </dl>
+
+  <h3>Try and tests</h3>
+  <dl>
+    <dt data-highlight=".editor > div > .ed-row > .ed-field">Its parameters' values</dt>
+    <dd>One field per parameter: a date, a number or text, as its type says, with required ones marked.</dd>
+    <dt data-highlight=".editor > div > .ed-row > .btn:not(.ghost)">Run it</dt>
+    <dd>Runs this draft as you. What you may read is what you see; a plan's drop-down shows each person what
+    they may read.</dd>
+    <dt data-highlight=".editor > div > .field-error">Its error</dt>
+    <dd>In red, when it could not run: what the database or a check said.</dd>
+    <dt data-highlight=".editor .table-scroll">The rows</dt>
+    <dd>How many rows, in how long, and its columns; the first 50 are shown.</dd>
+    <dt data-highlight=".editor > div > .ed-row > .btn.ghost">Keep these values as a test</dt>
+    <dd>Keeps the values typed as a test, named after them.</dd>
+    <dt data-highlight=".ed-table">Tests</dt>
+    <dd>The fitness test runs each as whoever submits the change: it must run, and give the columns the lists
+    drawn from it name. Remove takes one out, after asking.</dd>
+  </dl>
+
+  <h3>Stewards</h3>
+  <dl>
+    <dt data-highlight=".editor > div > .checks">Departments</dt>
+    <dd>Tick each department that approves every change to it. At least one is needed. A query writes nothing
+    and grants nothing: it reads as whoever it runs for.</dd>
+  </dl>
+
+  <h3>JSON</h3>
+  <dl>
+    <dt data-highlight=".editor > div > .code-editor">The query as JSON</dt>
+    <dd>All of it as data: its SELECT, parameters, limit, tests and stewards. Edit it here, then apply it.</dd>
+    <dt data-highlight=".editor > div > .code-editor + .btn">Apply JSON</dt>
+    <dd>Replaces the draft with it; every check runs as on any other edit. Its name must stay the same; what
+    is wrong is said in red beside the change.</dd>
+  </dl>
+</article>

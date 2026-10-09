@@ -73,9 +73,10 @@ export async function runApiKit({ url, token, service = null, input = {}, fetchF
         // ---- /svc/v1 ----
         const svcAnon = await ask("GET", "/svc/v1/openapi.json", { auth: false });
         step("/svc/v1 with no token: 401, the error envelope with its code, versioned", svcAnon.status === 401 && errorShape(svcAnon) && svcAnon.json.code === "token.missing" && versioned(svcAnon), `${svcAnon.status}`);
-        if (!scopes.includes("service:call")) {
+        // Any of the three /svc/v1 scopes reads its description (1.3: service:call, transaction:run, query:run).
+        if (!scopes.some((s) => ["service:call", "transaction:run", "query:run"].includes(s))) {
             const r = await ask("GET", "/svc/v1/openapi.json");
-            step("without service:call: 403, code scope.missing", r.status === 403 && r.json?.code === "scope.missing" && versioned(r), `${r.status} ${JSON.stringify(r.json)}`);
+            step("without service:call, transaction:run or query:run: 403, code scope.missing", r.status === 403 && r.json?.code === "scope.missing" && versioned(r), `${r.status} ${JSON.stringify(r.json)}`);
             return finish();
         }
         const svcDoc = await ask("GET", "/svc/v1/openapi.json");

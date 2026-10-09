@@ -2,37 +2,48 @@
 // change request, and a change goes design → review → approval → execution (§5). Validation, the
 // footprint and the approving departments are computed as the designer types (definition.js), and
 // again by the server, which decides.
-import { validateDefinition, validateScript, footprint, scriptFootprint, routeOf, applyStanding, renameField, fieldNameProblem, FIELD_TYPES, IDENTIFIER, SERVICE_TEMPLATE, FLOW_TEMPLATE, FLOW_ROLES, COPYABLE, copyDesign, copyScript } from "./definition.js";
+import { FILE_KINDS, MAX_LENGTH, DEFAULT_LENGTH, SENSITIVE_TYPES, validateDefinition, validateScript, footprint, scriptFootprint, routeOf, applyStanding, renameField, fieldNameProblem, withoutField, withStates, FIELD_TYPES, IDENTIFIER, SERVICE_TEMPLATE, FLOW_TEMPLATE, FLOW_ROLES, COPYABLE, copyDesign, copyScript } from "./definition.js";
 import { richText } from "./rich-text.js";
 import { noDefault } from "./select.js";
 import { holderWords } from "./builtins.js";
 import { registerIntegrationEditor, integrationProblems, integrationElements, dryRunError } from "./integration-editor.js";
 import { registerIntegrationMonitor } from "./integration-monitor.js";
 import { normalizeForm, storeForm, widgetsFor, WIDGET_LABELS, minWidth } from "./form-layout.js";
-import { changesOf, countByTab, lineDiff, textOf, statusMaps, OBJECT_TABS, SERVICE_TABS, CONNECTION_TABS, TRANSACTION_TABS, SCREEN_TABS, LAYOUT_TABS, ELEMENT_TABS, ORG_TABS } from "./compare.js";
+import { changesOf, countByTab, lineDiff, textOf, statusMaps, OBJECT_TABS, SERVICE_TABS, CONNECTION_TABS, TRANSACTION_TABS, SCREEN_TABS, LAYOUT_TABS, QUERY_TABS, ELEMENT_TABS, ORG_TABS, FLOW_TABS } from "./compare.js";
 import { registerOrganizationEditor, organizationProblems, organizationElements } from "./organization-editor.js";
 import { registerScreenEditor, screenProblems, screenElements, SCREEN_TEMPLATE } from "./screen-editor.js";
 import { registerFlowEditor, flowProblems, flowElements } from "./flow-editor.js";
 import { registerTestSandbox } from "./test-sandbox.js";
 import { registerRollback } from "./rollback.js";
+import { registerEmergency } from "./emergency-panel.js";
+import { emergencyWords } from "./emergency.js";
 import { policyMatrix, cellWords, cellWhy, policiesFor, quickTarget, nextGrant, setGrant } from "./policy-matrix.js";
 import { registerLayoutEditor, layoutProblemsOf, layoutElements } from "./layout-editor.js";
+import { registerQueryEditor, queryProblemsOf, queryElements } from "./query-editor.js";
+import { registerExprBuilder, exprField, objectEntries, scope, userScope, wordsOf } from "./expr-builder.js";
+import { listTools, stewardFilter, openFilter, designSorts, optionsOf } from "./list-tools.js";
+import { QUERY_TEMPLATE } from "./query-def.js";
 import { registerSuiteElementEditor, elementProblemsOf, suiteElementsOf } from "./suite-element-editor.js";
 import { LAYOUT_TEMPLATE } from "./report.js";
 import { registerTransactionEditor, transactionProblems, transactionElements, TRANSACTION_TEMPLATE } from "./transaction-editor.js";
 import { registerCodeEditor, callableProblems } from "./code-editor.js";
 import { titleTab } from "./shell.js";
-import { W, clone, csv, fromCsv, text, listInput, labelled, check, compileInPage, draftDefinitions, openObject } from "./editor-kit.js";
-import { confirmDialog, askDialog } from "./dialog.js";
+import { W, clone, text, listInput, labelled, check, compileInPage, draftDefinitions, openObject, editorPanel } from "./editor-kit.js";
+import { confirmDialog, askDialog, confirmRemove } from "./dialog.js";
 import { signDialog } from "./sign.js";
-import { registerPick, pickMany } from "./pick.js";
+import { registerPick, pickMany, tagsInput } from "./pick.js";
+import * as history from "./undo.js";
+import { grantsWords, togetherWords, policyAdvice, PRESETS, POLICY_ID } from "./policy-words.js";
 import { suiteDesigns, suiteChecks } from "./suite-registry.js";
-import { plant } from "./format.js";
+import { plant, noun } from "./format.js";
 import { icon, withIcon } from "./icons.js";
 import { TONES, stateBadgeClass } from "./theme.js";
 import { fileChips, pasteFiles } from "./attach.js";
+import { querySourceEditor, queriesKnown } from "./query-source.js";
 
 const hint = (words) => ({ p: { className: "muted small", textContent: words } });
+// A labelled field across the whole row of its grid (an expression builds out sideways).
+const wide = (layout) => { const [tag, props] = Object.entries(layout)[0]; return { [tag]: { ...props, className: `${props.className} ed-wide` } }; };
 // A mark for an element that differs from the published version (compare.js).
 const diffPill = (status) => (status ? { span: { className: `diff-pill ${status}`, textContent: status === "added" ? "new" : status } } : { span: {} });
 
@@ -60,6 +71,8 @@ export function reviewWarnings({ fine, strands, empty }, { author, me, reviewer 
     const who = (u) => (u === me ? "you" : u);
     const either = (list) => { const l = list.map(who); return l.length > 1 ? `${l.slice(0, -1).join(", ")} or ${l.at(-1)}` : l.join(""); };
     if (empty.length) out.push({ key: "rv-empty", error: true, text: `Nobody can approve it for ${empty.join(", ")}: ${empty.length > 1 ? "they have" : "it has"} no approvers. Add them in People & departments before submitting.` });
+    // Nobody but its designers holds a reviewer's or designer's role: nothing to say about departments.
+    else if (!fine.length && !strands.length) out.push({ key: "rv-nobody", error: true, text: "Nobody besides its designers can review it: give someone else the designer's reviewer role (People & departments, Roles) before submitting it for review." });
     else if (!fine.length) out.push({ key: "rv-none", error: true, text: `Nobody could review it and still leave someone to approve it for ${[...new Set(strands.flatMap((x) => x.where))].join(", ")}: its approvers there are the author and the reviewer. Add approvers there (People & departments) before submitting.` });
     else {
         // Grouped by what each would strand: "If eli reviews it, nobody can approve it for engineering".
@@ -81,7 +94,10 @@ export function registerDesigner(juris, { args }) {
     registerFlowEditor(juris);
     registerTestSandbox(juris);
     registerRollback(juris);
+    registerEmergency(juris);
     registerLayoutEditor(juris);
+    registerQueryEditor(juris);
+    registerExprBuilder(juris);
     registerSuiteElementEditor(juris);
     registerOrganizationEditor(juris, { args });
     registerPick(juris);
@@ -158,6 +174,76 @@ export function registerDesigner(juris, { args }) {
     // ---- the designer's home ----
     // What is in progress comes first (the changes open now, the viewer's own first, one click away);
     // below it the designs, one tab per kind, each with its search, its New and each design's open change.
+    // Designs the installed suites bring (§29.6), on their own page (Suites, found in the navigator): one line per
+    // suite, what in it is new or differs from what is live, started as one change request by a designer; its
+    // sample records once live; its set-up guide (§29.8). Nothing goes live but through approval.
+    juris.registerComponent("SuitesPage", (props, api) => {
+        const as = api.getState("me.id", null, { track: false });
+        api.live("design.home", "design.home", args.design(as));
+        if (!api.isServer) titleTab(api, "/design/suites", "Suites");
+        const isDesigner = () => (api.getState("design.home.me.roles", []) ?? []).includes("designer");
+        const [packsAll, setPacksAll] = api.useState("packsAll", true);
+        // What the last pack action said: { error, text }.
+        const [packNote, setPackNote] = api.useState("packNote", null);
+        const setPackError = (text) => setPackNote(text ? { error: true, text } : null);
+        const fromPack = (suite) => api.call("design.fromPack", { suite }).then(({ id }) => api.navigate(`/design/c/${id}`), (e) => setPackError(e.message));
+        // Its sample records, once its designs are live: through the record services, as the person.
+        const loadSamples = (suite) => { setPackError(null); api.call("design.samples", { suite }).then((r) => setPackNote({ error: false, text: `${r.made} sample record(s) loaded${r.there ? `, ${r.there} there already` : ""}${r.waiting.length ? `, ${r.waiting.length} waiting for approval` : ""}.` }), (e) => setPackError(e.message)); };
+        const packsPanel = () => {
+            const packs = api.getState("design.home.packs", []) ?? [];
+            // Suites that bring no designs show their set-up guide only (§29.8).
+            const guides = api.getState("design.home.guides", []) ?? [];
+            if (!packs.length && !guides.length) return { span: {} };
+            // A newer version on the registry (§29.7): IT updates it when the plant chooses; its data stays.
+            const newer = (x) => ({ div: { className: "small pack-newer", title: `IT runs: opencore-mes suite update ${x.suite}, then restarts. Its designs and data stay; a newer design pack is offered here as its differences.`, children: [withIcon("refresh", `Suite ${x.newest} available`)] } });
+            const guideLink = (suite) => ({ Link: { to: `/design/suites/${suite}/guide`, className: "small", children: [withIcon("steps", "Set-up guide")] } });
+            // One line per suite (a plant may run a dozen): those with something to do first; those whose designs are all
+            // live, and those that only bring a guide, folded under one line until asked for.
+            const todo = (p) => Boolean(p.open.length || p.counts.new + p.counts.changed + p.roles + (p.certifications ?? 0) + (p.groups ?? 0));
+            const action = (p) => (p.open.length
+                ? { Link: { to: `/design/c/${p.open[0].id}`, className: "small", textContent: `Open in "${p.open[0].title}" (${p.open[0].state})` } }
+                : !todo(p) ? (p.samples ? { button: { type: "button", className: "btn small", textContent: "Load its sample records", title: "Created through the record services, as you: your roles decide what you may create.", onclick: () => loadSamples(p.suite) } } : { span: { className: "muted small", textContent: "All of it is live." } })
+                : isDesigner() ? { button: { type: "button", className: "btn small", textContent: "Start a change from it", title: p.description, onclick: () => fromPack(p.suite) } } : { span: { className: "muted small", textContent: "A designer starts a change from it." } });
+            const row = (key, { version, from, title, said, act, newest, guide, suite }) => ({
+                li: {
+                    key, className: "pack-row",
+                    children: [
+                        { div: { className: "pack-name", title: from && from !== title ? `${title} (${from})` : title, children: [{ strong: title }, { span: { className: "badge", textContent: version } }] } },
+                        { div: { className: "muted small pack-said", textContent: said } },
+                        { div: { className: "pack-acts", children: [newest ? newer({ suite, newest }) : { span: {} }, act ?? { span: {} }, guide ? guideLink(suite) : { span: {} }] } },
+                    ],
+                },
+            });
+            const said = (p) => [p.counts.new ? `${p.counts.new} new` : "", p.counts.changed ? `${p.counts.changed} changed` : "", p.counts.same ? `${p.counts.same} live already` : "", p.roles ? `${p.roles} role(s) to give` : "", p.certifications ? `${p.certifications} certification(s) to list` : "", p.groups ? `${p.groups} group(s) to make` : "", p.samples ? `${p.samples} sample records` : ""].filter(Boolean).join(" · ");
+            const rows = [
+                ...packs.filter(todo).map((p) => ({ first: true, key: p.suite, r: { ...p, title: p.from || p.label, said: said(p), act: action(p) } })),
+                ...packs.filter((p) => !todo(p)).map((p) => ({ first: false, key: p.suite, r: { ...p, title: p.from || p.label, said: said(p), act: action(p) } })),
+                ...guides.map((g) => ({ first: false, key: `guide-${g.suite}`, r: { ...g, title: g.from || g.title, said: "Brings no designs of its own: its guide says how to set it up.", guide: true } })),
+            ];
+            const rest = rows.filter((x) => !x.first).length;
+            return {
+                section: {
+                    className: "in-progress packs",
+                    children: [
+                        () => ({ ul: { className: "pack-list", children: rows.filter((x) => x.first || packsAll()).map((x) => row(x.key, x.r)) } }),
+                        () => (rest ? { button: { type: "button", className: "linkish small pack-more", textContent: packsAll() ? "Show only those with something to do" : `${rest} more, live already or a guide only: show them`, onclick: () => setPacksAll(!packsAll()) } } : { span: {} }),
+                        { p: { className: () => (packNote()?.error ? "field-error" : "muted small"), textContent: () => packNote()?.text ?? "" } },
+                    ],
+                },
+            };
+        };
+
+        return {
+            div: {
+                className: "view suites",
+                children: [
+                    { div: { className: "view-head", children: [{ h1: "Suites" }, { span: { className: "muted", textContent: "What each installed suite brings: its designs to start a change from, its sample records, how to set it up." } }] } },
+                    () => { const p = api.getState("design.home.packs", null); const g = api.getState("design.home.guides", null); return p === null && g === null ? { p: { className: "muted small", textContent: "Loading…" } } : !(p ?? []).length && !(g ?? []).length ? { p: { className: "muted", textContent: "No suite is installed. IT installs one in the plant folder (opencore-mes suite install <name>), then restarts." } } : packsPanel(); },
+                ],
+            },
+        };
+    });
+
     juris.registerComponent("DesignHome", (props, api) => {
         const as = api.getState("me.id", null, { track: false });
         api.live("design.home", "design.home", args.design(as));
@@ -173,7 +259,7 @@ export function registerDesigner(juris, { args }) {
         // Beside a New form: blank, or a copy of a live one of its kind (one stable select, its options live).
         const copyOf = (kind, value, set) => ({ select: { title: `Start it blank, or as a copy of a live ${kind}`, value, onchange: (e) => set(e.target.value), children: noDefault(() => [
             { option: { value: "", textContent: "blank" } },
-            ...(api.getState(`design.home.${kind === "object" ? "objects" : `${kind}s`}`, []) ?? []).map((x) => ({ option: { key: x.object ?? x.name, value: x.object ?? x.name, textContent: `a copy of ${x.label ?? x.object ?? x.name}` } })),
+            ...(api.getState(`design.home.${kind === "object" ? "objects" : kind === "query" ? "queries" : `${kind}s`}`, []) ?? []).map((x) => ({ option: { key: x.name ?? x.object, value: x.name ?? x.object, textContent: `a copy of ${x.label ?? x.name ?? x.object}` } })),
         ]) } });
         const failed = { span: { className: "error", textContent: () => error() ?? "" } };
         // A row's Copy: the New form above takes "a copy of" it, and the cursor waits in its name box.
@@ -182,7 +268,7 @@ export function registerDesigner(juris, { args }) {
                 setError(null);
                 if (kind === "object") setForm({ object: "", label: "", from: name });
                 else if (kind === "service" || kind === "connection") setInteg({ kind, name: "", label: "", from: name });
-                else api.setValue(`design.${{ transaction: "newTx", screen: "newScreen", flow: "newFlow", layout: "newLayout" }[kind]}`, { name: "", label: "", from: name });
+                else api.setValue(`design.${{ transaction: "newTx", screen: "newScreen", flow: "newFlow", layout: "newLayout", query: "newQuery" }[kind]}`, { name: "", label: "", from: name });
             });
             if (typeof document === "undefined") return;
             setTimeout(() => {
@@ -197,17 +283,44 @@ export function registerDesigner(juris, { args }) {
         // The open tab: the one picked here, else the one the address names (/design?tab=elements), else Objects.
         const tab = () => api.getState("ui.designTab", null) ?? (/^[a-z]{1,20}$/.test(api.getState("$route.query.tab", "") ?? "") ? api.getState("$route.query.tab") : "objects");
         const setTab = (t) => api.setValue("ui.designTab", t);
-        const q = () => String(api.getState("ui.designQ", "") ?? "").trim().toLowerCase();
-        const hit = (...texts) => !q() || texts.some((t) => String(t ?? "").toLowerCase().includes(q()));
+        // Each tab's search, filters and order (list-tools.js): what it is called, who stewards it, whether a
+        // change to it is open, and what that kind of design is about.
+        const depts = () => api.getState("design.home.departments", []) ?? [];
+        const home = (k) => api.getState(`design.home.${k}`, []) ?? [];
+        const common = [stewardFilter(depts), openFilter];
+        const yesNo = (id, label, yes, no, test) => ({ id, label, options: [["yes", yes], ["no", no]], test: (x, v) => (v === "yes") === Boolean(test(x)) });
+        const TOOLS = {
+            objects: listTools(api, "objects", { placeholder: "Find an object", text: (o) => [o.object, o.label, o.area], sorts: designSorts([["area", "Area", (o) => o.area]]),
+                filters: [{ id: "area", label: "Area", options: () => optionsOf(home("objects"), (o) => o.area), test: (o, v) => o.area === v }, ...common] }),
+            transactions: listTools(api, "transactions", { placeholder: "Find a transaction", text: (t) => [t.name, t.label, t.appearsOn?.object], sorts: designSorts([["steps", "Steps", (t) => Number(t.steps ?? 0)]]),
+                filters: [{ id: "on", label: "Appears on", options: () => optionsOf(home("transactions"), (t) => t.appearsOn?.object), test: (t, v) => t.appearsOn?.object === v }, yesNo("signed", "Signed", "signed by whoever runs it", "not signed", (t) => t.signed), ...common] }),
+            screens: listTools(api, "screens", { placeholder: "Find a screen", text: (x) => [x.name, x.label], sorts: designSorts([["blocks", "Blocks", (x) => Number(x.blocks ?? 0)]]),
+                filters: [yesNo("param", "Opened with", "a record or value", "nothing (the same for everyone)", (x) => x.param), ...common] }),
+            flows: listTools(api, "flows", { placeholder: "Find a flow template", text: (x) => [x.name, x.label, x.object], sorts: designSorts([["kind", "Kind", (x) => x.kind], ["nodes", "Nodes", (x) => Number(x.nodes ?? 0)]]),
+                filters: [{ id: "kind", label: "Kind", options: [["route", "routes"], ["plan", "plans"], ["input", "input flows"]], test: (x, v) => x.kind === v }, { id: "object", label: "Of", options: () => optionsOf(home("flows"), (x) => x.object), test: (x, v) => x.object === v }, ...common] }),
+            elements: listTools(api, "elements", { placeholder: "Find a design element", text: (x) => [x.name, x.label, x.kindLabel, x.kind], sorts: designSorts([["kind", "Kind", (x) => x.kindLabel ?? x.kind]]),
+                filters: [{ id: "kind", label: "Kind", options: () => optionsOf(home("elements"), (x) => x.kind, (k) => home("elements").find((x) => x.kind === k)?.kindLabel ?? k), test: (x, v) => x.kind === v }, ...common] }),
+            layouts: listTools(api, "layouts", { placeholder: "Find a report layout", text: (x) => [x.name, x.label, x.description], sorts: designSorts(), filters: common }),
+            queries: listTools(api, "queries", { placeholder: "Find a query", text: (x) => [x.name, x.label, x.description], sorts: designSorts(),
+                filters: [yesNo("params", "Parameters", "with parameters", "without", (x) => Object.keys(x.params ?? {}).length), ...common] }),
+            integration: listTools(api, "integration", { placeholder: "Find a service or connection", text: (x) => [x.name, x.label, x.baseUrl], sorts: designSorts(),
+                filters: [{ id: "what", label: "Show", options: [["service", "services"], ["connection", "connections"]], test: (x, v) => (v === "connection") === (x.baseUrl !== undefined) },
+                    yesNo("http", "Called over HTTP", "a web service", "not a web service", (x) => x.http), ...common] }),
+            people: listTools(api, "people", { placeholder: "Find a department or a person", text: (d) => [d.id, d.name, ...(d.members ?? [])], sorts: [["name", "Name", (d) => d.name], ["members", "Members", (d) => (d.members ?? []).length], ["steps", "Approval steps", (d) => (d.approval ?? []).length]] }),
+            changes: listTools(api, "changes", { placeholder: "Find a change", text: (c) => [c.title, c.author, ...touches(c)], desc: true,
+                sorts: [["updated", "Updated", (c) => c.updated_at ?? ""], ["title", "Title", (c) => c.title], ["state", "State", (c) => c.state], ["author", "Author", (c) => c.author]],
+                filters: [{ id: "state", label: "State", options: () => optionsOf(home("changes"), (c) => c.state), test: (c, v) => c.state === v }, { id: "author", label: "Author", options: () => optionsOf(home("changes"), (c) => c.author), test: (c, v) => c.author === v }] }),
+        };
         const OPEN = ["design", "review", "approval"];
         const openChanges = () => (api.getState("design.home.changes", []) ?? []).filter((c) => OPEN.includes(c.state));
-        const touches = (c) => [...c.objects, ...c.transactions.map((n) => `${n} (transaction)`), ...c.screens.map((n) => `${n} (screen)`), ...(c.flows ?? []).map((n) => `${n} (flow)`), ...(c.layouts ?? []).map((n) => `${n} (report layout)`), ...(c.elements ?? []).map((n) => `${n} (design element)`), ...c.services.map((n) => `${n} (service)`), ...c.connections.map((n) => `${n} (connection)`), ...(c.organization ? ["people & departments"] : []), ...Object.values(c.retire ?? {}).flat().map((n) => `retire ${n}`)];
+        const touches = (c) => [...c.objects, ...c.transactions.map((n) => `${n} (transaction)`), ...c.screens.map((n) => `${n} (screen)`), ...(c.flows ?? []).map((n) => `${n} (flow)`), ...(c.layouts ?? []).map((n) => `${n} (report layout)`), ...(c.queries ?? []).map((n) => `${n} (query)`), ...(c.elements ?? []).map((n) => `${n} (design element)`), ...c.services.map((n) => `${n} (service)`), ...c.connections.map((n) => `${n} (connection)`), ...(c.organization ? ["people & departments"] : []), ...Object.values(c.retire ?? {}).flat().map((n) => `retire ${n}`)];
         const TABS = [
             ["objects", "Objects", () => (api.getState("design.home.objects", []) ?? []).length, (c) => c.objects.length > 0 || c.scripts.length > 0],
             ["transactions", "Transactions", () => (api.getState("design.home.transactions", []) ?? []).length, (c) => c.transactions.length > 0],
             ["screens", "Screens", () => (api.getState("design.home.screens", []) ?? []).length, (c) => c.screens.length > 0],
             ["flows", "Flows", () => (api.getState("design.home.flows", []) ?? []).length, (c) => (c.flows ?? []).length > 0],
             ["layouts", "Report layouts", () => (api.getState("design.home.layouts", []) ?? []).length, (c) => (c.layouts ?? []).length > 0],
+            ["queries", "Queries", () => (api.getState("design.home.queries", []) ?? []).length, (c) => (c.queries ?? []).length > 0],
             // Design elements of the suites' own kinds (§30.11): shown once a suite adds a kind, or one is published.
             ["elements", "From suites", () => (api.getState("design.home.elements", []) ?? []).length, (c) => (c.elements ?? []).length > 0],
             ["integration", "Services & connections", () => (api.getState("design.home.services", []) ?? []).length + (api.getState("design.home.connections", []) ?? []).length, (c) => c.services.length + c.connections.length > 0],
@@ -215,8 +328,6 @@ export function registerDesigner(juris, { args }) {
             ["test", "Test sandbox", () => (api.getState("design.home.changes", []) ?? []).filter((c) => c.test && OPEN.includes(c.state)).length, () => false],
             ["changes", "Changes", () => openChanges().length, () => false],
         ];
-        // A search over the tab's designs (name or label).
-        const searchBox = (placeholder) => ({ input: { type: "search", className: "design-search", placeholder, "aria-label": placeholder, value: () => api.getState("ui.designQ", "") ?? "", oninput: (e) => api.setValue("ui.designQ", e.target.value) } });
 
         const inProgress = () => {
             const me = api.getState("me.id", null);
@@ -236,7 +347,7 @@ export function registerDesigner(juris, { args }) {
                                     Link: {
                                         key: c.id, to: `/design/c/${c.id}`, className: `change-card${ours(c) ? " mine" : ""}`,
                                         children: [
-                                            { div: { className: "change-card-top", children: [{ span: { className: `badge s-${c.state}`, textContent: c.state } }, { span: { className: "muted small", textContent: ago(c.updated_at) } }] } },
+                                            { div: { className: "change-card-top", children: [{ span: { className: `badge s-${c.state}`, textContent: c.state } }, c.emergency ? { span: { className: `badge s-emergency${c.emergency.overdue ? " overdue" : ""}`, textContent: "emergency" } } : { span: {} }, { span: { className: "muted small", textContent: ago(c.updated_at) } }] } },
                                             { div: { className: "change-card-title", textContent: c.title } },
                                             { div: { className: "muted small change-card-what", textContent: touches(c).join(", ") || "—" } },
                                             { div: { className: "muted small", textContent: c.author === me ? "yours" : (c.co_designers ?? []).includes(me) ? `${c.author}'s, with you` : `by ${c.author}` } },
@@ -245,47 +356,6 @@ export function registerDesigner(juris, { args }) {
                                 })),
                             },
                         },
-                    ],
-                },
-            };
-        };
-
-        // Designs the installed suites bring (§29.6): what in each is new or differs from what is live,
-        // started as one change request by a designer; nothing goes live but through approval.
-        // What the last pack action said: { error, text }.
-        const [packNote, setPackNote] = api.useState("packNote", null);
-        const setPackError = (text) => setPackNote(text ? { error: true, text } : null);
-        const fromPack = (suite) => api.call("design.fromPack", { suite }).then(({ id }) => api.navigate(`/design/c/${id}`), (e) => setPackError(e.message));
-        // Its sample records, once its designs are live: through the record services, as the person.
-        const loadSamples = (suite) => { setPackError(null); api.call("design.samples", { suite }).then((r) => setPackNote({ error: false, text: `${r.made} sample record(s) loaded${r.there ? `, ${r.there} there already` : ""}${r.waiting.length ? `, ${r.waiting.length} waiting for approval` : ""}.` }), (e) => setPackError(e.message)); };
-        const packsPanel = () => {
-            const packs = api.getState("design.home.packs", []) ?? [];
-            if (!packs.length) return { span: {} };
-            return {
-                section: {
-                    className: "in-progress packs",
-                    children: [
-                        { div: { className: "in-progress-head", children: [{ strong: "From the suites" }, { span: { className: "muted small", textContent: " designs an installed suite brings, to start a change from" } }] } },
-                        {
-                            div: {
-                                className: "change-cards",
-                                children: packs.map((p) => ({
-                                    div: {
-                                        key: p.suite, className: "change-card pack-card",
-                                        children: [
-                                            { div: { className: "change-card-top", children: [{ span: { className: "badge", textContent: p.version } }, { span: { className: "muted small", textContent: p.from } }] } },
-                                            { div: { className: "change-card-title", textContent: p.label } },
-                                            { div: { className: "muted small", textContent: [p.counts.new ? `${p.counts.new} new` : "", p.counts.changed ? `${p.counts.changed} changed` : "", p.counts.same ? `${p.counts.same} live already` : "", p.roles ? `${p.roles} role(s) to give` : "", p.samples ? `${p.samples} sample records` : ""].filter(Boolean).join(" · ") } },
-                                            p.open.length
-                                                ? { Link: { to: `/design/c/${p.open[0].id}`, className: "small", textContent: `Open in "${p.open[0].title}" (${p.open[0].state})` } }
-                                                : !(p.counts.new + p.counts.changed + p.roles) ? (p.samples ? { button: { type: "button", className: "btn small", textContent: "Load its sample records", title: "Created through the record services, as you: your roles decide what you may create.", onclick: () => loadSamples(p.suite) } } : { span: { className: "muted small", textContent: "All of it is live." } })
-                                                : isDesigner() ? { button: { type: "button", className: "btn small", textContent: "Start a change from it", title: p.description, onclick: () => fromPack(p.suite) } } : { span: { className: "muted small", textContent: "A designer starts a change from it." } },
-                                        ],
-                                    },
-                                })),
-                            },
-                        },
-                        { p: { className: () => (packNote()?.error ? "field-error" : "muted small"), textContent: () => packNote()?.text ?? "" } },
                     ],
                 },
             };
@@ -306,7 +376,7 @@ export function registerDesigner(juris, { args }) {
                             ],
                         },
                     } : { p: { className: "muted", textContent: "You review and approve changes here; designing is for designers." } }),
-                searchBox("Find an object"),
+                () => TOOLS.objects.bar(home("objects")),
                     () => ({
                         table: {
                             className: "grid",
@@ -314,7 +384,7 @@ export function registerDesigner(juris, { args }) {
                                 { thead: { children: [{ tr: { children: [{ th: "Object" }, { th: "Area" }, { th: "Version" }, { th: "Open change" }, { th: "" }] } }] } },
                                 {
                                     tbody: {
-                                        children: (api.getState("design.home.objects", []) ?? []).filter((o) => hit(o.object, o.label, o.area)).map((o) => ({
+                                        children: TOOLS.objects.apply(home("objects")).map((o) => ({
                                             tr: {
                                                 key: o.object,
                                                 children: [
@@ -347,9 +417,10 @@ export function registerDesigner(juris, { args }) {
                             ],
                         },
                     } : { span: {} }),
+                    () => TOOLS.integration.bar([...home("services"), ...home("connections")]),
                     () => {
-                        const services = (api.getState("design.home.services", []) ?? []).filter((x) => hit(x.name, x.label));
-                        const connections = (api.getState("design.home.connections", []) ?? []).filter((x) => hit(x.name, x.label));
+                        const services = TOOLS.integration.apply(home("services"));
+                        const connections = TOOLS.integration.apply(home("connections"));
                         if (!services.length && !connections.length) return { p: { className: "muted small", textContent: "None yet." } };
                         const row = (kind, key, label, detail, version, open) => ({
                             tr: {
@@ -386,9 +457,10 @@ export function registerDesigner(juris, { args }) {
                             div: {
                                 children: [
                                     { p: { className: "muted small", textContent: `Departments approve what they steward, in their steps, in order. Governance: ${org.governance}. Standing approvers: ${kinds || "none"}.` } },
+                                    TOOLS.people.bar(Object.entries(org.departments ?? {}).map(([id, x]) => ({ ...x, id }))),
                                     { table: { className: "grid", children: [
                                         { thead: { children: [{ tr: { children: ["Department", "Members", "Approves in"].map((h) => ({ th: h })) } }] } },
-                                        { tbody: { children: Object.entries(org.departments ?? {}).map(([d, x]) => ({ tr: { key: d, children: [
+                                        { tbody: { children: TOOLS.people.apply(Object.entries(org.departments ?? {}).map(([id, x]) => ({ ...x, id }))).map((x) => [x.id, x]).map(([d, x]) => ({ tr: { key: d, children: [
                                             { td: { children: [{ strong: x.name }, { span: { className: "muted small", textContent: ` ${d}` } }] } },
                                             { td: (x.members ?? []).join(", ") || "—" },
                                             { td: (x.approval ?? []).map((st, k) => `${k + 1}. ${st.label} (${st.approvers.join(" or ") || "nobody"})`).join(" → ") || "—" },
@@ -417,8 +489,9 @@ export function registerDesigner(juris, { args }) {
                             ],
                         },
                     } : { span: {} }),
+                    () => TOOLS.transactions.bar(home("transactions")),
                     () => {
-                        const list = (api.getState("design.home.transactions", []) ?? []).filter((t) => hit(t.name, t.label));
+                        const list = TOOLS.transactions.apply(home("transactions"));
                         if (!list.length) return { p: { className: "muted small", textContent: "None yet." } };
                         return {
                             table: {
@@ -453,8 +526,9 @@ export function registerDesigner(juris, { args }) {
                             ],
                         },
                     } : { span: {} }),
+                    () => TOOLS.screens.bar(home("screens")),
                     () => {
-                        const list = (api.getState("design.home.screens", []) ?? []).filter((x) => hit(x.name, x.label));
+                        const list = TOOLS.screens.apply(home("screens"));
                         if (!list.length) return { p: { className: "muted small", textContent: "None yet." } };
                         return {
                             table: {
@@ -491,8 +565,9 @@ export function registerDesigner(juris, { args }) {
                             ],
                         },
                     } : { span: {} }),
+                    () => TOOLS.flows.bar(home("flows")),
                     () => {
-                        const list = (api.getState("design.home.flows", []) ?? []).filter((x) => hit(x.name, x.label));
+                        const list = TOOLS.flows.apply(home("flows"));
                         if (!list.length) return { p: { className: "muted small", textContent: "None yet." } };
                         return {
                             table: {
@@ -535,8 +610,9 @@ export function registerDesigner(juris, { args }) {
                             },
                         };
                     },
+                    () => TOOLS.elements.bar(home("elements")),
                     () => {
-                        const list = (api.getState("design.home.elements", []) ?? []).filter((x) => hit(x.name, x.label, x.kindLabel, x.kind));
+                        const list = TOOLS.elements.apply(home("elements"));
                         if (!list.length) return { p: { className: "muted small", textContent: "None yet." } };
                         return {
                             table: {
@@ -571,8 +647,9 @@ export function registerDesigner(juris, { args }) {
                             ],
                         },
                     } : { span: {} }),
+                    () => TOOLS.layouts.bar(home("layouts")),
                     () => {
-                        const list = (api.getState("design.home.layouts", []) ?? []).filter((x) => hit(x.name, x.label));
+                        const list = TOOLS.layouts.apply(home("layouts"));
                         if (!list.length) return { p: { className: "muted small", textContent: "None yet." } };
                         return {
                             table: {
@@ -591,6 +668,44 @@ export function registerDesigner(juris, { args }) {
                         };
                     },
             ] } }),
+            // Named queries (§23.1): a SELECT over the query views, with parameters by name; a plan's input screen
+            // draws a dropdown from one.
+            queries: () => ({ div: { children: [
+                    { p: { className: "muted small", textContent: "Named queries: one SELECT over the query views, with parameters by name (:family), approved like anything else. It runs as whoever it is for, so each sees what they may read; a plan's input screen draws a dropdown from one, its parameters read from the plan's context." } },
+                    () => (isDesigner() ? {
+                        div: {
+                            className: "new-object",
+                            children: [
+                                { strong: "New query" },
+                                { input: { placeholder: "name (e.g. tools_of_family)", value: () => api.getState("design.newQuery.name", ""), oninput: (e) => api.setValue("design.newQuery.name", e.target.value.trim().toLowerCase()) } },
+                                { input: { placeholder: "label (e.g. Tools of a family)", value: () => api.getState("design.newQuery.label", ""), oninput: (e) => api.setValue("design.newQuery.label", e.target.value) } },
+                                copyOf("query", () => api.getState("design.newQuery.from", ""), (v) => api.setValue("design.newQuery.from", v)),
+                                { button: { type: "button", className: "btn primary", textContent: "Start design", disabled: () => !IDENTIFIER.test(api.getState("design.newQuery.name", "") ?? ""), onclick: () => start({ query: api.peek("design.newQuery.name"), label: api.peek("design.newQuery.label") ?? "", from: api.peek("design.newQuery.from") }) } },
+                                failed,
+                            ],
+                        },
+                    } : { span: {} }),
+                    () => TOOLS.queries.bar(home("queries")),
+                    () => {
+                        const list = TOOLS.queries.apply(home("queries"));
+                        if (!list.length) return { p: { className: "muted small", textContent: "None yet." } };
+                        return {
+                            table: {
+                                className: "grid",
+                                children: [
+                                    { thead: { children: [{ tr: { children: ["Query", "Parameters", "Version", "Open change", ""].map((h) => ({ th: h })) } }] } },
+                                    { tbody: { children: list.map((q) => ({ tr: { key: q.name, children: [
+                                        { td: { children: [{ strong: q.label }, { span: { className: "muted small", textContent: ` ${q.name}` } }] } },
+                                        { td: Object.keys(q.params ?? {}).map((p) => `:${p}`).join(", ") || "—" },
+                                        { td: `v${q.version}` },
+                                        { td: { children: q.open.length ? [{ Link: { to: `/design/c/${q.open[0]}`, textContent: "open change" } }] : [{ span: { className: "muted", textContent: "—" } }] } },
+                                        { td: { className: "row-buttons", children: [{ Link: { to: `/design/view/query/${q.name}`, className: "btn ghost", textContent: "View" } }, isDesigner() && !q.open.length ? { button: { type: "button", className: "btn", textContent: "Change", onclick: () => start({ query: q.name }) } } : { span: {} }, copyButton("query", q.name)] } },
+                                    ] } })) } },
+                                ],
+                            },
+                        };
+                    },
+            ] } }),
             // The test sandbox (§5.13): the changes under test together, in the order they are applied.
             test: () => ({ TestBench: { key: "testbench" } }),
             // Every change request: the open ones by default, or the viewer's, or all of them.
@@ -598,23 +713,24 @@ export function registerDesigner(juris, { args }) {
                 const me = api.getState("me.id", null);
                 const which = api.getState("ui.designChanges", "open");
                 const all = api.getState("design.home.changes", []) ?? [];
-                const list = all.filter((c) => (which === "open" ? OPEN.includes(c.state) : which === "mine" ? c.author === me || (c.co_designers ?? []).includes(me) : true)).filter((c) => hit(c.title, c.author, ...touches(c)));
+                // (Emergencies, §5.7: every one listed, for their periodic review.)
+                const list = all.filter((c) => (which === "open" ? OPEN.includes(c.state) : which === "mine" ? c.author === me || (c.co_designers ?? []).includes(me) : which === "emergency" ? Boolean(c.emergency) : which === "setup" ? Boolean(c.setup) : true)); const shownList = TOOLS.changes.apply(list);
                 const waiting = all.filter((c) => c.state === "review" || c.state === "approval").length;
                 return { div: { children: [
                     { div: { className: "filter-row", children: [
-                        ...[["open", "Open"], ["mine", "Mine"], ["all", "All"]].map(([k, l]) => ({ button: { key: k, type: "button", className: "chip", classList: { on: which === k }, textContent: l, onclick: () => api.setValue("ui.designChanges", k) } })),
-                        searchBox("Find a change"),
+                        ...[["open", "Open"], ["mine", "Mine"], ["emergency", "Emergencies"], ["setup", "Setup & signed alone"], ["all", "All"]].map(([k, l]) => ({ button: { key: k, type: "button", className: "chip", classList: { on: which === k }, textContent: l, onclick: () => api.setValue("ui.designChanges", k) } })),
+                        TOOLS.changes.bar(list),
                         waiting ? { Link: { to: "/design/approvals", className: "small", className: "small icon-text", children: [{ span: `${waiting} waiting for review or approval` }, icon("arrowRight")] } } : { span: {} },
                     ] } },
-                    list.length ? {
+                    shownList.length ? {
                         table: {
                             className: "grid",
                             children: [
                                 { thead: { children: [{ tr: { children: ["Change", "Changes", "State", "Author", "Updated"].map((h) => ({ th: h })) } }] } },
-                                { tbody: { children: list.map((c) => ({ tr: { key: c.id, className: "row", onclick: () => api.navigate(`/design/c/${c.id}`), children: [
+                                { tbody: { children: shownList.map((c) => ({ tr: { key: c.id, className: "row", onclick: () => api.navigate(`/design/c/${c.id}`), children: [
                                     { td: { children: [{ Link: { to: `/design/c/${c.id}`, textContent: c.title } }] } },
                                     { td: { className: "muted small", textContent: touches(c).join(", ") || "—" } },
-                                    { td: { children: [{ span: { className: `badge s-${c.state}`, textContent: c.state } }] } },
+                                    { td: { children: [{ span: { className: `badge s-${c.state}`, textContent: c.state } }, c.emergency ? { span: { className: `badge s-emergency${c.emergency.overdue ? " overdue" : ""}`, textContent: emergencyWords(c.emergency) } } : c.setup ? { span: { className: "badge s-setup", title: `Executed ${c.setup.because === "approval level none" ? "at approval level none" : "during setup"}, on ${c.setup.by}'s signature, without review or approval`, textContent: c.setup.because === "approval level none" ? "signed alone" : "setup" } } : c.approvalLevel === "one" ? { span: { className: "badge s-setup", title: "Approval level one: one approver's signature executed it, without review", textContent: "one approval" } } : { span: {} }] } },
                                     { td: c.author },
                                     { td: { className: "muted small", textContent: ago(c.updated_at) } },
                                 ] } })) } },
@@ -629,9 +745,14 @@ export function registerDesigner(juris, { args }) {
             div: {
                 className: "view designer",
                 children: [
-                    { div: { className: "view-head", children: [{ h1: "Designer" }, { span: { className: "muted", textContent: "Every change is designed, reviewed, approved, then executed by the platform." } }, { span: { className: "spacer" } }, { Link: { to: "/design/approvals", className: "btn", textContent: "Approvals" } }, { Link: { to: "/design/integration", className: "btn", textContent: "Integration monitor" } }] } },
+                    { div: { className: "view-head", children: [{ h1: "Designer" }, { span: { className: "muted", textContent: () => (api.getState("design.home.setupOpen", false) ? "The plant is being set up: a designer's change executes on their signature." : "Every change is designed, reviewed, approved, then executed by the platform.") } }, { span: { className: "spacer" } }, { Link: { to: "/design/approvals", className: "btn", textContent: "Approvals" } }, { Link: { to: "/design/integration", className: "btn", textContent: "Integration monitor" } }] } },
+                    () => setupBanner(api, api.getState("design.home.setupOpen", false)),
                     inProgress,
-                    packsPanel,
+                    // The suites' designs have a page of their own (Suites): here only a line when one has something to do.
+                    () => {
+                        const n = (api.getState("design.home.packs", []) ?? []).filter((p) => p.open.length || p.counts.new + p.counts.changed + p.roles + (p.certifications ?? 0) + (p.groups ?? 0)).length;
+                        return n ? { p: { className: "small", children: [{ span: { className: "muted", textContent: `${n === 1 ? "A suite brings" : `${n} suites bring`} designs that are not live yet: ` } }, { Link: { to: "/design/suites", textContent: "Suites" } }] } } : { span: {} };
+                    },
                     // The whole model to another installation, or from one (§24.1).
                     { p: { className: "small", children: [{ Link: { to: "/design/model", textContent: "Export or import the whole model" } }, { span: { className: "muted", textContent: " as one file, for another installation" } }] } },
                     {
@@ -640,7 +761,7 @@ export function registerDesigner(juris, { args }) {
                             children: TABS.filter(([key]) => key !== "elements" || (api.getState("design.home.elements", []) ?? []).length > 0 || Object.keys(api.getState("design.home.suiteElements", {}) ?? {}).length > 0).map(([key, label, count, inChange]) => ({
                                 button: {
                                     key, type: "button", role: "tab", className: "design-tab", "aria-selected": () => String(tab() === key), classList: { active: () => tab() === key },
-                                    onclick: () => { api.batch(() => { setTab(key); api.setValue("ui.designQ", ""); }); },
+                                    onclick: () => setTab(key),
                                     children: [
                                         { span: label },
                                         () => ({ span: { className: "tab-count", textContent: String(count()) } }),
@@ -716,7 +837,7 @@ export function registerDesigner(juris, { args }) {
             return result;
         };
         const save = () => run("Draft saved.", saveDraft);
-        const submit = () => run("Submitted for review.", async () => {
+        const submit = () => run(api.peek(`${C}.approvalLevel`) === "one" ? "Submitted: one approver's signature executes it." : "Submitted for review.", async () => {
             // The reason is folded away until asked for: a submit without one opens it.
             if (!String(api.peek(`${w}.reason`) ?? "").trim()) {
                 api.setValue(`${w}.whyOpen`, true);
@@ -732,6 +853,50 @@ export function registerDesigner(juris, { args }) {
                 throw e;
             }
         });
+        // During setup (§5.15): the same checks and fitness test, then executed at once on the designer's own
+        // signature, without review or approval.
+        const submitSetup = async () => {
+            if (!String(api.peek(`${w}.reason`) ?? "").trim()) {
+                api.setValue(`${w}.whyOpen`, true);
+                api.setValue(`${w}.error`, "Write why this change is needed first: it is kept with the change.");
+                return;
+            }
+            const signature = await signDialog(api, { title: "Execute it now?", message: "Setup is open: the change goes live at once, on your signature, without review or approval. It is marked as executed during setup, and kept in the audit trail with your name, the time and its meaning.", confirm: "Execute (sign)" });
+            if (signature === null) return;
+            await run("Executed during setup.", async () => {
+                const result = await saveDraft();
+                if (result.problems.length) throw new Error(`Fix ${result.problems.length} problem(s) first.`);
+                try {
+                    const done = await api.call("design.submit", { id, setup: true, signature });
+                    if (done?.state === "failed") throw new Error(`Execution failed: ${done.error}`);
+                } catch (e) {
+                    if (e.code === "design.unfit") await api.call("design.fitness", { id }).catch(() => {});
+                    throw e;
+                }
+            });
+        };
+        // An emergency (§5.7): the same checks and fitness test, then one signature executes it and it is
+        // reviewed afterwards. Why it cannot wait is asked for here, apart from why the change is made.
+        const submitEmergency = async () => {
+            if (!String(api.peek(`${w}.reason`) ?? "").trim()) {
+                api.setValue(`${w}.whyOpen`, true);
+                api.setValue(`${w}.error`, "Write why this change is needed first: approvers read it.");
+                return;
+            }
+            const policy = api.peek(`${C}.emergencyPolicy`) ?? { reviewDays: 3 };
+            const why = await askDialog(api, { title: "Submit as an emergency?", message: `Only when the plant cannot wait (a line down, someone who must have access now). It skips review: one signature, by an approver of any department it touches (not you), executes it at once. It is then reviewed afterwards, within ${policy.reviewDays} day(s): a reviewer, then each department confirms it or flags it, and a flagged one may be rolled back. Every emergency is recorded as one, in the audit trail and the event log.`, label: "Why can it not wait?", required: true, multiline: true, confirm: "Submit as an emergency", danger: true });
+            if (why === null) return;
+            await run("Submitted as an emergency: one signature executes it.", async () => {
+                const result = await saveDraft();
+                if (result.problems.length) throw new Error(`Fix ${result.problems.length} problem(s) first.`);
+                try {
+                    await api.call("design.submit", { id, emergency: { reason: why } });
+                } catch (e) {
+                    if (e.code === "design.unfit") await api.call("design.fitness", { id }).catch(() => {});
+                    throw e;
+                }
+            });
+        };
         // Sending back and rejecting say why (asked for when the note is empty); withdrawing and taking a
         // review back are confirmed first (dialog.js).
         const noteOr = async (title, label, message = "") => {
@@ -751,7 +916,7 @@ export function registerDesigner(juris, { args }) {
                 ? await signDialog(api, { title: `${decision === "approve" ? "Approve" : "Reject"} for ${department}?`, message: `Your signature means you ${decision === "approve" ? "approve" : "reject"} this change for ${department}; it is recorded with your name, the time and its meaning. Enter your password to sign.`, confirm: decision === "approve" ? "Approve (sign)" : "Reject (sign)", danger: decision === "reject" })
                 : {};
             if (signature === null) return;
-            await run((r) => (r.state === "executed" ? "Approved — every department has approved, and the platform executed the change." : r.state === "failed" ? `Execution failed: ${r.error}` : decision === "approve" ? "Approved." : "Rejected."), () => api.call("design.approve", { id, department, decision, meaning: decision === "approve" ? "Approved" : "Rejected", note, signature }));
+            await run((r) => (r.state === "executed" ? (r.emergency ? `Signed as an emergency: the platform executed the change. It is to be reviewed afterwards by ${plant().dateTime(r.emergency.due)}.` : "Approved — every department has approved, and the platform executed the change.") : r.state === "failed" ? `Execution failed: ${r.error}` : decision === "approve" ? "Approved." : "Rejected."), () => api.call("design.approve", { id, department, decision, meaning: decision === "approve" ? "Approved" : "Rejected", note, signature }));
         };
         const withdraw = async () => {
             if (!(await confirmDialog(api, { title: "Withdraw this change?", message: "It stops here and is kept as history. A new change starts from what is published.", confirm: "Withdraw", danger: true }))) return;
@@ -775,7 +940,7 @@ export function registerDesigner(juris, { args }) {
                             div: {
                                 className: "change-head",
                                 children: [
-                                    { div: { className: "title", children: [{ GuideToggle: { key: "guide-change", guide: "designer" } }, { span: { className: "kind", textContent: "Change request" } }, { h1: () => api.getState(`${C}.title`, "") }, { span: { className: () => `badge s-${api.getState(`${C}.state`)}`, textContent: () => api.getState(`${C}.state`, "") } }] } },
+                                    { div: { className: "title", children: [{ GuideToggle: { key: "guide-change", name: `change-${id}`, guide: () => guidesOf(api, w) } }, { span: { className: "kind", textContent: "Change request" } }, { h1: () => api.getState(`${C}.title`, "") }, { span: { className: () => `badge s-${api.getState(`${C}.state`)}`, textContent: () => api.getState(`${C}.state`, "") } }, () => (api.getState(`${C}.emergency`, null) ? { span: { className: `badge s-emergency${api.getState(`${C}.emergency.overdue`, false) ? " overdue" : ""}`, textContent: emergencyWords(api.getState(`${C}.emergency`)) } } : { span: {} })] } },
                                     { Stepper: { statePath: `${C}.state` } },
                                     { p: { className: "muted small", textContent: () => {
                                         const part = (label, key) => (api.getState(`${C}.${key}`, []).length ? ` · ${label}${api.getState(`${C}.${key}`, []).join(", ")}` : "");
@@ -786,6 +951,7 @@ export function registerDesigner(juris, { args }) {
                             },
                         };
                     },
+                    () => setupBanner(api, api.getState(`${C}.setupOpen`, false) && api.getState(`${C}.state`, null) === "design"),
                     { Presence: { path: `pres.design.${id}`, noun: "change" } },
                     {
                         div: {
@@ -818,6 +984,8 @@ export function registerDesigner(juris, { args }) {
                                             { Link: { to: `/design/c/${id}/sandbox`, className: "btn sbx-link icon-text", title: "Run this draft on copies of real records, in a database of its own", children: [icon("play"), { span: "Try it in a sandbox" }] } },
                                             // Under test with the other changes (§5.13), before approval is asked for.
                                             { TestPanel: { id } },
+                                            // An emergency (§5.7): its one signature, then its review afterwards.
+                                            { EmergencyPanel: { id } },
                                             // Rolled back (§5.14): by a change the platform drafts, which one approval executes.
                                             { RollbackPanel: { id } },
                                             { FitnessPanel: { id, save: () => (api.peek(`${w}.dirty`) && canEdit() ? saveDraft() : Promise.resolve()) } },
@@ -837,9 +1005,19 @@ export function registerDesigner(juris, { args }) {
                                                         const noReviewer = Boolean(rv && !rv.fine.length);
                                                         if (can.edit) {
                                                             out.push({ button: { key: "save", type: "button", className: "btn", disabled: () => busy() || !api.getState(`${w}.dirty`, false), textContent: "Save draft", onclick: save } });
-                                                            out.push({ button: { key: "submit", type: "button", className: "btn primary", disabled: () => busy() || noReviewer, textContent: "Submit for review", onclick: submit } });
+                                                            // At approval level one (§5.16) nobody reviews: one approver's signature executes it.
+                                                            const level = change.approvalLevel ?? "full";
+                                                            out.push({ button: { key: "submit", type: "button", className: "btn primary", disabled: () => busy() || (level === "full" && noReviewer), textContent: level === "one" ? "Submit for approval" : "Submit for review", onclick: submit } });
+                                                            if (can.setup) out.push({ button: { key: "setup", type: "button", className: "btn primary", disabled: () => busy(), title: change.setupOpen ? "Setup is open: it executes now, on your signature, without review or approval" : "Approval level none: it executes now, on your signature", children: [icon("play"), { span: change.setupOpen ? "Execute now (setup)" : "Execute (sign)" }], onclick: submitSetup } });
+                                                            if (can.emergency) out.push({ button: { key: "emergency", type: "button", className: "btn ghost", disabled: () => busy() || noReviewer, title: "Only when the plant cannot wait: one signature executes it, and it is reviewed afterwards", children: [icon("warning"), { span: "Submit as an emergency…" }], onclick: submitEmergency } });
                                                         }
-                                                        if (rv) for (const line of reviewWarnings(rv, { author: change.author, me, reviewer: can.review })) out.push({ p: { key: line.key, className: `small ${line.error ? "error" : "review-warn"}`, textContent: line.text } });
+                                                        // While setup is open (§5.15), executing needs no review: what review would need is
+                                                        // said only for Submit for review, and does not read as blocking the change.
+                                                        const lvl = change.approvalLevel ?? "full";
+                                                        if (can.setup) out.push({ p: { key: "setup-hint", className: "small muted", textContent: change.setupOpen ? "Setup is open: Execute now (setup) needs no review or approval. Submit for review needs a reviewer and approvers besides you." : "The plant's approval level is none: Execute (sign) puts it live on your signature." } });
+                                                        if (can.edit && lvl === "one") out.push({ p: { key: "one-hint", className: "small muted", textContent: "The plant's approval level is one: no review; the first signature by an approver of a department it touches (not you) executes it." } });
+                                                        // Review warnings matter only where there is a review (the full level).
+                                                        if (rv && lvl === "full") for (const line of reviewWarnings(rv, { author: change.author, me, reviewer: can.review })) out.push({ p: { key: line.key, className: `small ${line.error && !can.setup ? "error" : "review-warn"}`, textContent: can.setup && line.error ? `For Submit for review: ${line.text}` : line.text } });
                                                         if (can.review || can.approveFor.length) out.push({ textarea: { key: "note", rows: 2, placeholder: "Note (required when asking for changes)", value: () => api.getState(`${w}.note`, "") ?? "", oninput: (e) => api.setValue(`${w}.note`, e.target.value) } });
                                                         if (can.review && change.reviewCosts?.length && !rv?.strands.some((x) => x.reviewer === me)) {
                                                             out.push({ p: { key: "cost", className: "muted small", textContent: `If you review it, you cannot also approve it for ${change.reviewCosts.join(", ")}: another representative will have to.` } });
@@ -930,7 +1108,7 @@ export function registerDesigner(juris, { args }) {
                             div: {
                                 className: "change-head",
                                 children: [
-                                    { div: { className: "title", children: [{ GuideToggle: { key: "guide-view", guide: "designer" } }, { span: { className: "kind", textContent: `Live ${kind === "flow" ? "flow template" : kind === "layout" ? "report layout" : kind}` } }, { h1: view.title }, { span: { className: "badge s-live", textContent: `v${v.version}` } }] } },
+                                    { div: { className: "title", children: [{ GuideToggle: { key: "guide-view", name: `view-${id}`, guide: () => guidesOf(api, w) } }, { span: { className: "kind", textContent: `Live ${kind === "flow" ? "flow template" : kind === "layout" ? "report layout" : kind === "query" ? "named query" : kind}` } }, { h1: view.title }, { span: { className: "badge s-live", textContent: `v${v.version}` } }] } },
                                     { p: { className: "muted small", textContent: `${kind} ${name} as it is live: read only, nothing is drafted. To change it, start a change.` } },
                                     v.uses?.length ? {
                                         div: {
@@ -992,9 +1170,29 @@ export function registerDesigner(juris, { args }) {
                 const server = api.getState(`${W(id)}.serverProblems`, []) ?? [];
                 const extra = server.filter((p) => !problems.some((q) => q.message === p.message));
                 const all = [...problems, ...extra];
+                // Designs this change would break, not in it (§23.1): Align brings them in, put right where that is plain.
+                const toAlign = all.filter((p) => p.align);
+                const align = async () => {
+                    api.batch(() => { api.setValue(`${W(id)}.busy`, true); api.setValue(`${W(id)}.error`, null); });
+                    try {
+                        if (api.peek(`${W(id)}.dirty`)) {
+                            const saved = await api.call("design.save", draftOps(api, id).payload());
+                            api.batch(() => { api.setValue(`${W(id)}.dirty`, false); api.setValue(`${W(id)}.seen`, saved.draft_rev); });
+                        }
+                        const r = await api.call("design.align", { id });
+                        api.batch(() => {
+                            api.setValue(`${W(id)}.serverProblems`, r.problems ?? []);
+                            api.setValue(`${W(id)}.notice`, r.brought?.length ? `Brought into this change: ${r.brought.map((b) => b.label).join(", ")}. Finish them here with the rest.` : "Nothing to bring in.");
+                        });
+                    } catch (e) { api.setValue(`${W(id)}.error`, e.message); } finally { api.setValue(`${W(id)}.busy`, false); }
+                };
                 return [
                     { h4: { key: "h", textContent: all.length ? `${all.length} problem(s)` : "No problems" } },
                     { ul: { key: "l", className: "problems", children: all.map((p, i) => ({ li: { key: i, textContent: p.message } })) } },
+                    toAlign.length ? { div: { key: "a", className: "ed-row", children: [
+                        { button: { type: "button", className: "btn primary", disabled: () => Boolean(api.getState(`${W(id)}.busy`, false)), textContent: `Align (${new Set(toAlign.map((p) => p.path)).size})`, onclick: align } },
+                        { span: { className: "muted small", textContent: "Brings the designs named above into this change, each without what it names that is no longer there." } },
+                    ] } } : { span: { key: "a" } },
                 ];
             },
         },
@@ -1068,6 +1266,7 @@ export function registerDesigner(juris, { args }) {
                     elements.push(...screenElements(api, id, change));
                     elements.push(...flowElements(api, id, change));
                     elements.push(...layoutElements(api, id, change));
+                    elements.push(...queryElements(api, id, change));
                     elements.push(...suiteElementsOf(api, id, change));
                     elements.push(...organizationElements(api, id, change));
                     for (const [name, source] of Object.entries(api.peek(`${W(id)}.s`) ?? {})) elements.push(...scriptFootprint(name, change.live.scripts?.[name] ?? undefined, source, defs, integ.services, integ.context));
@@ -1105,9 +1304,11 @@ export function registerDesigner(juris, { args }) {
         api.getState(`${W(id)}.vrev`);
         api.getState(`dc.${id}.updated_at`);
         const changes = changesOf(api, id, kind, name);
-        const tabs = { object: OBJECT_TABS, service: SERVICE_TABS, connection: CONNECTION_TABS, transaction: TRANSACTION_TABS, screen: SCREEN_TABS, layout: LAYOUT_TABS, element: ELEMENT_TABS, organization: ORG_TABS }[kind];
+        // (Every kind ChangesView is drawn for has its tabs here: a flow's change, opened by its reviewer on
+        // this view, failed to draw without them.)
+        const tabs = { object: OBJECT_TABS, service: SERVICE_TABS, connection: CONNECTION_TABS, transaction: TRANSACTION_TABS, screen: SCREEN_TABS, flow: FLOW_TABS, layout: LAYOUT_TABS, query: QUERY_TABS, element: ELEMENT_TABS, organization: ORG_TABS }[kind] ?? {};
         const live = api.peek(`dc.${id}.live`) ?? {};
-        const published = kind === "object" ? live.definitions?.[name] : kind === "service" ? live.services?.[name] : kind === "transaction" ? live.transactions?.[name] : kind === "screen" ? live.screens?.[name] : kind === "layout" ? live.layouts?.[name] : kind === "organization" ? live.organization : live.connections?.[name];
+        const published = kind === "object" ? live.definitions?.[name] : kind === "service" ? live.services?.[name] : kind === "transaction" ? live.transactions?.[name] : kind === "screen" ? live.screens?.[name] : kind === "flow" ? live.flows?.[name] : kind === "layout" ? live.layouts?.[name] : kind === "query" ? live.queries?.[name] : kind === "element" ? live.elements?.[name] : kind === "organization" ? live.organization : live.connections?.[name];
         const state = api.peek(`dc.${id}.state`);
         if (!changes.length) return { p: { className: "muted", textContent: published ? "Nothing differs from the published version." : "New: nothing is published yet." } };
         const counts = { added: 0, changed: 0, removed: 0 };
@@ -1270,6 +1471,18 @@ export function registerDesigner(juris, { args }) {
     // edit in one is in the others at once. At most three, side by side.
     juris.registerComponent("PaneSet", ({ id, editable }, api) => {
         const w = W(id);
+        // Undo and redo (undo.js): the buttons, and ⌘Z / Ctrl+Z, ⇧⌘Z / Ctrl+Y outside a text box, on this
+        // change's page while it may be edited and no dialog is open.
+        if (!api.isServer) api.onMount(() => {
+            const keys = (e) => {
+                const what = history.keyOf(e);
+                if (!what || !api.prop(editable) || history.isTextTarget(e.target) || api.peek("ui.dialog") || api.peek("$route.path") !== `/design/c/${id}`) return;
+                e.preventDefault();
+                (what === "undo" ? history.undo : history.redo)(api, w);
+            };
+            globalThis.document.addEventListener("keydown", keys);
+            return () => globalThis.document.removeEventListener("keydown", keys);
+        });
         // Reviewers and approvers start on what changed; a designer, on the model.
         if (!api.peek(`${w}.panes`)) api.setValue(`${w}.panes`, [{ view: ["review", "approval"].includes(api.peek(`dc.${id}.state`)) ? "changes" : "general" }]);
         const split = () => {
@@ -1288,6 +1501,10 @@ export function registerDesigner(juris, { args }) {
                             children: [
                                 { span: { className: "muted small", textContent: () => `${api.getState(`${w}.panes.length`, 1)} window(s) on this ${String(id).startsWith("view-") ? "design" : "change"}` } },
                                 { span: { className: "spacer" } },
+                                () => (api.prop(editable) ? { span: { className: "undo-redo", children: [
+                                    { button: { type: "button", className: "btn", title: "Undo the last edit (⌘Z or Ctrl+Z, outside a text box)", disabled: () => !(api.getState(`${w}.hist.undo`, 0) > 0), onclick: () => history.undo(api, w), children: [icon("undo"), { span: "Undo" }] } },
+                                    { button: { type: "button", className: "btn redo", title: "Redo what was undone (⇧⌘Z or Ctrl+Y)", disabled: () => !(api.getState(`${w}.hist.redo`, 0) > 0), onclick: () => history.redo(api, w), children: [icon("undo"), { span: "Redo" }] } },
+                                ] } } : { span: {} }),
                                 () => (api.prop(editable) ? { IncludeLive: { id } } : { span: {} }),
                                 () => (api.prop(editable) ? { AddElement: { id } } : { span: {} }),
                                 { button: { type: "button", className: "btn", children: [icon("split"), { span: "Split" }], title: "Open another window beside this one (up to 3)", disabled: () => api.getState(`${w}.panes.length`, 1) >= 3, onclick: split } },
@@ -1315,17 +1532,20 @@ export function registerDesigner(juris, { args }) {
     // that element's editor. A change can hold several (an integration: a connection and its services).
     juris.registerComponent("PaneEditor", ({ id, editable, pane = 0 }, api) => {
         const w = W(id);
+        // Each by its label, as people know it ("CMOS route"), and what kind of design it is.
+        const named = (slot, kind, words) => Object.entries(api.peek(`${w}.${slot}`) ?? {}).map(([n, b]) => ({ key: `${kind}:${n}`, label: `${b?.label || n} (${words})` }));
         const elements = () => {
             api.getState(`${w}.rev`);
             return [
-                ...Object.keys(draftDefinitions(api, w)).map((o) => ({ key: `object:${o}`, label: `object ${o}` })),
-                ...Object.keys(api.peek(`${w}.sv`) ?? {}).map((n) => ({ key: `service:${n}`, label: `service ${n}` })),
-                ...Object.keys(api.peek(`${w}.cn`) ?? {}).map((n) => ({ key: `connection:${n}`, label: `connection ${n}` })),
-                ...Object.keys(api.peek(`${w}.tx`) ?? {}).map((n) => ({ key: `transaction:${n}`, label: `transaction ${n}` })),
-                ...Object.keys(api.peek(`${w}.sc`) ?? {}).map((n) => ({ key: `screen:${n}`, label: `screen ${n}` })),
-                ...Object.keys(api.peek(`${w}.fl`) ?? {}).map((n) => ({ key: `flow:${n}`, label: `flow ${n}` })),
-                ...Object.keys(api.peek(`${w}.ly`) ?? {}).map((n) => ({ key: `layout:${n}`, label: `report layout ${n}` })),
-                ...Object.keys(api.peek(`${w}.el`) ?? {}).map((n) => ({ key: `element:${n}`, label: `design element ${n}` })),
+                ...Object.entries(draftDefinitions(api, w)).map(([o, b]) => ({ key: `object:${o}`, label: `${b?.label || o} (object)` })),
+                ...named("sv", "service", "service"),
+                ...named("cn", "connection", "connection"),
+                ...named("tx", "transaction", "transaction"),
+                ...named("sc", "screen", "screen"),
+                ...named("fl", "flow", "flow template"),
+                ...named("ly", "layout", "report layout"),
+                ...named("qy", "query", "query"),
+                ...named("el", "element", "design element"),
                 ...(api.peek(`${w}.org`) ? [{ key: "organization", label: "people & departments" }] : []),
             ];
         };
@@ -1369,6 +1589,7 @@ export function registerDesigner(juris, { args }) {
                     if (kind === "screen") return [{ ScreenEditor: { key: el, id, editable, pane, name, head: picker() } }];
                     if (kind === "flow") return [{ FlowEditor: { key: el, id, editable, pane, name, head: picker() } }];
                     if (kind === "layout") return [{ LayoutEditor: { key: el, id, editable, pane, name, head: picker() } }];
+                    if (kind === "query") return [{ QueryEditor: { key: el, id, editable, pane, name, head: picker() } }];
                     if (kind === "element") return [{ SuiteElementEditor: { key: el, id, editable, pane, name, head: picker() } }];
                     return [{ IntegrationEditor: { key: el, id, editable, pane, kind, name, head: picker() } }];
                 },
@@ -1384,13 +1605,14 @@ export function registerDesigner(juris, { args }) {
     juris.registerComponent("IncludeLive", ({ id }, api) => {
         const w = W(id);
         const [pick, setPick] = api.useState("pick", "");
-        const KINDS = [["object", "objects", "Objects"], ["transaction", "transactions", "Transactions"], ["screen", "screens", "Screens"], ["flow", "flows", "Flow templates"], ["layout", "layouts", "Report layouts"], ["service", "services", "Services"], ["connection", "connections", "Connections"]];
-        const SLOT = { transaction: "tx", screen: "sc", flow: "fl", layout: "ly", service: "sv", connection: "cn", element: "el" };
+        const KINDS = [["object", "objects", "Objects"], ["transaction", "transactions", "Transactions"], ["screen", "screens", "Screens"], ["flow", "flows", "Flow templates"], ["layout", "layouts", "Report layouts"], ["query", "queries", "Queries"], ["service", "services", "Services"], ["connection", "connections", "Connections"]];
+        const SLOT = { transaction: "tx", screen: "sc", flow: "fl", layout: "ly", query: "qy", service: "sv", connection: "cn", element: "el" };
         const inHere = (kind, name) => (kind === "object" ? Object.hasOwn(draftDefinitions(api, w), name) : Object.hasOwn(api.peek(`${w}.${SLOT[kind]}`) ?? {}, name));
         const groups = () => {
             api.getState(`${w}.rev`);
             return KINDS.map(([kind, list, label]) => [kind, label, (api.getState(`design.home.${list}`, []) ?? [])
-                .map((x) => ({ name: x.object ?? x.name, label: x.label ?? x.object ?? x.name, elsewhere: (x.open ?? []).some((o) => (o?.id ?? o) !== id) }))
+                // An object by its object; anything else by its name (a flow's list also names its traveler's object).
+                .map((x) => ({ name: kind === "object" ? x.object ?? x.name : x.name, label: x.label ?? x.name ?? x.object, elsewhere: (x.open ?? []).some((o) => (o?.id ?? o) !== id) }))
                 .filter((x) => !inHere(kind, x.name))
                 .sort((a, b) => String(a.label).localeCompare(String(b.label)))]).filter(([, , l]) => l.length);
         };
@@ -1447,18 +1669,19 @@ export function registerDesigner(juris, { args }) {
     juris.registerComponent("AddElement", ({ id }, api) => {
         const w = W(id);
         const [state, setState] = api.useState("add", { kind: "", name: "", from: "" });
-        const SLOT = { service: "sv", connection: "cn", transaction: "tx", screen: "sc", flow: "fl", layout: "ly", element: "el" };
+        const SLOT = { service: "sv", connection: "cn", transaction: "tx", screen: "sc", flow: "fl", layout: "ly", query: "qy", element: "el" };
+        const plural = (kind) => (kind === "query" ? "queries" : `${kind}s`);
         // What a new transaction, screen or flow may be a copy of: those of its kind in this change, and the live ones.
         const sources = (kind) => {
             if (!COPYABLE.includes(kind)) return [];
             const here = Object.entries(api.getState(`${w}.${SLOT[kind]}`, {}) ?? {}).map(([n, b]) => ({ name: n, label: b?.label ?? n, here: true }));
-            const live = (api.getState(`design.home.${kind}s`, []) ?? []).filter((x) => !here.some((h) => h.name === x.name)).map((x) => ({ name: x.name, label: x.label ?? x.name }));
+            const live = (api.getState(`design.home.${plural(kind)}`, []) ?? []).filter((x) => !here.some((h) => h.name === x.name)).map((x) => ({ name: x.name, label: x.label ?? x.name }));
             return [...here, ...live];
         };
         const add = async () => {
             const { kind, name, from } = state();
             const slot = SLOT[kind];
-            if ((api.peek(`${w}.${slot}`) ?? {})[name] || (api.peek(`design.home.${kind}s`) ?? []).some((x) => x.name === name)) {
+            if ((api.peek(`${w}.${slot}`) ?? {})[name] || (api.peek(`design.home.${plural(kind)}`) ?? []).some((x) => x.name === name)) {
                 api.setValue(`${w}.error`, `A ${kind} "${name}" exists already: bring it into this change with Change also, or change it from the designer's home.`);
                 return;
             }
@@ -1473,7 +1696,7 @@ export function registerDesigner(juris, { args }) {
                 if (!source) {
                     try {
                         const view = await api.call("design.view", { kind, name: from });
-                        source = view?.content?.[`${kind}s`]?.[from] ?? null;
+                        source = view?.content?.[plural(kind)]?.[from] ?? null;
                         sourceScript = view?.content?.scripts?.[from] ?? null;
                     } catch (e) {
                         api.setValue(`${w}.error`, e.message);
@@ -1491,6 +1714,7 @@ export function registerDesigner(juris, { args }) {
                     : kind === "screen" ? SCREEN_TEMPLATE(name, stewards)
                     : kind === "flow" ? FLOW_TEMPLATE(name, name, stewards)
                     : kind === "layout" ? LAYOUT_TEMPLATE(name, name, stewards)
+                    : kind === "query" ? QUERY_TEMPLATE(name, name, stewards)
                     : { name, label: name, baseUrl: "https://example.com/api", auth: { kind: "bearer", secret: name }, allow: [{ method: "GET", path: "/*" }], timeoutMs: 5000, stewards };
             api.batch(() => {
                 api.setValue(`${w}.${slot}.${name}`, body);
@@ -1506,7 +1730,7 @@ export function registerDesigner(juris, { args }) {
             span: {
                 className: "add-element",
                 children: [
-                    { select: { title: "Add to this change", onchange: (e) => setState({ ...state(), kind: e.target.value, from: "" }), children: noDefault([["service", "+ service"], ["connection", "+ connection"], ["transaction", "+ transaction"], ["screen", "+ screen"], ["flow", "+ flow template"], ["layout", "+ report layout"]].map(([v, l]) => ({ option: { key: v, value: v, selected: () => state().kind === v, textContent: l } })), "add to this change…") } },
+                    { select: { title: "Add to this change", onchange: (e) => setState({ ...state(), kind: e.target.value, from: "" }), children: noDefault([["service", "+ service"], ["connection", "+ connection"], ["transaction", "+ transaction"], ["screen", "+ screen"], ["flow", "+ flow template"], ["layout", "+ report layout"], ["query", "+ query"]].map(([v, l]) => ({ option: { key: v, value: v, selected: () => state().kind === v, textContent: l } })), "add to this change…") } },
                     { input: { placeholder: "name", value: () => state().name, oninput: (e) => setState({ ...state(), name: e.target.value.trim().toLowerCase() }) } },
                     // One stable select, its options following the kind: blank, or a copy of one of its kind.
                     { select: { title: "Start it blank, or as a copy of another", hidden: () => !COPYABLE.includes(state().kind), value: () => state().from, onchange: (e) => setState({ ...state(), from: e.target.value }), children: noDefault(() => [{ option: { value: "", textContent: "blank" } }, ...sources(state().kind).map((x) => ({ option: { key: x.name, value: x.name, textContent: `a copy of ${x.label}${x.here ? " (in this change)" : ""}` } }))]) } },
@@ -1729,6 +1953,8 @@ function loadWorkspace(api, w, change) {
     // The object open in the editor stays open when the change moves on; the others wait in .defs.
     const was = api.peek(`${w}.object`);
     const object = change.objects.includes(was) ? was : change.objects[0] ?? null;
+    // Someone else's edit in it: what this window could undo is no longer its own to take back.
+    history.loaded(api, w, change.draft_rev);
     api.batch(() => {
         api.setValue(`${w}.object`, object);
         api.setValue(`${w}.defs`, clone(change.content.definitions ?? {}));
@@ -1740,6 +1966,7 @@ function loadWorkspace(api, w, change) {
         api.setValue(`${w}.sc`, clone(change.content.screens ?? {}));
         api.setValue(`${w}.fl`, clone(change.content.flows ?? {}));
         api.setValue(`${w}.ly`, clone(change.content.layouts ?? {}));
+        api.setValue(`${w}.qy`, clone(change.content.queries ?? {}));
         api.setValue(`${w}.el`, clone(change.content.elements ?? {}));
         api.setValue(`${w}.org`, change.content.organization ? clone(change.content.organization) : null);
         api.setValue(`${w}.t`, clone(change.content.tests ?? {}));
@@ -1763,17 +1990,20 @@ function draftOps(api, id) {
     return {
         // A leaf edit: the input keeps its node; only the checks re-run.
         set(path, value, structural = false) {
+            history.before(api, w, structural ? null : `b.${path}`);
             api.setValue(`${w}.b.${path}`, value);
             touched(structural);
         },
         // A change of shape (add, remove, retype): the editor redraws.
         edit(fn) {
+            history.before(api, w);
             const copy = clone(api.peek(`${w}.b`));
             fn(copy);
             api.setValue(`${w}.b`, copy);
             touched(true);
         },
         setScript(name, source, structural = false) {
+            history.before(api, w, structural ? null : `s.${name}`);
             api.setValue(`${w}.s.${name}`, source);
             touched(structural);
         },
@@ -1789,6 +2019,7 @@ function draftOps(api, id) {
                 screens: clone(api.peek(`${w}.sc`) ?? {}),
                 flows: clone(api.peek(`${w}.fl`) ?? {}),
                 layouts: clone(api.peek(`${w}.ly`) ?? {}),
+                queries: clone(api.peek(`${w}.qy`) ?? {}),
                 elements: clone(api.peek(`${w}.el`) ?? {}),
                 ...(api.peek(`${w}.org`) ? { organization: clone(api.peek(`${w}.org`)) } : {}),
                 tests: clone(api.peek(`${w}.t`) ?? {}),
@@ -1806,10 +2037,13 @@ function pageProblems(api, id) {
         objects: [...new Set([...(home.objects ?? []).map((o) => o.object), ...Object.keys(drafted)])],
         scripts: [...new Set([...(home.scripts ?? []).map((s) => s.name), ...Object.keys(scripts)])],
         departments: (home.departments ?? []).map((d) => d.id),
+        groups: (home.groups ?? []).filter((g) => g.kind === "group").map((g) => g.id),
         transactions: [...new Set([...(home.transactions ?? []).map((t) => t.name), ...Object.keys(api.peek(`${w}.tx`) ?? {})])],
         suiteDesigns: suiteChecks(),
         // What the platform and the installed suites lock, as it holds now (builtins.js).
         locks: home.locks ?? {},
+        // The named queries there will be (§23.1): a reference's choices may come from one.
+        queries: queriesKnown(api, w),
     };
     const many = Object.keys(drafted).length > 1;
     const problems = Object.entries(drafted).filter(([, body]) => body).flatMap(([object, body]) => validateDefinition(body, known).map((p) => (many ? { ...p, message: `${object}: ${p.message}` } : p)));
@@ -1819,17 +2053,29 @@ function pageProblems(api, id) {
     problems.push(...screenProblems(api, id));
     problems.push(...flowProblems(api, id));
     problems.push(...layoutProblemsOf(api, id));
+    problems.push(...queryProblemsOf(api, id));
     problems.push(...elementProblemsOf(api, id));
     problems.push(...organizationProblems(api, id));
     return problems;
+}
+
+// While the plant is set up (§5.15): said wherever changes are made, so nobody takes it for the governed path.
+function setupBanner(api, open) {
+    if (!open) return { span: {} };
+    return { p: { className: "setup-banner", role: "note", children: [icon("warning"), { span: { children: [
+        { strong: "Setup is open. " },
+        { span: "A designer's change executes on their own signature, without review or approval; each one is marked and kept in the audit trail. Setup ends from " },
+        { Link: { to: "/design/people", textContent: "People & departments" } },
+        { span: " (Approvals), once someone besides the designers can review." },
+    ] } }] } };
 }
 
 function lifecycleHint(change) {
     switch (change.state) {
         case "design": return "In design: its author edits and submits it.";
         case "review": return "In review: a reviewer other than the author passes it or asks for changes.";
-        case "approval": return "Awaiting approval from the departments listed above.";
-        case "executed": return `Executed by the platform ${plant().dateTime(change.executed_at)}.`;
+        case "approval": return change.emergency ? "An emergency: one signature, by an approver of any department listed above, executes it." : change.submittedLevel === "one" ? "Awaiting one signature, by an approver of any department listed above (never its author): it executes the change." : "Awaiting approval from the departments listed above.";
+        case "executed": return `Executed by the platform ${plant().dateTime(change.executed_at)}${change.emergency ? `, as an emergency (${emergencyWords(change.emergency)})` : change.setup ? `, ${change.setup.because === "approval level none" ? "at approval level none" : "during setup"}, on ${change.setup.printedName ?? change.setup.name ?? change.setup.by}'s signature: not reviewed or approved` : ""}.`;
         default: return `This change is ${change.state}.`;
     }
 }
@@ -1884,17 +2130,24 @@ function generalTab(ctx) {
                         children: noDefault(Object.keys(body.fields).map((f) => ({ option: { value: f, selected: body.titleField === f, textContent: f } }))),
                     },
                 }, "Names a record in lists, tabs and search."),
-                labelled("Analytics dimensions", {
-                    input: {
-                        type: "text", disabled: ctx.ro, placeholder: "e.g. item, line",
-                        value: (body.analytics?.dimensions ?? []).join(", "),
-                        onchange: (e) => ctx.ops.edit((b) => {
-                            const dims = e.target.value.split(",").map((v) => v.trim()).filter(Boolean);
-                            if (dims.length) b.analytics = { ...(b.analytics ?? {}), dimensions: dims };
-                            else delete b.analytics;
-                        }),
-                    },
-                }, "Fields copied into each stay in a state, to group analytics by (at most 5). A report groups by the value a record had then."),
+                // What else a scanned label may be (§10.4): a badge's sign-in id, a board's serial.
+                labelled("Scanned by", tagsInput({
+                    key: `${ctx.w}.scanBy`, readOnly: ctx.ro, create: false, placeholder: "Add a field…",
+                    options: Object.entries(body.fields).filter(([f, d]) => f !== body.titleField && ["string", "integer"].includes(d.type) && !d.sensitive).map(([f]) => ({ value: f, label: f })),
+                    value: body.scanBy ?? [],
+                    onChange: (fields) => ctx.ops.edit((b) => {
+                        if (fields.length) b.scanBy = fields;
+                        else delete b.scanBy;
+                    }),
+                }), "Fields a scan or a typed name may give besides the title, found whole (at most 3): a badge's sign-in id."),
+                labelled("Analytics dimensions", tagsInput({
+                    key: `${ctx.w}.dims`, options: Object.keys(body.fields).map((f) => ({ value: f, label: f })), create: false, readOnly: ctx.ro, placeholder: "Add a field…",
+                    value: body.analytics?.dimensions ?? [],
+                    onChange: (dims) => ctx.ops.edit((b) => {
+                        if (dims.length) b.analytics = { ...(b.analytics ?? {}), dimensions: dims };
+                        else delete b.analytics;
+                    }),
+                }), "Fields copied into each stay in a state, to group analytics by (at most 5). A report groups by the value a record had then."),
                 transferControls(ctx),
                 flowControls(ctx),
             ],
@@ -1977,6 +2230,63 @@ function locksNote(api, body) {
     ] } };
 }
 
+// What ticking Erasable does (§27.8), in one line.
+const ERASABLE_WORDS = "personal data a privacy officer may erase from a record when someone asks (Data retention): the value replaced, the record and its history kept. Not a picture, nor what People & departments keeps on a person.";
+// What ticking Sensitive does (§6.10), in one line.
+const SENSITIVE_WORDS = "health or personal data (a patient's name or id): hidden wherever records are shown or exported, never in queries, analytics or the AI, and shown on its record only to someone who may read it and says why, each showing recorded.";
+// Derived from (§6.11): a field the platform keeps from what its record's references point at, a path
+// picked a step at a time (a reference, then a field of what it points to, onward while it is a
+// reference), or an expression over the record and the fields its references point at.
+const DERIVED_WORDS = "Kept by the platform from what its references point at: worked out at every save, and again when that record changes. Nobody types it.";
+function derivedCell(ctx, name, field) {
+    const { api, w, ops, ro, body } = ctx;
+    const home = new Map((api.peek("design.home.objects") ?? []).map((o) => [o.object, o]));
+    const defOf = (o) => (o === body.object ? body : home.get(o) ?? null);
+    const refsOf = (def) => Object.entries(def?.fields ?? {}).filter(([, f]) => f.type === "ref" && !f.multiple);
+    const own = refsOf(body).filter(([n]) => n !== name);
+    const from = field.from;
+    const labelOf = (def, n) => (n === "state" ? "state" : def?.fields?.[n]?.label ?? n);
+    const clear = (b) => { delete b.fields[name].required; delete b.fields[name].sensitive; delete b.fields[name].erasable; delete b.fields[name].computed; };
+    const set = (value) => ops.edit((b) => { if (value === undefined) delete b.fields[name].from; else { b.fields[name].from = value; clear(b); } });
+    const startPath = (ref) => { const to = defOf(body.fields[ref]?.to); return `${ref}.${to?.titleField ?? Object.keys(to?.fields ?? {})[0] ?? "state"}`; };
+    if (field.type === "image") return { span: {} };
+    if (from === undefined) {
+        // Offered only where it can be used: a reference to read through.
+        if (ro() || !own.length) return { span: {} };
+        return { button: { type: "button", className: "btn small derive-start", title: `Derive from a reference: ${DERIVED_WORDS}`, "aria-label": `Derive ${name} from a reference`, children: [withIcon("branch", "Derive…")], onclick: () => set(startPath(own[0][0])) } };
+    }
+    const switcher = (label, to) => (ro() ? null : { button: { type: "button", className: "linkish small", textContent: label, onclick: () => set(to()) } });
+    const remove = ro() ? null : { button: { type: "button", className: "btn ghost small", title: "Not derived: entered like any field", "aria-label": `${name} is not derived`, children: [icon("x")], onclick: () => set(undefined) } };
+    if (typeof from === "string") {
+        // The path's steps, each a dropdown of what that object has; a step that is a reference leads on.
+        const parts = from.split(".");
+        const steps = [];
+        let at = body;
+        for (const [k, part] of parts.entries()) {
+            const options = k === 0 ? own.map(([n]) => n) : [...Object.entries(at?.fields ?? {}).filter(([n, f]) => !f.sensitive && f.type !== "image" && !(at === body && n === name)).map(([n]) => n), "state"];
+            // Another reference starts the path again from it; another field ends it there.
+            const choose = (value) => set(k === 0 ? startPath(value) : [...parts.slice(0, k), value].join("."));
+            steps.push({ select: { disabled: ro, "aria-label": k === 0 ? `${name}: the reference it reads through` : `${name}: step ${k + 1}`, onchange: (e) => choose(e.target.value), children: noDefault(options.map((n) => ({ option: { value: n, selected: n === part, textContent: labelOf(k === 0 ? body : at, n) } }))) } });
+            const f = (k === 0 ? body : at)?.fields?.[part];
+            at = f?.type === "ref" ? defOf(f.to) : null;
+            if (k < parts.length - 1) steps.push({ span: { className: "muted", textContent: "→" } });
+        }
+        // The last step is a reference: it may lead on, to a field of what it points to.
+        const lead = at && !ro() ? { button: { type: "button", className: "btn ghost small", title: "Read a field of what this points to", textContent: "→ …", onclick: () => set(`${from}.${at.titleField ?? Object.keys(at.fields ?? {})[0] ?? "state"}`) } } : null;
+        return { div: { className: "derived-cell", title: DERIVED_WORDS, children: [{ span: { className: "small muted", textContent: "Derived from " } }, ...steps, lead, switcher("Use an expression", () => ({ eq: [{ record: from }, null] })), remove].filter(Boolean) } };
+    }
+    // An expression: the record's fields, and those of what each reference points at.
+    const entries = [
+        ...objectEntries(body).filter((e) => e.path !== name),
+        ...own.flatMap(([ref, f]) => objectEntries(defOf(f.to), { prefix: `${ref}.`, label: f.label ?? ref })),
+    ];
+    return { div: { className: "derived-cell", title: DERIVED_WORDS, children: [
+        { span: { className: "small muted", textContent: "Derived from an expression" } },
+        exprField({ key: `derived-${name}`, value: () => api.getState(`${w}.b.fields.${name}.from`), onChange: (expr) => set(expr ?? { eq: [{ record: startPath(own[0]?.[0] ?? "") }, null] }), spec: { scopes: { record: scope("the record", entries) } }, readOnly: ro() }),
+        own.length ? switcher("Use a path", () => startPath(own[0][0])) : null, remove,
+    ].filter(Boolean) } };
+}
+
 function fieldsTab(ctx) {
     const { api, w, ops, ro, body } = ctx;
     const objects = (api.peek("design.home.objects") ?? []).map((o) => o.object);
@@ -1988,11 +2298,14 @@ function fieldsTab(ctx) {
         div: {
             children: [
                 locksNote(api, body),
-                {
+                { p: { className: "muted small", textContent: `Sensitive: ${SENSITIVE_WORDS}` } },
+                // A box of its own (app.css .fields-box): its head and the Name and Label columns stay in view,
+                // the rest scrolls inside it, so the tab never runs off to the right.
+                { div: { className: "fields-box", children: [{
                     table: {
-                        className: "grid ed-table",
+                        className: "grid ed-table fields-table",
                         children: [
-                            { thead: { children: [{ tr: { children: ["Name", "Label", "Type", "Required", "Values / refers to", ""].map((h) => ({ th: h })) } }] } },
+                            { thead: { children: [{ tr: { children: ["Name", "Label", "Type", "Required", "Sensitive", "Erasable", "Values / refers to", ""].map((h) => (h === "Sensitive" ? { th: { textContent: h, title: SENSITIVE_WORDS } } : h === "Erasable" ? { th: { textContent: h, title: ERASABLE_WORDS } } : { th: h })) } }] } },
                             {
                                 tbody: {
                                     children: [...Object.entries(body.fields).map(([name, field]) => ({
@@ -2013,33 +2326,29 @@ function fieldsTab(ctx) {
                                                                     f.type = e.target.value;
                                                                     if (f.type !== "enum") { delete f.values; delete f.multiple; } else f.values ??= ["a", "b"];
                                                                     if (f.type !== "ref") delete f.to; else f.to ??= objects[0];
+                                                                    if (f.type !== "file") delete f.accept;
                                                                 }),
                                                                 children: noDefault(FIELD_TYPES.map((t) => ({ option: { value: t, selected: field.type === t, textContent: t } }))),
                                                             },
                                                         }],
                                                     },
                                                 },
-                                                { td: { children: [{ input: { type: "checkbox", disabled: ro, checked: () => Boolean(api.getState(`${w}.b.fields.${name}.required`, false)), onchange: (e) => ops.set(`fields.${name}.required`, e.target.checked) } }] } },
-                                                {
-                                                    td: {
-                                                        children: [field.type === "enum" ? { div: { className: "values-cell", children: [
-                                                            listInput(ctx, `fields.${name}.values`, "a, b, c"),
-                                                            // Several values: a list of them, drawn as checkboxes, a multi-select or chips (Layout).
-                                                            { label: { className: "small", title: "Stored values are converted when the change executes", children: [{ input: { type: "checkbox", disabled: ro, checked: Boolean(field.multiple), onchange: (e) => ops.edit((b) => { if (e.target.checked) b.fields[name].multiple = true; else delete b.fields[name].multiple; }) } }, { span: " several values" }] } },
-                                                        ] } }
-                                                            : field.type === "ref" ? { select: { disabled: ro, onchange: (e) => ops.set(`fields.${name}.to`, e.target.value, true), children: noDefault(objects.map((o) => ({ option: { value: o, selected: field.to === o, textContent: o } }))) } }
-                                                                : { span: { className: "muted", textContent: "—" } }],
-                                                    },
-                                                },
-                                                { td: { children: [ro() ? { span: {} } : lockOn(name) ? { span: { className: "muted small icon-text", title: lockWords(lockOn(name)), children: [icon("lock"), { span: "kept" }] } } : { button: { type: "button", className: "btn ghost", title: "Remove the field", textContent: "Remove", onclick: () => ops.edit((b) => { delete b.fields[name]; }) } }] } },
+                                                { td: { children: [field.from !== undefined ? { span: { className: "muted", title: "Derived: nobody enters it", textContent: "—" } } : { input: { type: "checkbox", disabled: ro, checked: () => Boolean(api.getState(`${w}.b.fields.${name}.required`, false)), onchange: (e) => ops.set(`fields.${name}.required`, e.target.checked) } }] } },
+                                                // Sensitive (§6.10): health or personal data, hidden until someone who may read it says why.
+                                                { td: { children: [field.from !== undefined ? { span: { className: "muted", title: "Derived: it copies what another record shows", textContent: "—" } } : !SENSITIVE_TYPES.includes(field.type) && !field.sensitive ? { span: { className: "muted", title: "A reference or a picture cannot be sensitive", textContent: "—" } } : { input: { type: "checkbox", disabled: ro, title: SENSITIVE_WORDS, "aria-label": `${name} is sensitive`, checked: () => api.getState(`${w}.b.fields.${name}.sensitive`, false) === true, onchange: (e) => ops.edit((b) => { if (e.target.checked) b.fields[name].sensitive = true; else delete b.fields[name].sensitive; }) } }] } },
+                                                // Erasable (§27.8): personal data a privacy officer may erase from a record when someone asks.
+                                                { td: { children: [field.type === "image" || field.from !== undefined ? { span: { className: "muted", textContent: "—" } } : { input: { type: "checkbox", disabled: ro, title: ERASABLE_WORDS, "aria-label": `${name} is erasable`, checked: () => api.getState(`${w}.b.fields.${name}.erasable`, false) === true, onchange: (e) => ops.edit((b) => { if (e.target.checked) b.fields[name].erasable = true; else delete b.fields[name].erasable; }) } }] } },
+                                                { td: { className: "values-td", children: [valuesCell(ctx, name, field, objects)] } },
+                                                { td: { children: [ro() ? { span: {} } : lockOn(name) ? { span: { className: "muted small icon-text", title: lockWords(lockOn(name)), children: [icon("lock"), { span: "kept" }] } } : { button: { type: "button", className: "btn ghost field-remove", title: `Remove the field ${name}`, "aria-label": `Remove the field ${name}`, children: [icon("trash")], onclick: confirmRemove(ctx.api, `field ${name}`, () => ops.edit((b) => { const next = withoutField(b, name); for (const k of Object.keys(b)) delete b[k]; Object.assign(b, next); }) )} }] } },
                                             ],
                                         },
-                                    })), ...(ctx.diff?.removedFields ?? []).map((name) => ({ tr: { key: `removed-${name}`, className: "diff-removed", children: [{ td: { children: [{ code: name }, diffPill("removed")] } }, { td: { colSpan: 5, className: "muted small", textContent: "Removed by this change" } }] } }))],
+                                    })), ...(ctx.diff?.removedFields ?? []).map((name) => ({ tr: { key: `removed-${name}`, className: "diff-removed", children: [{ td: { children: [{ code: name }, diffPill("removed")] } }, { td: { colSpan: 7, className: "muted small", textContent: "Removed by this change" } }] } }))],
                                 },
                             },
                         ],
                     },
-                },
+                }] } },
+                valuesPanel(ctx, objects),
                 ro() ? { span: {} } : addRow(ctx, "New field name (e.g. batch_size)", (name, b) => {
                     if (b.fields[name]) return `"${name}" exists already.`;
                     b.fields[name] = { label: name.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()), type: "string" };
@@ -2053,6 +2362,86 @@ function fieldsTab(ctx) {
                 }),
             ],
         },
+    };
+}
+
+// The Values / refers to cell, kept narrow (app.css .values-td): what the field holds at a glance (its first
+// values, what it refers to, the files it takes, where it is derived from) and a button that opens all of it
+// in a panel of its own (valuesPanel), where long lists and derived paths have room.
+function valuesCell(ctx, name, field, objects) {
+    const { api, w, ops, ro, body } = ctx;
+    const open = () => api.setValue(`${w}.valuesOf`, name);
+    const SHOWN = 3;
+    let summary;
+    if (field.from !== undefined) summary = { span: { className: "small muted values-sum", title: DERIVED_WORDS, textContent: `Derived from ${derivedWords(api, body, field.from)}` } };
+    else if (field.type === "enum") {
+        const values = Array.isArray(field.values) ? field.values : [];
+        summary = { div: { className: "values-sum", children: [
+            ...values.slice(0, SHOWN).map((v) => ({ span: { key: v, className: "values-chip", title: v, textContent: v } })),
+            values.length > SHOWN ? { span: { className: "small muted", textContent: `+${values.length - SHOWN} more` } } : null,
+            values.length ? null : { span: { className: "small muted", textContent: "No values yet" } },
+            field.multiple ? { span: { className: "small muted", title: "It holds several of its values", textContent: "· Multiple select" } } : null,
+        ].filter(Boolean) } };
+    } else if (field.type === "ref") summary = { select: { disabled: ro, onchange: (e) => ops.set(`fields.${name}.to`, e.target.value, true), children: noDefault(objects.map((o) => ({ option: { value: o, selected: field.to === o, textContent: o } }))) } };
+    else if (field.type === "file") summary = { span: { className: "small muted values-sum", textContent: `Takes ${(field.accept ?? []).length ? field.accept.join(", ") : "pictures, PDFs and videos"}` } };
+    else if (["string", "text"].includes(field.type) && field.maxLength) summary = { span: { className: "small muted values-sum", textContent: `At most ${field.maxLength} characters` } };
+    else summary = { span: { className: "muted", textContent: "—" } };
+    const more = field.from !== undefined || ["enum", "ref", "file", "string", "text"].includes(field.type) || canDerive(body, name, field);
+    return { div: { className: "values-row", children: [
+        summary,
+        more ? { button: { type: "button", className: "btn ghost small values-expand", "data-values-of": name, title: `Open ${field.label ?? name}: ${ro() ? "see" : "manage"} its values in full`, "aria-label": `Open the values of ${name}`, "aria-haspopup": "dialog", children: [icon("maximize")], onclick: open } } : { span: {} },
+    ] } };
+}
+
+// Whether a field may be derived here: not a picture, and the object has a reference to read through.
+const canDerive = (body, name, field) => field.type !== "image" && Object.entries(body?.fields ?? {}).some(([n, f]) => n !== name && f.type === "ref" && !f.multiple);
+
+// A derived path in words: Lot → Product → Code.
+function derivedWords(api, body, from) {
+    if (typeof from !== "string") return "an expression";
+    const home = new Map((api.peek("design.home.objects") ?? []).map((o) => [o.object, o]));
+    let at = body;
+    return from.split(".").map((part) => {
+        const f = at?.fields?.[part];
+        at = f?.type === "ref" ? (f.to === body.object ? body : home.get(f.to) ?? null) : null;
+        return part === "state" ? "State" : f?.label ?? part;
+    }).join(" → ");
+}
+
+// The panel a Values / refers to cell opens (`${w}.valuesOf`: the field): its values, Multiple select, what it
+// refers to, the files it takes and where it is derived from, at full width. A modal: Esc, Done or a click
+// outside closes it, focus stays inside while it is open and returns to the button that opened it.
+function valuesPanel(ctx, objects) {
+    const { api, w, ops, ro, id } = ctx;
+    return () => {
+        const name = api.getState(`${w}.valuesOf`, null);
+        const field = name ? api.peek(`${w}.b.fields.${name}`) : null;
+        if (!field) return { span: {} };
+        const section = (title, hint, control) => ({ div: { className: "values-section", role: "group", "aria-label": title, children: [{ div: { className: "values-section-title", textContent: title } }, control, hint ? { p: { className: "small muted", textContent: hint } } : { span: {} }] } });
+        const derivable = field.from !== undefined || canDerive(api.peek(`${w}.b`), name, field);
+        return editorPanel(api, {
+            id: `values-${w.replace(/\W/g, "_")}`, title: field.label ?? name,
+            subtitle: [{ code: name }, { span: ` · ${field.type}${field.type === "ref" && field.to ? ` → ${field.to}` : ""}${field.from !== undefined ? " · derived" : ""}` }],
+            close: () => api.setValue(`${w}.valuesOf`, null), returnTo: `[data-values-of="${CSS.escape(name)}"]`,
+            children: [
+                field.type === "enum" && field.from === undefined ? section("Values", "Type a value and press Enter to add it; × takes one out.", listInput(ctx, `fields.${name}.values`, "Add a value…")) : null,
+                field.type === "enum" ? section("Selection", "Multiple select: it holds several of its values, drawn as checkboxes, a multi-select or chips (Layout). Stored values are converted when the change executes.", { label: { className: "small", title: "It holds several of its values, drawn as checkboxes, a multi-select or chips (Layout). Stored values are converted when the change executes.", children: [{ input: { type: "checkbox", disabled: ro, checked: Boolean(field.multiple), onchange: (e) => ops.edit((b) => { if (e.target.checked) b.fields[name].multiple = true; else delete b.fields[name].multiple; }) } }, { span: " Multiple select" }] } }) : null,
+                field.type === "ref" ? section("Refers to", "The object its records point at.", { select: { disabled: ro, onchange: (e) => ops.set(`fields.${name}.to`, e.target.value, true), children: noDefault(objects.map((o) => ({ option: { value: o, selected: field.to === o, textContent: o } }))) } }) : null,
+                // Its choices from a named query (§23.1): those the query gives the person, in place of every record.
+                field.type === "ref" && field.from === undefined ? section("Choices", null, querySourceEditor(api, {
+                    w, id, key: `${w}.qsrc.${name}`, readOnly: ro, value: field.options ?? null, kind: "choices", noun: String(objects.find((o) => o.object === field.to)?.label ?? field.to ?? "record").toLowerCase(),
+                    scopes: 'the form being filled ({"data": "<field>"}), the record as saved ({"record": "<field>"}) and the person ({"user": "id"})',
+                    onChange: (src) => ops.edit((bb) => { if (src) bb.fields[name].options = src; else delete bb.fields[name].options; }),
+                })) : null,
+                // The longest a text may be (§10.4), checked as it is typed and again on save.
+                ["string", "text"].includes(field.type) && field.from === undefined ? section("Longest", `At most this many characters: typing stops there, and a save is refused past it. Empty: ${DEFAULT_LENGTH}.`, { label: { className: "small", children: [
+                    { input: { type: "number", min: 1, max: MAX_LENGTH[field.type], disabled: ro, placeholder: String(DEFAULT_LENGTH), "aria-label": `${name}: its longest length`, value: field.maxLength ?? "", onchange: (e) => ops.edit((bb) => { const v = Math.floor(Number(e.target.value)); if (e.target.value === "" || !v) delete bb.fields[name].maxLength; else bb.fields[name].maxLength = Math.max(1, Math.min(MAX_LENGTH[field.type], v)); }) } },
+                    { span: ` characters (up to ${MAX_LENGTH[field.type].toLocaleString("en")})` },
+                ] } }) : null,
+                field.type === "file" ? section("Takes", "None ticked: pictures, PDFs and videos.", { div: { className: "checks small", title: "What it takes; none ticked: pictures, PDFs and videos", children: FILE_KINDS.map((k) => ({ label: { key: k, children: [{ input: { type: "checkbox", disabled: ro, "aria-label": `${name} takes ${k}`, checked: (field.accept ?? []).includes(k), onchange: (e) => ops.edit((b) => { const now = new Set(b.fields[name].accept ?? []); if (e.target.checked) now.add(k); else now.delete(k); if (now.size) b.fields[name].accept = FILE_KINDS.filter((x) => now.has(x)); else delete b.fields[name].accept; }) } }, { span: ` ${k}` }] } })) } }) : null,
+                derivable ? section("Derived", DERIVED_WORDS, derivedCell(ctx, name, field)) : null,
+            ].filter(Boolean),
+        });
     };
 }
 
@@ -2109,18 +2498,15 @@ function statesTab(ctx) {
                 plain ? { p: { className: "notice small", textContent: `A list: its records have no lifecycle (they stay "${states[0] ?? "active"}", and no state is shown on them), like departments or operations. To give it one, list its states in order (e.g. active, obsolete) and add the transitions between them.` } } : { span: {} },
                 { div: { className: "ed-grid", children: [
                     // Cleared, it stays a list (its one state); the initial state follows the list.
-                    labelled("States", {
-                        input: {
-                            type: "text", disabled: ro, placeholder: "none: a list", value: csv(states),
-                            onchange: (e) => ops.edit((b) => {
-                                const list = fromCsv(e.target.value);
-                                const keep = b.states.initial || b.states.list?.[0] || "active";
-                                b.states.list = list.length ? list : [keep];
-                                if (!b.states.list.includes(b.states.initial)) b.states.initial = b.states.list[0];
-                                if (!list.length) b.states.transitions = [];
-                            }),
-                        },
-                    }, plain ? "Empty keeps it a list. In order; renaming one that records are in needs a migration." : "In order; renaming one that records are in needs a migration. Empty makes it a list."),
+                    labelled("States", tagsInput({
+                        key: `${w}.states`, readOnly: ro, placeholder: "Add a state…", value: states,
+                        onChange: (list) => ops.edit((b) => {
+                            const keep = b.states.initial || b.states.list?.[0] || "active";
+                            b.states = withStates(b.states, list.length ? list : [keep]);
+                            if (!b.states.list.includes(b.states.initial)) b.states.initial = b.states.list[0];
+                            if (!list.length) b.states.transitions = [];
+                        }),
+                    }), plain ? "Empty keeps it a list. In order; renaming one that records are in needs a migration." : "In order; renaming one that records are in needs a migration. Empty makes it a list."),
                     labelled("Initial state", { select: { disabled: ro, onchange: (e) => ops.set("states.initial", e.target.value, true), children: noDefault(states.map((s) => ({ option: { value: s, selected: body.states.initial === s, textContent: s } }))) } }),
                 ] } },
                 // What each state means, which the plant's theme colours (§10.8): never a colour itself.
@@ -2151,9 +2537,9 @@ function statesTab(ctx) {
                                             children: [
                                                 { td: { children: [{ code: t.action }] } },
                                                 { td: { children: [text(ctx, `states.transitions.${i}.label`)] } },
-                                                { td: { children: [listInput(ctx, `states.transitions.${i}.from`)] } },
+                                                { td: { children: [listInput(ctx, `states.transitions.${i}.from`, "From…", { options: states, create: false })] } },
                                                 { td: { children: [{ select: { disabled: ro, onchange: (e) => ops.set(`states.transitions.${i}.to`, e.target.value, true), children: noDefault(states.map((s) => ({ option: { value: s, selected: t.to === s, textContent: s } }))) } }] } },
-                                                { td: { children: [ro() ? { span: {} } : { button: { type: "button", className: "btn ghost", textContent: "Remove", onclick: () => ops.edit((b) => { b.states.transitions.splice(i, 1); }) } }] } },
+                                                { td: { children: [ro() ? { span: {} } : { button: { type: "button", className: "btn ghost", textContent: "Remove", onclick: confirmRemove(ctx.api, `transition ${t.action}`, () => ops.edit((b) => { b.states.transitions.splice(i, 1); }) )} }] } },
                                             ],
                                         },
                                     })),
@@ -2251,14 +2637,90 @@ function accessOverview(ctx) {
     ] } };
 }
 
+// The guides a change's "?" opens (§33, guide.js): the designer's frame, then the editor of the part the
+// first window shows, then those of the other kinds of part the change holds.
+const PART_GUIDES = { object: "designer-object", transaction: "designer-transaction", screen: "designer-screen", flow: "flow-designer", service: "designer-service", connection: "designer-connection", query: "designer-query", layout: "designer-layout", element: "designer-element", organization: "designer-organization" };
+const SLOT_KINDS = [["tx", "transaction"], ["sc", "screen"], ["fl", "flow"], ["sv", "service"], ["cn", "connection"], ["qy", "query"], ["ly", "layout"], ["el", "element"]];
+function guidesOf(api, w) {
+    const kinds = [];
+    const add = (k) => { if (PART_GUIDES[k] && !kinds.includes(k)) kinds.push(k); };
+    const first = api.peek(`${w}.panes.0.el`);
+    if (first) add(String(first).split(":")[0]);
+    if (api.peek(`${w}.org`)) add("organization");
+    if (Object.keys(draftDefinitions(api, w)).some((o) => o !== "null")) add("object");
+    for (const [slot, kind] of SLOT_KINDS) if (Object.keys(api.peek(`${w}.${slot}`) ?? {}).length) add(kind);
+    return ["designer", ...kinds.map((k) => PART_GUIDES[k])];
+}
+// A policy renamed: its id says what it is for (a name decides nothing; what it grants does).
+async function renamePolicy(ctx, i) {
+    const { api, ops, body } = ctx;
+    const rule = body.policies[i];
+    const next = await askDialog(api, {
+        title: `Rename policy ${rule.id}`, message: "Its name says what it is for; what it grants is what is ticked below it.",
+        label: "New name", value: rule.id, required: true, confirm: "Rename",
+        check: (v) => { const t = String(v ?? "").trim(); return !POLICY_ID.test(t) ? "Lower case letters, digits, _ and -, starting with a letter." : body.policies.some((p, k) => k !== i && p.id === t) ? `A policy is called "${t}" already.` : null; },
+    });
+    const t = String(next ?? "").trim();
+    if (t && t !== rule.id) ops.edit((b) => { b.policies[i].id = t; });
+}
+// A role typed new (a tag): in lower case, or why not (definition.js checks it again).
+const roleNamed = (t) => { const v = t.toLowerCase(); return IDENTIFIER.test(v) ? v : { error: `“${t}”: a role's name is lower case letters, digits and _` }; };
+// What its records require (§9.9): a certification, whenever a condition on the record holds (or always).
+// Before any policy, and never granted around: not by a role, not by reading every record.
+const REQUIRES_WORDS = "Before any policy: someone who does not hold the certification sees nothing of a record it is required for: not in a list, a search, a query, an AI report, an export or analytics, whatever their roles, even if they read every record. The plant's plans and machines are not held to it.";
+function requiresPanel(ctx) {
+    const { api, ops, ro, body } = ctx;
+    const certs = api.getState("design.home.organization.certifications", {}) ?? {};
+    const ids = Object.keys(certs);
+    const requires = Array.isArray(body.access?.requires) ? body.access.requires : [];
+    const spec = { scopes: { record: scope(`the ${noun(body.label ?? "record")}`, objectEntries(body)) } };
+    const edit = (fn) => ops.edit((b) => {
+        b.access = { ...(b.access ?? {}), requires: [...(b.access?.requires ?? [])] };
+        fn(b.access.requires);
+        if (!b.access.requires.length) delete b.access;
+    });
+    return {
+        fieldset: {
+            className: `policy access-requires ${ctx.diff?.access ? "diff-changed" : ""}`,
+            children: [
+                { legend: { children: [{ span: { className: "icon-text", children: [icon("lock"), { span: "Reserved to a certification" }] } }] } },
+                { p: { className: "muted small", textContent: REQUIRES_WORDS } },
+                ...requires.map((r, i) => ({
+                    div: {
+                        key: `req-${i}`, className: "requires-row",
+                        children: [
+                            labelled("Certification", { select: { disabled: ro, onchange: (e) => edit((list) => { list[i] = { ...list[i], certification: e.target.value }; }), children: noDefault([...new Set([...ids, r.certification])].filter(Boolean).map((c) => ({ option: { value: c, selected: c === r.certification, textContent: certs[c]?.name ? `${certs[c].name} (${c})` : `${c} (not listed)` } }))) } }),
+                            labelled("For the records where", exprField({ key: `req-when-${i}`, value: () => r.when, onChange: (expr) => edit((list) => { if (expr === undefined) { const { when, ...rest } = list[i]; void when; list[i] = rest; } else list[i] = { ...list[i], when: expr }; }), spec, readOnly: ro(), empty: "every record", emptyHint: "Every record of this object requires it." })),
+                            ro() ? null : { button: { type: "button", className: "btn ghost", textContent: "Remove", onclick: confirmRemove(api, `the ${certs[r.certification]?.name ?? r.certification} requirement`, () => edit((list) => list.splice(i, 1))) } },
+                        ].filter(Boolean),
+                    },
+                })),
+                ro() ? { span: {} } : ids.length
+                    ? { button: { type: "button", className: "btn small", textContent: "Reserve records to a certification", onclick: () => edit((list) => list.push({ certification: ids[0] })) } }
+                    : { p: { className: "muted small", textContent: "People & departments lists no certification yet: add one there (Certifications), then reserve records to it here." } },
+            ],
+        },
+    };
+}
+
 function accessTab(ctx) {
     const { api, w, ops, ro, body } = ctx;
+    // A policy's condition is built over the record and the person; the same words say it in its summary.
+    const certIds = Object.keys(api.getState("design.home.organization.certifications", {}) ?? {});
+    const person = userScope(body.roles ?? []);
+    const condSpec = { scopes: { record: scope(`the ${noun(body.label ?? "record")}`, objectEntries(body)), user: certIds.length ? { ...person, entries: [...person.entries, { path: "certifications", label: "their certifications", type: "list", values: certIds }] } : person } };
+    const fieldLabel = (f) => body.fields[f]?.label ?? f;
     const actions = [...new Set(body.states.transitions.map((t) => t.action))];
     const fieldNames = ["*", ...Object.keys(body.fields)];
     return {
         div: {
             children: [
-                labelled("Roles", listInput(ctx, "roles", "operator, supervisor, quality"), "Declared by this object; users and groups are assigned to them."),
+                labelled("Roles", listInput(ctx, "roles", "Add a role…", {
+                    // The roles other objects declare, to keep the plant's words alike; or a new one.
+                    options: [...new Set((api.peek("design.home")?.objects ?? []).flatMap((o) => o.roles ?? []))].sort(),
+                    create: roleNamed,
+                }), "Declared by this object; users and groups are assigned to them."),
+                requiresPanel(ctx),
                 { p: { className: "muted small", textContent: "Deny is the default: a policy grants reading, writing and actions to its roles while its condition holds." } },
                 accessOverview(ctx),
                 (() => { const only = api.getState(`${w}.policyRole`, null); return only ? { p: { className: "small", children: [{ span: `Showing the policies for ${only} (${body.policies.filter((p) => (p?.roles ?? []).includes(only)).length} of ${body.policies.length}). ` }, { button: { type: "button", className: "linkish", textContent: "Show all", onclick: () => api.setValue(`${w}.policyRole`, null) } }] } } : { span: {} }; })(),
@@ -2269,29 +2731,37 @@ function accessTab(ctx) {
                         hidden: (() => { const only = api.getState(`${w}.policyRole`, null); return Boolean(only) && !(rule?.roles ?? []).includes(only); })(),
                         className: `policy ${ctx.diff?.policies?.[rule.id] ? `diff-${ctx.diff.policies[rule.id]}` : ""}`,
                         children: [
-                            { legend: { children: [{ code: rule.id }, diffPill(ctx.diff?.policies?.[rule.id]), ro() ? { span: {} } : { button: { type: "button", className: "linkish", textContent: "remove", onclick: () => ops.edit((b) => { b.policies.splice(i, 1); }) } }] } },
+                            { legend: { children: [{ code: rule.id }, diffPill(ctx.diff?.policies?.[rule.id]), ro() ? { span: {} } : { span: { className: "policy-actions", children: [
+                                { button: { type: "button", className: "linkish", textContent: "rename", onclick: () => renamePolicy(ctx, i) } },
+                                { button: { type: "button", className: "linkish", textContent: "remove", onclick: confirmRemove(ctx.api, `policy ${rule.id}`, () => ops.edit((b) => { b.policies.splice(i, 1); })) } },
+                            ] } }] } },
+                            ro() ? { span: {} } : { div: { className: "policy-presets", children: [
+                                { span: { className: "muted small", textContent: "Set it to:" } },
+                                ...PRESETS.map((pr) => ({ button: { key: pr.key, type: "button", className: "btn small", title: pr.title, textContent: pr.label, onclick: () => ops.edit((b) => pr.apply(b.policies[i])) } })),
+                            ] } },
                             { div: { className: "ed-grid", children: [
-                                labelled("Roles", listInput(ctx, `policies.${i}.roles`)),
+                                labelled("Roles", listInput(ctx, `policies.${i}.roles`, "Add a role…", {
+                                    // This object's roles; a new one is declared on the object as well.
+                                    options: body.roles ?? [], create: roleNamed,
+                                    onChange: (next) => ops.edit((b) => { b.policies[i].roles = next; for (const r of next) if (!(b.roles ?? []).includes(r)) b.roles = [...(b.roles ?? []), r]; }),
+                                })),
                                 // The condition, in the highlighted JSON editor. What is typed is kept as text, and
                                 // applied whenever it parses, so the caret never jumps while typing.
-                                labelled("Condition (JSON, empty = always)", {
-                                    CodeEditor: {
-                                        key: `cond-${rule.id}`, mode: "json", rows: 3, label: `Condition of ${rule.id}`, readOnly: ro,
-                                        value: () => api.getState(`${w}.condText.${rule.id}`, null) ?? (rule.when === undefined ? "" : JSON.stringify(rule.when, null, 2)),
-                                        onInput: (text) => {
-                                            api.setValue(`${w}.condText.${rule.id}`, text);
-                                            if (!text.trim()) { ops.set(`policies.${i}.when`, undefined, false); return; }
-                                            try { ops.set(`policies.${i}.when`, JSON.parse(text), false); } catch { /* the editor marks it */ }
-                                        },
-                                    },
-                                }, 'e.g. {"in": [{"record": "state"}, ["created", "in_process"]]}'),
+                                // The condition (§9.2a): built from the record's fields and the person, or typed as JSON.
+                                wide(labelled("Only when", exprField({
+                                    key: `${w}.policy.${rule.id}`, readOnly: ro, empty: "always",
+                                    value: () => api.getState(`${ops.root ?? `${w}.b`}.policies.${i}.when`, undefined),
+                                    onChange: (v) => ops.set(`policies.${i}.when`, v, true),
+                                    spec: condSpec,
+                                    emptyHint: "No condition: the policy holds always. Its roles still decide whom it is for.",
+                                }))),
                                 // Only through these transactions (§25): a grant no form offers on its own.
-                                labelled("Only through transactions", {
-                                    input: {
-                                        type: "text", disabled: ro, placeholder: "any write (empty)", value: (rule.via ?? []).join(", "),
-                                        onchange: (e) => { const list = fromCsv(e.target.value); ops.set(`policies.${i}.via`, list.length ? list : undefined, true); },
-                                    },
-                                }, "Names of transactions, e.g. move_in: this policy then grants only to writes made through them."),
+                                labelled("Only through transactions", tagsInput({
+                                    key: `${w}.via.${rule.id}`, readOnly: ro, placeholder: "any write (empty)", none: "any write", value: rule.via ?? [],
+                                    options: [...new Set([...(api.peek("design.home")?.transactions ?? []).map((t) => t.name), ...Object.keys(api.peek(`${w}.tx`) ?? {})])].sort(),
+                                    create: (t) => (IDENTIFIER.test(t) ? t : { error: `“${t}” is not a transaction's name` }),
+                                    onChange: (list) => ops.set(`policies.${i}.via`, list.length ? list : undefined, true),
+                                }), "Names of transactions, e.g. move_in: this policy then grants only to writes made through them."),
                             ] } },
                             { div: { className: "checks", children: [
                                 check(ctx, `policies.${i}.record.read`, "may read records"),
@@ -2328,7 +2798,14 @@ function accessTab(ctx) {
                                     } };
                                 }) } },
                             ] } } : { span: {} },
-                            labelled("Deny writing these fields (a lock that wins over any grant)", listInput(ctx, `policies.${i}.deny.fields`)),
+                            labelled("Deny writing these fields (a lock that wins over any grant)", listInput(ctx, `policies.${i}.deny.fields`, "Add a field…", { options: Object.keys(body.fields), create: false })),
+                            // In short: the policy as set above, in words (its name decides nothing: desktop-edit may
+                            // grant only reading), what its roles may do with their other policies, what to look at.
+                            { div: { className: "policy-summary", role: "note", "aria-label": `${rule.id} in short`, children: [
+                                { p: { className: "policy-says", children: [icon("info"), { span: { children: [{ strong: "In short: " }, { span: grantsWords(rule, { fieldLabel, conditionWords: (n) => wordsOf(n, condSpec) }) }] } }] } },
+                                ...togetherWords(rule, body.policies, { fieldLabel }).map((t, k) => ({ p: { key: `tg-${k}`, className: "policy-together", textContent: t } })),
+                                ...policyAdvice(rule, body.policies).map((a, k) => ({ p: { key: `adv-${k}`, className: `policy-advice ${a.tone}`, children: [icon(a.tone === "warn" ? "warning" : "info"), { span: a.words }] } })),
+                            ] } },
                         ],
                     },
                 })),
@@ -2356,6 +2833,7 @@ function rulesTab(ctx) {
             ops.setScript(name, live?.source ?? SCRIPT_TEMPLATE(name), true);
             api.setValue(`${w}.dirty`, false); // opening is not a change until the text is
             if (live) {
+                history.before(api, w);
                 const s = { ...(api.peek(`${w}.s`) ?? {}) };
                 delete s[name];
                 api.setValue(`${w}.s`, s);
@@ -2383,14 +2861,14 @@ function rulesTab(ctx) {
                                             children: [
                                                 { td: String(i + 1) },
                                                 { td: { children: [{ button: { type: "button", className: "linkish", textContent: `${entry.script}.js`, onclick: () => openScript(entry.script) } }, entry.script in drafted ? { span: { className: "badge s-review", textContent: "edited" } } : { span: {} }] } },
-                                                { td: { children: [listInput(ctx, `rules.${i}.writes`, "fields")] } },
+                                                { td: { children: [listInput(ctx, `rules.${i}.writes`, "Add a field…", { options: Object.keys(body.fields), create: false })] } },
                                                 { td: { children: [check(ctx, `rules.${i}.backendOnly`, "")] } },
                                                 { td: { children: [check(ctx, `rules.${i}.committed`, "")] } },
                                                 {
                                                     td: {
                                                         children: ro() ? [] : [
                                                             { button: { type: "button", className: "btn ghost", title: "Earlier", "aria-label": "Earlier", children: [icon("arrowUp")], disabled: i === 0, onclick: () => ops.edit((b) => { [b.rules[i - 1], b.rules[i]] = [b.rules[i], b.rules[i - 1]]; }) } },
-                                                            { button: { type: "button", className: "btn ghost", textContent: "Remove", onclick: () => ops.edit((b) => { b.rules.splice(i, 1); }) } },
+                                                            { button: { type: "button", className: "btn ghost", textContent: "Remove", onclick: confirmRemove(ctx.api, `rule ${entry.script}`, () => ops.edit((b) => { b.rules.splice(i, 1); }) )} },
                                                         ],
                                                     },
                                                 },
@@ -2413,6 +2891,7 @@ function rulesTab(ctx) {
                 },
                 ro() ? { span: {} } : addRow(ctx, "New script name (e.g. lot_check_moisture)", (name, b) => {
                     if (scripts.includes(name)) return `A script "${name}" exists already; add it to the pipe instead.`;
+                    history.before(api, w);
                     api.setValue(`${w}.s.${name}`, SCRIPT_TEMPLATE(name));
                     (b.rules ??= []).push({ script: name });
                     api.setValue(`${w}.script`, name);
@@ -2444,6 +2923,14 @@ function rulesTab(ctx) {
         },
     };
 }
+
+// A part of a designer tab, set apart like the others: a bordered panel with its heading and, if given, what
+// it is for. → a <section> named by its heading
+const edPanel = (title, about, children) => ({ section: { className: "ed-panel", "aria-label": title, children: [
+    { h3: { className: "ed-panel-title", textContent: title } },
+    about ? { p: { className: "muted small ed-panel-about", textContent: about } } : { span: {} },
+    ...children,
+] } });
 
 function layoutTab(ctx) {
     const { api, w, body, ops, ro } = ctx;
@@ -2483,7 +2970,6 @@ function layoutTab(ctx) {
         div: {
             className: "lay-list",
             children: [
-                { h4: "List" },
                 { div: { className: "chip-row", children: [
                     ...columns.map((c, k) => ({ span: { key: c, className: "lay-chip", children: [
                         { span: fields[c]?.label ?? c },
@@ -2500,6 +2986,37 @@ function layoutTab(ctx) {
                 { label: { className: "inline small", title: "For an object with too many records to browse (people, say): its list shows nobody until something is typed. Development, the demo and test instances list them anyway.", children: [
                     { input: { type: "checkbox", disabled: ro, checked: body.list?.searchFirst === true, onchange: (e) => ops.edit((b) => { b.list = { ...(b.list ?? {}) }; if (e.target.checked) b.list.searchFirst = true; else delete b.list.searchFirst; }) } },
                     { span: " Search first: the list starts empty, with a search box" },
+                ] } },
+            ],
+        },
+    };
+
+    // ---- its history (§10.10): which fields' changes its History tab says, and in what words ----
+    const isPlainHistory = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+    const hist = isPlainHistory(body.history) ? body.history : {};
+    const setHist = (fn) => ops.edit((b) => { const h = { ...(isPlainHistory(b.history) ? b.history : {}) }; fn(h); if (Object.keys(h).length) b.history = h; else delete b.history; });
+    const histFields = Array.isArray(hist.fields) ? hist.fields : null;
+    const historyEditor = {
+        div: {
+            className: "lay-list lay-history",
+            children: [
+                hint("What a record's History tab says of each change. The audit trail keeps every change whatever is chosen here, and whoever reads the record may still show every change."),
+                { label: { className: "inline small", children: [
+                    { input: { type: "checkbox", disabled: ro, checked: histFields === null, onchange: (e) => setHist((h) => { if (e.target.checked) delete h.fields; else h.fields = Object.keys(fields); }) } },
+                    { span: " Every field's changes" },
+                ] } },
+                histFields === null ? { span: {} } : { div: { className: "chip-row", children: [
+                    { span: { className: "muted small", textContent: "Only these: " } },
+                    ...histFields.map((c) => ({ span: { key: c, className: "lay-chip", children: [{ span: fields[c]?.label ?? c }, small(icon("x"), () => setHist((h) => { h.fields = histFields.filter((x) => x !== c); }), "Leave its changes out of the history")] } })),
+                    ro() ? { span: {} } : { select: { className: "mini-select", "aria-label": "Add a field to the history", onchange: (e) => { if (e.target.value) setHist((h) => { h.fields = [...histFields, e.target.value]; }); }, children: noDefault([["", "+ field"], ...Object.keys(fields).filter((f) => !histFields.includes(f)).map((f) => [f, fields[f].label ?? f])].map(([v, l]) => ({ option: { value: v, textContent: l } }))) } },
+                ] } },
+                { label: { className: "inline small", children: [
+                    { input: { type: "checkbox", disabled: ro, checked: hist.steps !== false, onchange: (e) => setHist((h) => { if (e.target.checked) delete h.steps; else h.steps = false; }) } },
+                    { span: " Say each step of its route it enters, by name (Entered ADI CD metrology, Patterning layer)" },
+                ] } },
+                { label: { className: "inline small", children: [
+                    { input: { type: "checkbox", disabled: ro, checked: hist.via !== false, onchange: (e) => setHist((h) => { if (e.target.checked) delete h.via; else h.via = false; }) } },
+                    { span: " Name the transaction or plan behind each change (Track in · Wade Tanaka)" },
                 ] } },
             ],
         },
@@ -2592,24 +3109,12 @@ function layoutTab(ctx) {
             if (v === undefined || v === "") delete e[k]; else e[k] = v;
             if (k === "widget") e.width = Math.max(minWidth(e.widget), e.width);  // a wider widget needs the room
         });
-        const ruleEditor = (kind, label, stored, apply) => {
-            const draftPath = `${w}.ruleText.${selected}.${kind}`;
-            const text = () => api.getState(draftPath, null) ?? (stored === undefined ? "" : JSON.stringify(stored, null, 2));
-            const pending = () => { const t = api.getState(draftPath, null); return t !== null && t !== (stored === undefined ? "" : JSON.stringify(stored, null, 2)); };
-            return {
-                div: { className: "lay-rule", children: [
-                    { div: { className: "lay-rule-head", children: [{ strong: label }, () => (pending() ? { span: { className: "muted small", textContent: " not applied yet" } } : { span: {} }), { span: { className: "spacer" } },
-                        ro() ? { span: {} } : { button: { type: "button", className: "mini", disabled: () => !pending(), textContent: "Apply", onclick: () => {
-                            const t = api.peek(draftPath) ?? "";
-                            let value;
-                            if (t.trim()) { try { value = JSON.parse(t); } catch { api.setValue(`${w}.error`, `${label}: the condition is not valid JSON.`); return; } }
-                            api.setValue(draftPath, null);
-                            apply(value);
-                        } } }] } },
-                    { CodeEditor: { key: `${selected}-${kind}`, mode: "json", rows: 3, label, readOnly: ro, value: text, onInput: (t) => api.setValue(draftPath, t) } },
-                ] },
-            };
-        };
+        // A field's condition (§9.2a): built from the form as it is filled in, the record as saved, and the person.
+        const ruleEditor = (kind, label, stored, apply) => ({ div: { className: "lay-rule", children: [
+            { strong: label },
+            exprField({ key: `${w}.layrule.${selected}.${kind}`, readOnly: ro, empty: kind === "required" ? "never: as the field says" : "always", value: () => stored, onChange: (v) => apply(v),
+                spec: { scopes: { data: scope("the form", objectEntries(body).filter((e) => !/^(state|id)$/.test(e.path))), record: scope("the record as saved", objectEntries(body)), user: userScope() } } }),
+        ] } });
         return {
             div: {
                 className: "lay-inspector",
@@ -2618,11 +3123,16 @@ function layoutTab(ctx) {
                     { div: { className: "ed-row", children: [
                         labelled("Width", { select: { disabled: ro, onchange: (e) => setEntry("width", Number(e.target.value)), children: noDefault(Array.from({ length: 13 - minWidth(entry.widget) }, (_, k) => k + minWidth(entry.widget)).map((n) => ({ option: { value: n, selected: entry.width === n, textContent: `${n} of 12${n === 12 ? " (whole row)" : n === 6 ? " (half)" : n === 4 ? " (a third)" : n === 3 ? " (a quarter)" : ""}` } }))) } }),
                         labelled("Drawn as", { select: { disabled: ro, onchange: (e) => setEntry("widget", e.target.value), children: noDefault(widgetsFor(f).map((x) => ({ option: { value: x, selected: entry.widget === x, textContent: WIDGET_LABELS[x] } }))) } }, f.type === "enum" && !f.multiple ? "Several values: tick it on the Fields tab." : ""),
-                        f.type === "text" ? labelled("Rows", { input: { type: "number", min: 2, max: 20, disabled: ro, value: entry.rows ?? 3, onchange: (e) => setEntry("rows", Number(e.target.value)) } }) : { span: {} },
+                        // A long text's height in lines: its smallest, and, if said, the largest it grows to as it is typed.
+                        f.type === "text" ? labelled("Height (lines)", { div: { className: "lay-height", children: [
+                            { label: { className: "small", children: [{ span: "at least " }, { input: { type: "number", min: 2, max: 20, disabled: ro, "aria-label": "Smallest height in lines", value: entry.rows ?? 3, onchange: (e) => setEntry("rows", Math.max(2, Math.min(20, Number(e.target.value) || 3))) } }] } },
+                            { label: { className: "small", children: [{ span: " growing to " }, { input: { type: "number", min: entry.rows ?? 3, max: 40, disabled: ro, "aria-label": "Largest height in lines", placeholder: "—", value: entry.maxRows ?? "", onchange: (e) => setEntry("maxRows", e.target.value === "" ? undefined : Math.max(entry.rows ?? 3, Math.min(40, Number(e.target.value) || 0))) } }] } },
+                        ] } }, "It grows with what is typed up to the largest, then scrolls; empty: it stays at its height.") : { span: {} },
+                        entry.widget === "search" ? labelled("Letters before searching", { input: { type: "number", min: 1, max: 6, disabled: ro, value: entry.minChars ?? 2, onchange: (e) => setEntry("minChars", Math.min(6, Math.max(1, Math.round(Number(e.target.value) || 2)))) } }, "Nothing is searched until this many are typed; then the first 20 matches the person may see.") : { span: {} },
                         labelled("Help text", { input: { type: "text", disabled: ro, value: entry.help ?? "", placeholder: "Shown under the field", onchange: (e) => setEntry("help", e.target.value.trim()) } }),
                         labelled("Placeholder", { input: { type: "text", disabled: ro, value: entry.placeholder ?? "", placeholder: "Shown while empty", onchange: (e) => setEntry("placeholder", e.target.value.trim()) } }),
                     ] } },
-                    hint('Conditions read the form as it is being filled: {"eq": [{"data": "disposition"}, "rework"]}, {"contains": [{"data": "defects"}, "dent"]}, {"in": [{"record": "state"}, ["created", "in_process"]]}. Empty: always. They only change what is shown; what a person may read or write is the policies\' to say.'),
+                    hint("Conditions read the form as it is being filled, the record as saved, and the person: Edit builds one from them (or start from a pattern), JSON shows the same as text. Empty: always. They only change what is shown; what a person may read or write is the policies' to say."),
                     ruleEditor("show", "Shown when", entry.show, (v) => setEntry("show", v)),
                     ruleEditor("enable", "Enabled when", entry.enable, (v) => setEntry("enable", v)),
                     ruleEditor("required", "Required when (checked by the server too)", f.requiredWhen, (v) => ops.edit((b) => { if (v === undefined) delete b.fields[selected].requiredWhen; else b.fields[selected].requiredWhen = v; })),
@@ -2636,8 +3146,10 @@ function layoutTab(ctx) {
         div: {
             className: "layout-editor",
             children: [
-                ...(ctx.noList ? [] : [listEditor]),
-                { h4: "Form" },
+                // Each part its own panel, as the other tabs draw theirs: what the list shows, what the
+                // History tab says, the form, and its preview.
+                ...(ctx.noList ? [] : [edPanel("List", "The columns of the object's list, their order, and how it is sorted until someone sorts it by a column.", [listEditor]), edPanel("History", null, [historyEditor])]),
+                edPanel("Form", null, [
                 hint("Drag a field to move it, within a section or to another; or use the arrow and minus and plus buttons. Click a field to set how it is drawn and when it is shown. Widths are of a 12-column row; on narrow screens fields take the whole row."),
                 tabBar,
                 tabHead,
@@ -2645,8 +3157,8 @@ function layoutTab(ctx) {
                 ro() ? { span: {} } : { button: { type: "button", className: "btn", textContent: "Add section", onclick: () => editForm((m) => { m.tabs[tabAt].sections.push({ label: "New section", fields: [] }); }) } },
                 tray,
                 inspector(),
-                { h4: "Preview" },
-                { FormPreview: { key: `lp-${api.peek(`${w}.vrev`) ?? 0}-${tabAt}`, body: clone(body), tab: tabAt } },
+                ]),
+                edPanel("Preview", null, [{ FormPreview: { key: `lp-${api.peek(`${w}.vrev`) ?? 0}-${tabAt}`, body: clone(body), tab: tabAt } }]),
             ],
         },
     };
@@ -2697,7 +3209,7 @@ function stewardsTab(ctx) {
 
 // Approval of record changes (§28): which changes to this object's records, made outside a
 // transaction, wait until their stewards (above) approve them.
-function approvalSection({ ops, ro, body }) {
+function approvalSection({ api, ops, ro, body }) {
     const a = body.approval ?? {};
     const set = (fn) => ops.edit((b) => {
         const next = { ...(b.approval ?? {}) };
@@ -2735,11 +3247,52 @@ function approvalSection({ ops, ro, body }) {
                     labelled("Only in these states (none ticked: any state)", narrow(body.states.list, editOnly("states"), toggleEdit("states"))),
                 ] } } : { span: {} },
                 box(a.create === true, "A new record waits for approval", (on) => set((n) => { n.create = on || undefined; })),
+                box(a.archive === true, "Archiving (deleting) and restoring a record waits for approval: nothing is ever deleted, an archived record leaves the lists", (on) => set((n) => { n.archive = on || undefined; })),
                 actions.length ? box(Boolean(a.actions), "Actions wait for approval", (on) => set((n) => { n.actions = on ? true : undefined; })) : { span: {} },
                 a.actions ? { div: { className: "approval-narrow", children: [labelled("Only these actions (none ticked: any action)", narrow(actions, actionsOnly, toggleAction))] } } : { span: {} },
+                a.edit || a.create || a.actions || a.archive ? approvalBy({ api, ro, body, a, set, box }) : { span: {} },
             ],
         },
     };
+}
+
+// Who approves, by a value of the record (§28.3a): a product of the power group approved by power
+// engineering, one of the MCU group by MCU engineering. Per value, its departments; a value not listed,
+// the stewards above. A change that moves a record to another value is approved for both values.
+function approvalBy({ api, ro, body, a, set, box }) {
+    const by = a.by && typeof a.by === "object" ? a.by : null;
+    // Departments and groups (People & departments; a plant may have fifty), found by typing: a group
+    // approves when any one of its members signs.
+    const approvers = [
+        ...(api?.peek("design.home.departments") ?? []).map((d) => ({ value: d.id, label: d.name ?? d.id, hint: "department" })),
+        ...(api?.peek("design.home.groups") ?? []).filter((g) => g.kind === "group").map((g) => ({ value: g.id, label: g.name ?? g.id, hint: "group" })),
+    ];
+    const eligible = Object.entries(body.fields).filter(([, f]) => ["enum", "string", "boolean"].includes(f.type) && !f.multiple && !f.sensitive);
+    const setBy = (fn) => set((n) => { const next = { ...(n.by ?? {}) }; fn(next); n.by = next; });
+    const field = by ? body.fields[by.field] : null;
+    const values = !by ? [] : field?.type === "enum" ? field.values ?? [] : field?.type === "boolean" ? ["true", "false"] : Object.keys(by.values ?? {});
+    const wordsOf = (v) => (field?.type === "boolean" ? (v === "true" ? "yes" : "no") : v);
+    const choose = (v, next) => setBy((n) => {
+        const all = { ...(n.values ?? {}) };
+        if (next.length) all[v] = next; else delete all[v];
+        n.values = all;
+    });
+    const row = (v) => ({ tr: { key: v, children: [
+        { td: { children: [{ strong: wordsOf(v) }] } },
+        { td: { className: "approval-who", children: [pickMany({ key: `approval-by-${v}`, options: approvers, value: by.values?.[v] ?? [], readOnly: ro, placeholder: "Add a department or a group…", onChange: (next) => choose(v, next) })] } },
+        field?.type === "string" && !ro() ? { td: { children: [{ button: { type: "button", className: "linkish small", textContent: "remove", onclick: () => setBy((n) => { const all = { ...(n.values ?? {}) }; delete all[v]; n.values = all; }) } }] } } : { td: {} },
+    ] } });
+    return { div: { className: "approval-by", children: [
+        box(Boolean(by), "Who approves follows a value of the record (a product's engineering group)", (on) => set((n) => { n.by = on ? { field: eligible[0]?.[0] ?? "", values: {} } : undefined; })),
+        !by ? { span: {} } : { div: { className: "approval-narrow", children: [
+            labelled("By the value of", { select: { disabled: ro, onchange: (e) => setBy((n) => { n.field = e.target.value; n.values = {}; }), children: noDefault(eligible.map(([name, f]) => ({ option: { value: name, selected: by.field === name, textContent: f.label ?? name } }))) } },
+                eligible.length ? "A choice, a text or a yes / no. A reference's code can be copied into a text field derived from it (Fields: Derive…)." : "Add a choice, text or yes / no field first."),
+            { table: { className: "grid approval-values", children: [{ tbody: { children: values.map(row) } }] } },
+            field?.type === "string" && !ro() ? labelled("Another value", { input: { type: "text", placeholder: "a value of the field, as it is written (power)", onchange: (e) => { const v = e.target.value.trim(); e.target.value = ""; if (v) setBy((n) => { n.values = { ...(n.values ?? {}), [v]: n.values?.[v] ?? [] }; }); } } }) : { span: {} },
+            labelled("Its departments and groups approve", { select: { disabled: ro, onchange: (e) => setBy((n) => { if (e.target.value === "also") n.stewards = "also"; else delete n.stewards; }), children: noDefault([["replace", "in place of the stewards above"], ["also", "as well as the stewards above"]].map(([v, l]) => ({ option: { value: v, selected: (by.stewards ?? "replace") === v, textContent: l } }))) } }),
+            hint("A group approves when any one of its members signs (never the one who asked); a department signs its steps in order. A value not listed here is approved by the stewards above. A change that moves a record to another value (power to MCU) is approved for both: the value it leaves and the one it joins."),
+        ] } },
+    ] } };
 }
 
 function jsonTab({ api, w, ops, ro }) {

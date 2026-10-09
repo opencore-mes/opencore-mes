@@ -1,0 +1,13 @@
+[Unit]
+Description=OpenCore MES training plant: back to the seed, and a new reader's token for the trainings
+After=postgresql.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/systemctl stop opencore-mes-training
+ExecStart=/bin/su -s /bin/sh opencore -c 'cd /srv/opencore-mes/current && set -a && . ops/demo/training.env && set +a && /usr/local/bin/node app/mes/db/reset.mjs'
+ExecStartPost=/bin/systemctl start opencore-mes-training
+# The trainings check each learner's steps through /ai/v1 as Vera (a reviewer: she reads every change);
+# the reset made every token go, so a new one, for two days, where the trainings' service reads it (its
+# failure, or no trainings on this host, leaves the plant running).
+ExecStartPost=-/bin/sh -c 'getent group trainings >/dev/null && [ -d /etc/trainings ] || exit 0; umask 027; T=$(su -s /bin/sh opencore -c "cd /srv/opencore-mes/current && set -a && . ops/demo/training.env && set +a && /usr/local/bin/node app/mes/db/token.mjs vera trainings-checks --scope design:read --days 2 --quiet") && printf %%s "$T" > /etc/trainings/plant-token.next && chgrp trainings /etc/trainings/plant-token.next && mv /etc/trainings/plant-token.next /etc/trainings/plant-token'

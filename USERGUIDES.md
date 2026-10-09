@@ -6,7 +6,8 @@ work in: find your way around, open a change, design what the plant needs, get i
 watch it run.
 
 Section numbers given as §n refer to the design document, kept by the maintainers. Questions not yet decided are in [OPENQUESTIONS.md](OPENQUESTIONS.md). A hands-on course with exercises on
-the demo system is in [TRAINING.md](TRAINING.md).
+the demo system is in [TRAINING.md](TRAINING.md), and a book of worked examples (sixty-odd needs a plant
+has, each with the design that meets it, as JSON) in [USECASES.md](USECASES.md).
 
 > This guide describes OpenCore MES as it is built (`app/mes/`). Where something the design describes is
 > not built yet, a **Not yet** note says so.
@@ -163,9 +164,30 @@ sign-in. **Password link** makes a one-time link to set a password, shown once f
 **Reset second factor** takes off a lost phone's (say why); **Unlock** lifts a lock; **End sessions**
 signs them out everywhere. Each is in the audit trail, by you. The same alerts reach your inbox.
 
+**Setup codes, for people with no mail or computer of their own.** Once People & departments has the
+people (a file of a few thousand is fine), **Setup codes for people with no password yet** on the same
+page counts everyone who has no password here and has never signed in (choose a department, or
+everyone), and **Make codes and download** gives each of them five capital letters and downloads a CSV
+file (id, name, departments, code, expiry, the address to open) for printed slips or a mail merge. Hand
+each slip to its person, then delete the file: it holds the codes. Making codes again for the same people
+stops the earlier ones working. **Setup code** beside a person makes one person's code, shown once. On
+the sign-in page the person clicks **I have a setup code**, types their sign-in id, the code (any case)
+and their new password twice; the code works once, and after five wrong tries it stops working (ask for
+a new one).
+
+**Your name, top right**, opens your menu: **Your password** and **Sign out**. On a development, test or
+demo instance (no passwords there) it also lists everyone else, with a search: click a name to be them, on the
+page you are on. The demo has no Sign out: be someone else instead.
+
+**Moving to the plant's directory.** Where the plant also signs people in through its directory (Active
+Directory, LDAP), someone who was given a password here can move to it from **Your password** (their name,
+top right): type your password in the directory, click **Switch to** (the directory's name); if it
+accepts it, your password here is taken off and you sign in with the directory's from then on (anywhere
+else you were signed in, you are signed out). If it does not, nothing changes.
+
 **Trying single sign-on.** `npm run sso:sim` starts a small identity provider for development and
 training (never production): start OpenCore MES with `OIDC_ISSUER=http://127.0.0.1:9095
-OIDC_CLIENT_ID=open-mes PICKER=0` and sign in as any seeded person with its password (`sso-sim`);
+OIDC_CLIENT_ID=opencore-mes PICKER=0` and sign in as any seeded person with its password (`sso-sim`);
 `--mfa` makes it ask a code as well.
 
 ### What waits for you, and what is in progress
@@ -195,14 +217,38 @@ press **Split** to see both side by side. The address keeps what you ticked, so 
 same view for someone else. **Change it** there starts a change when you mean to; if one is open already,
 it links to it.
 
-**From the suites** shows the designs an installed suite brings (an assembly and test line: lots,
-wafers, routes, equipment, SPC): how many are new, how many differ from what is live, and the roles
-they would give. **Start a change from it** opens one change request holding all of it; you edit it
+**Suites** (the navigator's Design group, or search "suites", "packs", "samples") lists the installed
+suites, one line each, those with something to do first: the designs a suite brings (an assembly and test
+line: lots, wafers, routes, equipment, SPC), how many are new, how many differ from what is live, and the
+roles, groups and certifications they would give. The designer's home shows only a line linking there
+when a suite has something to do. **Start a change from it** opens one change request holding all of it; you edit it
 like any other, and it is reviewed and approved before anything goes live. Once it is live, **Load its
 sample records** creates the suite's sample data through the ordinary forms' checks, as you, so your
 roles decide what you may create; loading again adds nothing. Where an object's design makes a new
 record or an action wait for approval (section 4, **Stewards**), that sample is sent for approval
 instead, its reason saying it is a sample, and the note says how many wait.
+
+Some designs of a suite work with another suite only (a capacity plan's service that takes its crews from
+the Shift Calendar): where that suite is not installed they are not offered, and the rest works without
+them. Install it later and the first suite's line offers them as new, in a change of their own.
+
+**About.** **About OpenCore MES**, last in the navigator, says what your installation runs: its version and
+build, the framework and Node.js versions, and every suite installed with its version (and its designs'
+version). Quote it when you report a problem or record a validation. Where your plant has signed in to the suites
+store, a suite with a newer version says so there and on its line under **Suites** ("Suite 0.1.2
+available"): IT updates it when you choose (`opencore-mes suite update <name>`, then a restart). Nothing of yours is
+lost by an update, a removal or a reinstall: your designs, records and the suite's own data stay, and a newer
+design pack is offered as a change like any other.
+
+**Set-up guide.** A suite that brings one shows **Set-up guide** on its line under **Suites** (a suite
+that brings no designs, such as one that only adds a page, has a line for its guide alone). The guide is the suite
+maker's: how a plant takes the suite into its own setup, step by step, each step saying who does it
+(IT, an administrator, a designer, a department): installing it, the groups and certifications to
+prepare, the change to take its designs through, the master data and opening balances to enter, how
+your own designs use what it adds, and going live. Commands have a copy button. Since a guide is shown
+only for a suite installed here, it says so at the top, with the version, and its install step is marked
+**Done here** and greyed: its commands are for another installation (test, training, production). Reading it
+changes nothing: every step that changes the plant goes through the ordinary forms, changes and approvals.
 
 **What an installed suite adds to your designs.** A suite may add building blocks that you use like
 the platform's own, each shown where it is used:
@@ -234,6 +280,23 @@ Open a change from the designer home: **Change** on an object, **New service**, 
 or **Start design** for a new object (give it a name such as `inspection` and a label). A new
 object's name can be changed on its **General** tab until its first version is approved; after that
 it is fixed, and the label is what people read.
+
+**Finding a design.** Every tab of the designer's home (Objects, Transactions, Screens, Flows, Report
+layouts, Queries, From suites, Services & connections, People & departments, Changes) has a search box
+(every word you type, in any order, in its name, label or what it is about), filters of its own (an
+object's area, a transaction's object and whether it is signed, a flow's kind and records, a change's state
+and author) and two everywhere: **Stewarded by** a department and **Open change**. **Sort** orders it by
+name, id, version, an open change first or what fits the tab (a change by when it was updated), and the
+arrow beside it reverses the order. "3 of 41" and **Clear** show once you have narrowed it; each tab keeps
+its own while you move around.
+
+**Undo and redo.** **Undo** and **Redo** above the editors take back the last edit to the change and put it
+forward again, whichever editor it was in (a field, a policy, a node, a person, a script): ⌘Z or Ctrl+Z,
+and ⇧⌘Z or Ctrl+Y, do the same while you are not in a text box (in a box, they undo your typing there as
+usual). Typing in one box is one step, and a click that changes several things (a node's script and its
+test) is one step. Undo is saved like any edit. The steps last while the change stays open in this
+window, up to 100; when someone else's edit to the change comes in (a co-designer, the copilot), they
+start again, so you never take back their work.
 
 **Several designs in one change.** When one piece of work spans several designs (a new field on the
 lot and the work order, the transaction that fills them, the screen that shows them), bring them all
@@ -365,6 +428,10 @@ import may create records or update (override) existing ones, and the field rows
 **Label**, **Area** (where it appears in the navigator), **Description**, and the **Title field**:
 the field that names a record in lists, tabs and references (for a lot, the lot number).
 
+**Scanned by:** up to three more fields a scan, or a name typed whole, finds a record by: a text or
+a whole number, never a sensitive field. Person is scanned by its sign-in id, so the badge a borrower
+holds up fills in "Borrowed by". A field you may not read finds nothing for you.
+
 **Analytics dimensions:** up to five fields (for a lot: `item, uom`) copied into each stay of a
 record in a state, so its analytics can be grouped by them. The value copied is the one the record
 had when the stay began: a lot moved to another item later still counts under the item it had then.
@@ -379,6 +446,9 @@ label, and a type:
   conditions, hints, analytics and import. Scripts, transactions and screens in the same change that
   read it are named by the checks. A published field's name is locked (its records hold their values
   under it): change its label, which is what people see, or add a field and remove the old one.
+- **Removing a field:** **Remove** takes it out of the form, the list's columns, analytics, the
+  policies and approval of edits too. What decides by it (a condition, the title, the import key) is
+  named by the checks, for you to point elsewhere. Removing a state takes its tone with it.
 - **Kept fields (the lock in the list):** some parts of an object are relied on, by the platform (the
   built-in Person's sign-in id, name and active) or by an installed suite. A note at the top of
   **Fields** says who keeps what, and why. A kept field cannot be removed or retyped, stays required if
@@ -406,12 +476,52 @@ record of the object it refers to that the person may read, and a choice lists e
 once. Numbers are shown as they were entered, grouped in the plant's format and never rounded: 0.0004
 reads 0.0004 everywhere, in an approval too.
 
-- **Several values** (under an enum's values) lets a field hold more than one: a lot's defects, a
+On **Fields**, the table scrolls in its own box: its head stays at the top, **Name** and **Label** at the
+left and the remove button (a bin) at the right. **Values / refers to** shows a summary (a choice's first
+values and how many more, what a reference refers to, where a derived field reads from); its expand
+button opens the field in a panel to manage its values, **Multiple select**, what it refers to, the files
+it takes and **Derive…**.
+
+- **Longest** (in a text or long text field's panel) is how many characters it may hold: up to 2 000 for a
+  text, 20 000 for a long text, 500 if you say nothing. Typing stops there, a long text shows its count as it
+  nears it, and a save that is longer (an import, a service) is refused, saying by how much.
+- **Multiple select** (in a choice field's panel) lets a field hold more than one: a lot's defects, a
   work order's lines. Turning it on or off in a change converts the stored records when the change is
   executed. A field used as an analytics dimension or an import key keeps a single value.
 - **Required when** (in the field's inspector on **Layout**) makes a field required only under a
   condition, for example a reason when the disposition is `reject`:
   `{"eq": [{"data": "disposition"}, "reject"]}`. The server checks it too.
+- **Sensitive** (its own column on **Fields**) is for health or personal data: a patient's name or id.
+  Its value is hidden wherever records are shown or exported ("Hidden: sensitive"); someone who may read
+  it presses **Show** and says why, and sees it on that page until they leave it. Each showing is kept in
+  the record's history, with who and why. It is never in Queries, Analytics, AI reports or the copilots,
+  and never written into the audit trail (which says it changed, not to what). Who may read or write it
+  at all is still up to the object's policies. A sensitive field cannot be the title, an analytics
+  dimension, the list's sort or the import key, and a screen does not sort, sum or group by it.
+- **file** (a type): a work instruction, a drawing, a video of the job, kept on the record. In its
+  last column, tick what it takes: **picture**, **pdf**, **video**, **spreadsheet** (none ticked:
+  pictures, PDFs and videos). On the form it is shown small, its name and size, with **Show here**
+  (read the PDF or watch the video in place), **Upload…**, **Replace…** and **Remove**; a file of
+  another kind is refused, saying what it takes. A file is read through its record, by whoever may read
+  that record and field and nobody else. Derive one through a reference (a lot's **Instruction** from
+  **Step → Instruction**) and each lot shows its step's, and the new one as soon as the step's is
+  replaced. A screen shows one with a **file** block (Screens).
+- **Erasable** (its own column on **Fields**) marks personal data a privacy officer may erase from a
+  record when someone asks (Data retention). Not on a picture, nor on a person's name or sign-in id
+  (People & departments keeps those).
+- **Derived from a reference** (**Derive…** in the panel a field's expand button opens, under **Values /
+  refers to** on **Fields**, once the object has a reference field) makes a
+  field the platform keeps, from what the record's references point at. Pick a path a step at a time: one
+  of this object's references, then a field of what it points to (a lot's **Product → Control**), and on
+  through another reference when that field is one (a wafer's **Lot → Product → Code**). Or choose **Use
+  an expression** for a condition over the record and the fields its references point at ("is its
+  product military?": yes or no). Nobody types it: it is worked out at every save, and again, at once,
+  when the record it reads changes (reclassify a product and its lots and their wafers follow; each is in
+  their history as "derive", naming what it follows). Executing the change that adds one fills every
+  record already there. Lists, queries, policies and an object's access read it like any field, which is
+  what it is for: a lot reads its product's classification without anyone copying it. It is never
+  required, sensitive or erasable, never from a sensitive field, and two fields may not read each other
+  in a loop; the check says which. Whoever reads it reads what it copies, under this object's policies.
 
 ### States
 **A list** (departments, operations, reasons: reference data that is added and edited, never moved
@@ -427,10 +537,39 @@ appear as buttons on the record, for the people allowed to take them.
 (rejected), **info**, **neutral** (consumed), or **plain**. Each state's badge previews it. You choose a
 meaning, never a colour: the plant's theme colours it, in light and dark alike.
 
+**Lists of words are tags.** Wherever a design takes several words (roles, an enum's values, states, the
+states a transition starts from, fields, columns, times of day, the plant's domains), they are chips: ×
+removes one, the box suggests what already exists as you click into it or type, Enter or a click adds,
+Backspace in the empty box removes the last. Where a new one may be added, **Add “…”** is offered (and what
+is typed is kept when you leave the box); where it must already exist (a field, a state), only those are
+offered, and a word that is not one is said not to match.
+
 ### Roles & policies
 Who may do what (§9). Access is **denied unless a policy grants it**.
+- **Reserved to a certification** opens the tab: records only the certified may see, whatever their
+  roles. **Reserve records to a certification** adds one: the certification (People & departments lists
+  them, **Certifications**) and **For the records where**, a condition on the record (empty: every
+  record). A military product requires ITAR when its control is military; its lots and wafers derive
+  that control from it (above) and require ITAR the same way, so the rule is written once and follows the
+  product when it is reclassified. Someone without the certification, active and in date, sees nothing of
+  such a record: not in a list or its count, a search, a query, an AI report, an export or analytics, and
+  opening it by its id finds nothing, even for those who read every record. A save that would leave the
+  record reserved from whoever makes it is refused, naming the certification. The plant's plans and
+  machines are not held to it; a service with its own identity holds the certifications its design names
+  (none unless named). It is approved by the object's stewards and governance. A policy's condition may
+  also read **their certifications**.
 - **Roles** are declared by the object (`operator`, `supervisor`, `quality`, `viewer`). People and
-  groups are given roles through their own change requests.
+  groups are given roles through their own change requests. The box suggests the roles other objects
+  declare, so the plant's words stay alike; type a new one and press Enter to add it (lower case letters,
+  digits and `_`; several at once with commas). A policy's **Roles** box offers this object's roles, and a
+  new one typed there is declared on the object as well.
+- A policy's **name** only says what it is for (`lot-read`, `desktop-edit`); what it grants is what is
+  ticked in it. So each policy ends with **In short**: one sentence saying what it lets its roles do (its
+  condition in words, its transactions, the fields it never lets them write), then, for a role other policies
+  also name, what that role may do with all of them counted (`desktop-read` and `desktop-edit` together); it warns when
+  roles may change records but no policy lets them read them, says where reading comes from when another
+  policy grants it, and warns when the name says the opposite of what is ticked. **Set it to** Read only,
+  Read and edit or Nothing sets the ticks at once; **rename** changes the name.
 - A **policy** grants something to one or more roles, optionally under a **condition**:
   - **may read records**, **may create records**, **may archive and restore records**;
   - per field: **read** or **write** (write includes read); `*` for every field not named. Each field
@@ -514,7 +653,19 @@ How the list and the form look. Nothing here grants or refuses anything; that is
 - **Inspector** (click a card):
   - **Width**, **Drawn as** (the widget: a dropdown, radio list or buttons; for several values a
     checkbox list, multi-select or chips; a checkbox, toggle or yes / no; a search as you type for a
-    reference; a number with − +), **Help text**, **Placeholder**, the **Rows** of a text box;
+    reference; a number with − +), **Help text**, **Placeholder**, the **Height (lines)** of a long text: at least so many lines, and, if you give the
+    largest, growing with what is typed up to it, then scrolling;
+  - a reference is **searched as typed** unless you draw it otherwise: nothing is looked up until
+    **Letters before searching** (2 unless you say; 1 to 6) are typed, then the first 20 records the
+    person may see whose name holds them, those it begins first; more letters narrow them. A plant's
+    thousands of lots are never sent to fill a list. A **dropdown** lists the 200 changed last: keep it
+    for a short list (a handful of stations); **scan** takes a label read off a barcode;
+- **History** (below the list): what a record's **History** tab says of each change. **Every field's
+  changes**, or only the ones you list (a lot's tool, wafers and hold reason, without the counters a
+  route keeps); **Say each step of its route it enters** (*Entered Oxidation (CMOS route)*); **Name the
+  transaction or plan behind each change** (*Track in · Wade Tanaka*), a transaction's writes told as one.
+  It is how the history reads, never what is kept: the audit trail keeps every change, and whoever reads
+  the record can tick **Show every change**.
   - **Shown when**: the field appears only under a condition, for example
     `{"eq": [{"data": "disposition"}, "reject"]}`;
   - **Enabled when**: it can be typed in only under a condition; otherwise it is greyed out. A field
@@ -537,10 +688,24 @@ outside a transaction can wait until the stewards approve them.
 - **Changing values waits for approval**: any field, or only the fields you tick, in any state or
   only the states you tick (a lot's quantity once it is released).
 - **A new record waits for approval**: it exists once approved.
+- **Archiving (deleting) and restoring waits for approval**: nothing is ever deleted; an archived
+  record leaves the lists and is read-only. Asked like a change, with why, and done once signed.
 - **Actions wait for approval**: every action, or the ones you tick (putting a lot on hold).
+- **Who approves follows a value of the record**: pick a field (a product's **Engineering group**: a
+  choice, a text or a yes / no) and, for each value, the departments or groups that approve its records'
+  changes, typed to find them: *power* by the Power engineers group, *mcu* by MCU engineering and Quality. A group (People &
+  departments) is people from any departments: any one of its members signs for it, never the one who
+  asked. **Its departments and groups approve** in place of the stewards above, or as well as them. A value you list nothing for is approved by the stewards as
+  ever. A change that moves a record to another value (a product from power to mcu) is approved for both,
+  the group it leaves and the group it joins, and each department's chip says which value it signs for.
+  To route by a reference (a product's group as a record of its own), add a text field derived from it
+  (its code) and choose that field.
 
-Transactions never wait: they are the approved way to change records. Leave this off for lists and
-master data that do not need it.
+Transactions never wait: they are the approved way to change records. So a transaction, a service or a
+route that writes what an approval controls (a product's yield limit, its engineering group) is approved
+by that approval's departments and groups when it is designed or changed: the Power engineers sign the
+transaction once, and its runs go through at once. Leave this off for lists and master data that do not
+need it.
 
 A change that waits shows on its record to everyone who may read the record: that it waits, why, and
 for whom. The values themselves (as it is → as asked) are shown to who asked, to those who approve
@@ -597,7 +762,8 @@ export default async function lot_check_qty(ctx) {
 
 **Test cases are part of the script** (§12.6). Each case gives a context and the expected result
 (data, changed fields, or the expected error). A new or changed script without test cases, or with
-a failing one, cannot be submitted.
+a failing one, cannot be submitted. A dry run saved as a test case keeps the moment it ran in its input (`now`), so it
+gives the same output when the fitness test runs it again; its expected output leaves out who ran it.
 
 ```json
 { "name": "over the limit", "run": { "event": { "kind": "save" }, "data": { "qty": 2000, "work_order": "…" } },
@@ -717,7 +883,9 @@ as idempotent: it may, rarely, receive it twice.
 **Dry run** executes the draft with everything it may call callable and nothing changed: reads are
 real, writes go through policy and the rule pipe but are not saved, and requests are checked against
 the connection and answered from the responses you give (`{ "POST /confirmations": { "status": 201,
-"body": { "id": "X" } } }`), never sent.
+"body": { "id": "X" } } }`), never sent. In the fitness test, an object new in the same change has no
+records yet: the service reads none, and what it would create of it is shown but not checked, since
+its policies apply once it is live.
 
 > **Where scripts run.** Every script (rules, services, dry runs) runs in a separate script runner:
 > it holds no passwords or keys, cannot read the server's files, and a script that loops or eats
@@ -834,11 +1002,18 @@ Start one from the designer's home (**Transactions → New transaction**), or ad
   units beside Good and Rejected), as the person reads it. One filled in can fill in another (the
   product's route, then the route's first step), but not in a circle.
 - **Layout**: the same layout editor as an object's form. Draw a reference as **scan or type the
-  label**: the person scans the lot's barcode (or types "4711") and presses Enter. Set **Required when**
+  label**: the person scans the lot's barcode (or types "4711") and presses Enter. Enter takes the
+  one suggestion the label begins, or the record it names whole (its title, or a field it is
+  **scanned by**: a badge's sign-in id), and the input flow goes on to its next question. Set **Required when**
   here (a scrap reason when there is scrap).
 - **Checks**: what must hold before anything changes, each with the words the person reads when it
   does not, on the input it is about. Conditions read `{"input": "good_qty"}`, `{"lookup":
-  "machine.capacity"}` (a field of the record an input names), `{"user": "id"}`, `{"person":
+  "machine.capacity"}` (a field of the record an input names), `{"user": "id"}`, `{"user":
+  "departments"}` (the departments they belong to: `{"in": [{"lookup": "tool.department"}, {"user":
+  "departments"}]}` keeps each department's tools to its own people), `{"user":
+  "certifications"}` (the certifications they hold today, from People & departments' list: `{"contains":
+  [{"user": "certifications"}, "cnc_router"]}` keeps a machine to those certified on it; a scenario's
+  sandbox holds only those its records give), `{"person":
   "certified_for"}` (a field of the Person record of whoever runs it: hold an operator to what the
   plant certified them for) and `{"count":
   {"object": "lot", "where": {"machine": {"input": "machine"}, "state": ["processing"]}}}`, with `add`
@@ -851,14 +1026,28 @@ Start one from the designer's home (**Transactions → New transaction**), or ad
   **Add a step that creates a record**: **Creates a** (which object), **How many** (one, or one per row
   of a rows input), and **Sets** its fields, a row's values read as `{"row": "value"}`. It is checked by
   that object's own policies and rules, as the person, and its stewards approve the transaction too.
+  **Add a step that finds records**: **Finds records of** (which object), **Where** its fields equal what
+  the run works out (an input, a field of a record an input names, a route step's setting, or `null` for
+  one left empty), **Named** (how the steps after it read it), **At most** how many, and, optionally, an
+  action and **Sets** on each. The steps after it read `{"found": "holds.count"}` (how many) and
+  `{"found": "holds.first.reason"}` (a field of the first): a hold set ahead for a lot at a step, used and
+  copied onto the lot.
 - **Rows** (an input's type **rows (a table)**): the person fills in a table, one row per reading or
   wafer. Give its fields as `value:decimal, note:string`, and **at least** / **at most** how many rows
   (at least 3 readings, say). A condition can read them with `some` or `every`:
   `{"some": [{"input": "readings"}, {"gt": [{"row": "value"}, 1.5]}]}`. `mul` and `div` work out a
   yield: `{"div": [{"input": "good"}, {"add": [{"input": "good"}, {"input": "reject"}]}]}`.
-- **Callers**: who may run it; nobody until named (deny by default): groups, people, and **services**
-  whose scripts run it as their own service role (an ERP starting lots). A signed transaction is run by
-  people only.
+- **Callers**: who may run it; nobody until named (deny by default): groups, people, **services**
+  whose scripts run it as their own service role (an ERP starting lots), and **routes** that run it at
+  every step (their **As it leaves any step, run** setting). A signed transaction is run by people only.
+  **The web**: tick **Published over HTTP** and an outside system (an ERP, a cell controller) runs it with
+  `POST /svc/v1/<name>` and a token (scope `transaction:run`) whose person is among the users or groups
+  above: the same checks and steps as at the screen, all or nothing, audited as that person. A reference is
+  sent as its record's id or its title (`"lot": "4713"`, as a scanner reads it); `POST /svc/v1/<name>/preview`
+  says what it would change and writes nothing; an `Idempotency-Key` makes a retry answer the first run. Its
+  name is its address: no web service or query published over HTTP may have it. A signed transaction, or one
+  only routes or services run, cannot be published. Once others call it, a change that would break them
+  (an input gone or made required) needs their notice first: **Deprecated**, with a sunset.
 - **Try it**: opens the published screen.
 
 **Each step goes through the object's own rules**, as the person running it: its state machine, its
@@ -931,7 +1120,17 @@ Its tabs:
 - **General**: its label and description; **Opened with**: nothing (the same page for everyone) or a
   record (a machine), picked by **scanning** its label or from a list. Each machine then has its own
   address and tab: `/s/work_centre/<machine>`. **…only those where** limits which records open it
-  (`{"process": ["die_saw"]}`: a die saw's screen lists and opens die saws only). **Fill the window**, as a transaction's: a **Maximize** button on its page that sets the navigator, the top bar and the
+  (`{"process": ["die_saw"]}`: a die saw's screen lists and opens die saws only). **…part of it typed**:
+  where it is scanned, *lists those that hold it* lets people type part of a label ("W-2"): the screen then
+  shows how many records hold it, counted by state (click a state for those alone), and the records
+  themselves with the fields you tick in **…showing beside each** (up to 6), each a click from opening the
+  screen on it. A whole label still opens it at once. **One tab**: for a desk worked all day (a crib, a
+  receiving bench), each record scanned opens in the screen's own tab, named after the screen, so nobody closes
+  a tab per record; when its input flow ends on **back to the start** (repeat), the screen goes back to its scan,
+  the end's words kept above the next prompt ("Bring it to the maintenance room"). Untick **Required** on the
+  parameter for the screen to show its blocks before anything is scanned (a history, say), and give the record's
+  blocks **Show when** `{"not": {"is_null": {"param": "tool"}}}`, the history `{"is_null": {"param": "tool"}}`.
+  **Fill the window**, as a transaction's: a **Maximize** button on its page that sets the navigator, the top bar and the
   tabs aside, for a tablet at a machine or a board on a wall (**on request**), or the page opening that
   way (**always at first**). Filled, the page still shows who is signed in and whether it is live, and
   the database banners stay; **Restore** brings the rest back. Each device remembers the person's
@@ -947,7 +1146,9 @@ Its tabs:
     transactions that appear on those records. A row shows the ones for its state; pressing one fills the
     row into the screen's own form of that transaction, if it has one (a station's **Move in** tab: the tab
     opens, the row is marked, and the page scrolls to the form with four of the list's rows still in sight),
-    or else opens it right under the table with the row filled in; when it is done the row moves on. **…filling
+    or else opens it right under the table with the row filled in, or, with **Their form opens: in a panel over
+    the screen**, in a panel over the list (a list of held lots whose **Release** opens over it; Esc or
+    **Done** closes it); when it is done the row moves on. **…filling
     in** fills one of their inputs with the screen's record too (the equipment, on Move in), locked. **Record
     buttons**: **New** (to add one) and **Remove** on each row (it archives the record, after asking),
     each shown only to whoever the object's policies allow, its rules still applying;
@@ -957,7 +1158,9 @@ Its tabs:
   - **a chart from a query**: any of the AI Report's twenty kinds of chart. Its query is a JSON or SQL
     query over the views of the **Queries** page, run as whoever opens the screen (what their policies
     hide is not there); a JSON query may stand for the screen's parameter, `{"eq": [{"field":
-    "machine"}, {"param": "machine"}]}`, so a machine's screen charts that machine. Pick the kind, then
+    "machine"}, {"param": "machine"}]}`, so a machine's screen charts that machine. Or **A named query**: pick
+    one, and give its parameters (values, or `{"param": "machine"}`); the formula is the query's, approved once,
+    and the query's **Used by** names the chart. Pick the kind, then
     say which of its columns go where (the boxes the kind needs are starred), the unit, how it is drawn
     (stacked, across, labels…), and reference lines or bands as JSON. A record named in its answer
     is shown by its title, never its id;
@@ -965,7 +1168,52 @@ Its tabs:
     **In a dialog: close the dialog once it is done**, for a screen shown as a dialog;
   - **a button that opens a screen**: it opens that screen as a **dialog** over this one, with what you
     give **Opened with** (`{"param": "machine"}`); shown only to people who may open that screen;
-  - **text**.
+  - **text**: words for the people at the screen, an instruction or a note: a line per paragraph, `- ` for
+    a list, `**bold**`, `# ` a heading, and `[the torque guide](https://…)` or `[the line board](/s/line_board)`
+    for a link (to an https address, in a new tab, or to a page of this site);
+  - **what was done lately with transactions**: tick the transactions; the block lists their runs, newest
+    first (50, or **How many**, 5 to 200): when, who, which, each record it moved with its status's way
+    (Available → In use) and the values it set (Issued to: Eli Brandt), as the viewer may read them. Tick **Only
+    the viewer's own runs** for a person's own history. It reads the audit trail, so it adds nothing to it;
+  - **the step a record's plan waits at**: **Of** the record (usually the screen's parameter) and, if you tick some,
+    which plans: the step its plan waits at, as its own page shows it (the PM checklist to fill, the repair's
+    choices), for those it is for, with the cursor in it; to anyone else, whom it waits for. A transaction's form
+    is shown only to those who may run it, so one desk can serve two kinds of people;
+  - **a file: a guide, a picture, a video or a PDF**: **Shows** either **a file of its own**, uploaded here
+    (**Upload…**: the station's guide, a drawing, a video of the job; a picture up to 5 MB, a PDF or a
+    spreadsheet 10 MB, a video, MP4 or WebM, 100 MB), or **a record's file or picture**: **Of** an object
+    with a file or picture field, **Which record** (the screen's: `{"param": "lot"}`) and the **Field**.
+    A field derived through a reference shows that record's: a station opened with a lot shows the work
+    instruction of the lot's step. A PDF is read in the page, a video plays (and can be skipped through),
+    a picture is shown, each with a link to open it on its own; **Height** for a PDF or a video. A
+    record's file is read as whoever opens the screen: someone who may not read the record sees nothing.
+    **Steps**: a line each, where the step starts and what it is, `3 Torque crosswise` (a PDF's page) or
+    `0:45 Clean the seal` (a video's time). Write them in the block for its own file, or pick **Steps from**,
+    a text field of the record (each instruction its steps; derived from the step like its file). At the
+    screen, a PDF shows one page at a time with big **‹ Previous step** and **Next step ›** (page by page
+    without steps), "Step 2 of 5 · page 3 of 8", and the steps to jump to; a video has **Previous step**,
+    **Play this step** (it stops where the next step begins, unless you untick **A video stops at each
+    step's end**) and **Next step**. On a browser too old for the page viewer, a PDF is shown by the browser
+    itself, without steps.
+    **Steps marked done by**: a transaction that records a step done (a "Step done" with the lot, the step's
+    number and, if you want them kept, a value and a photo, creating one record per step). Then **Its
+    number in** (the input taking the step's number: 1, 2, … as the steps are written), **Photos and files
+    in**, **It fills in** (`{"lot": {"param": "lot"}}`), and which records say a step is done: **Done when
+    there is a** (the object the transaction creates), **…whose step is** its number field, **…and where**
+    whose (`{"lot": {"param": "lot"}}`). Tick **Next only once the step in view is done** to hold the
+    operator on each step until it is. End a step's line with how it is done: nothing or `#click` (a **Mark
+    done** button), `#value:torque` (a value typed or scanned, into the transaction's `torque`), `#photo` (a
+    picture: on a phone or a tablet, its camera), `#file` (a file uploaded), `#device` (the equipment
+    records it: the step waits for it), `#wait` (another transaction or a flow records it), or
+    `#screen:etch_station` (it is done on that screen, which the step opens). Each step marked is that
+    transaction's run, with its checks, its signature if it has one, and the audit trail; a record the
+    equipment or another page writes ticks its step at once, for everyone at the screen. A done step shows
+    who did it and when, and **Undo** for whoever may archive its record (the record is archived, never
+    deleted: the audit trail keeps both). A transaction verified by a second person works here as on its
+    form: they sign in beside the operator (**Add a second person**), and both give their passwords.
+    **Follows a route**: the steps are the route's instead, its sequences given a place in this guide (**In
+    the guide at**, in the Flow designer), with **Whose way** the lot (`{"param": "lot"}`). The guide opens
+    where the lot is, ticks each step it has left, and says which transaction takes it on.
 - **Preview**: the draft as it will look, with your own rights; pick a machine to open it with.
 - **Pop-up**: tick **Opens by itself** to have this screen open as a dialog, by itself, **Over** the
   pages you choose (a transaction, a screen, or every page), **For** the groups or people you name,
@@ -1129,14 +1377,26 @@ design, reviewed and approved like any other (§3: every kind is copied the same
   about the pointer; the percentage fits it again. Zoomed in, drag the empty ground to move about. A
   run's map (**Show the route**, a plan's page) zooms the same way. The zoom is yours alone: it is not
   saved with the design.
+  A node's settings show **its id** (what a lot's step holds, and what lists and reports show):
+  **Rename…** gives it one that reads well (`adi_cd` rather than `sequence_1`); its wires, its place and
+  the scenarios that expect it follow. Lots already on the route keep the version they started on.
 - **General**: its label, its **kind** (a route or a plan: each has its own palette), and **Ends early
-  when** (a lot merged or scrapped ends its way where it is).
+  when** (a lot merged or scrapped ends its way where it is). A route also has **As it enters any step,
+  run** and **As it leaves any step, run**: a transaction it runs on its traveler, as itself, every time.
+  This is how a future hold works without touching each transaction: a transaction that finds the holds
+  engineers set for this lot (or every lot) at the step it leaves, uses them and holds the lot, run as it
+  leaves any step. The transaction appears on the traveler's records, names the route among its callers
+  (**Routes**), and is signed by nobody.
 - **Context**: what every run carries and its decisions read: its records (by their names on the
   Participants tab), the **values** it starts with (a limit, a number of retries), and what is
   collected on the way.
 - **Participants**: its records (the traveler, the resource, what it reads, each taken from another
-  with **from**: the lot's product), and **what the template itself may do**: the roles it acts with
-  when it sets a lot's step and state and makes its scripts' writes. Give it the least it needs.
+  with **from**: the lot's product), each by a name the context and conditions use (**rename…** it:
+  `lot` rather than `record_1`; the template's conditions follow, while scripts that read it are named
+  for you to change), and **what the template itself may do**: the roles it acts with when it sets a
+  lot's step and state and makes its scripts' writes. Give it the least it needs. A role on an object
+  that takes no part (the samples a route's script makes, a plan's PM record) is added with **+ roles on
+  another object**.
 - **Stewards**, **Changes**, **JSON** and **Copilot**, as for every design.
 
 **A route's nodes**
@@ -1144,7 +1404,7 @@ design, reviewed and approved like any other (§3: every kind is copied the same
 | Node | What it is for |
 | --- | --- |
 | **Start** | Where runs begin. **For travelers where**: which lots this route takes (`{"eq": [{"context": "product.route_flow"}, "back_end"]}`). A lot made part-way starts at its step. On a plan: **For events where**, and **Due on** (a date field of its subject: it sets off when that date arrives) and **sets off again** (once its last run for a record has ended) |
-| **Sequence** | A step. **Done here**: the transactions offered on a lot at this step (elsewhere they are refused, and not shown on its page); **…taking it on**: those that move it on (Move out); **Marks its state**: optional; **On resources where**: only these tools (`{"process": ["die_saw"]}`), the ones a transaction is given, not those it reads off them (a test cell's tester, an input taken `from` the cell); **Settings**: values its transactions read (`{"lsl": 28, "usl": 36}`, read as `{"node": "lsl"}`) |
+| **Sequence** | A step. **Done here**: the transactions offered on a lot at this step (elsewhere they are refused, and not shown on its page); **…taking it on**: those that move it on (Move out); **Marks its state**: optional; **On resources where**: only these tools (`{"process": ["die_saw"]}`), the ones a transaction is given, not those it reads off them (a test cell's tester, an input taken `from` the cell); **Settings**: values its transactions read (`{"lsl": 28, "usl": 36}`, read as `{"node": "lsl"}`; in a transaction's checks and steps the expression builder offers them as *the step's lsl*, from the routes that offer it, so "the step's parameter is not empty" keeps a measurement to the steps that say what to measure); **In the guide at**: where this step is in the route's guide, a page (`3`) or a moment of a video (`0:45`), for a screen's file block that follows the route |
 | **Auto decision** | Branches at once. Click each wire for **Taken when**, a condition on the context ([section 17](#17-expressions-conditions-and-values); `{"gt": [{"context": "lot.scrap_qty"}, {"context": "max_scrap"}]}`); they are tried in order (**Try earlier**), the last may be empty: otherwise |
 | **Sub flow** | Runs **another route** for the same traveler. The lot goes through that route's steps, then comes back to this route's next step. **Runs**: the route to run; **Passes** and **Takes back**: values into its context and back |
 | **End** | Closes the run, with its **outcome** (shipped) |
@@ -1159,7 +1419,10 @@ run it from every route that needs it:
    **Runs**, and wire it in like a step.
 
 While a lot is in the segment, its step is the segment's (Strip, Redo), the transactions offered are
-that step's, and its page shows both: *Main route › Rework · at Strip*. When the segment reaches its
+that step's, and its page shows both: *Main route › Rework · at Strip*. A transaction the segment offers
+(a measurement at its metrology step) is the route's to place everywhere: on the main route's own steps,
+and in other segments, it is refused ("…is at Mold, where Measure is not done"), the lot not yet in the
+segment or already past it. When the segment reaches its
 End, the lot goes on to the route's next step. A fix to the segment is one change, and every route that
 runs it follows: lots entering it afterwards take the new version; a lot already inside finishes on the
 version it entered. A lot may be carried out of a segment by setting its step to a step of the route
@@ -1181,6 +1444,19 @@ so keep chains short), and **Auto decision**, **Start** and **End** as above.
 after, and ask for writes (`ctx.writes.push({ record: "lot", action: "ship" })`). Those are made after
 it, as the template, through the record's own rules: its transitions, policies and rule pipes decide,
 and a refusal stops the run there, saying why. Like every script, it needs its test cases.
+**New script…** beside each makes one in the same change, from a template that sets a context variable,
+with a test case to start from, and names it on the node; **Edit** opens the one named, under the canvas. A node's script may read a record with `await ctx.lookup("wafer", "F26-1004-07")` (as the template:
+only what its roles let it see; null otherwise); its test case gives such records under `lookups`
+(`{ "wafer/F26-1004-07": { "state": "broken" } }`).
+A variable a script sets (`ctx.context.kind = "oven"`) is shown on the plan's page under **What it holds**,
+and the decisions and lists after read it (`{"context": "kind"}`).
+
+**A dropdown from a query.** An input screen's field of type **from a query** draws its list from a
+named query (Designer, **Queries**): pick the query, the column kept as the value (`id`), the columns
+shown, joined (`machine_id, name` shows "M-101 · Press 1"), and bind each of its parameters to the run's
+context (`{"context": "kind"}`, a variable a script set, or `{"context": "lot.product"}`, a record's
+field), the user (`{"user": "id"}`) or a value. Each person sees the rows the query gives them, under
+their own access; what they send is checked against that list again.
 
 **When a plan runs.** A plan sets off by itself when a record of its subject is made or changed
 where its start's condition holds (a deviation raised as major, an SPC reading out of limits), once per
@@ -1195,7 +1471,9 @@ decision, an input screen or a wait to acknowledge, it appears in the **bell** o
 set it off with that record's own state beside it (a tool **Down** while its repair is in progress), and
 the route that record was on, the time
 remaining at a wait, a button per choice, or a form to fill in (lists, numbers, yes or no, files,
-photos, links), with its way so far and what it holds; files open from there: a picture, a PDF or
+photos, links), with its way so far and what it holds. No mouse is needed: the cursor starts in the form's
+first field, Space ticks a box, a letter picks from a list, Enter goes to the next field and, on the last, sends
+it (Esc goes back); at a choice, the arrows and Enter. Files open from there: a picture, a PDF or
 plain text opens beside the page, anything else (a web page, a drawing with scripts in it) is saved to
 your device instead of being opened. When two people act on the same step at once, or one clicks
 twice, the plan goes on once and the other is told someone has just acted. **Show the flow** draws
@@ -1214,6 +1492,10 @@ lists them with their last result; the fitness test runs them all again on every
 
 **When a route runs.** On a lot's page you see the route it is on, the step it is at and its way there;
 **Show the route** draws the route with the lot's way on it, a step set by hand drawn off route.
+A sub flow (a box with an arrow on its right) opens when you click it: the sub route's own map with the
+lot's way through it, or, if the lot has not got there yet, the sub route as it is now, faded. The line
+above the map (*QFN route › Front of line › Bond rework*) takes you back up; a sub flow the lot went
+through more than once lists each time (*runs: 1 2*).
 A lot at a step is offered only what that step does. When a transaction that takes it on commits,
 the route moves it on, through decisions, to the next step. If someone sets its step by hand, the route
 follows, marked **off route** in its way. If the step they set is no step of the route, the run
@@ -1247,6 +1529,48 @@ in the browser and writes nothing itself; changing which input flow a transactio
 scenario. The copilot and the AI API can draft one, and walk it with sample values to show you what it
 asks, in order.
 
+### Named queries
+
+**Queries** on the designer's home lists the named queries: one SELECT over the query views (the
+objects, as the schema explorer on the Query page shows them), with parameters by name, `:kind`. Start
+one with **New query**, or **+ query** in a change. Its tabs: **Query** (the SELECT; parameters it uses
+but has not declared are named, with **Declare them as text**), **Parameters** (each one's type, label,
+and whether it is required), **Try and tests** (type values and **Run it**: you see what you may read;
+**Keep these values as a test**), and **Stewards**. The fitness test runs each test as whoever submits
+the change: it must run, and give the columns the dropdowns drawn from it name. A query grants nothing:
+whoever it runs for sees only what their access lets them read, and never a sensitive field. At most
+its limit of rows (200 unless set, up to 1000).
+
+**A reference's choices from a query.** A reference field (Fields, its **⋯** panel, **Choices**) or a
+transaction's reference input (Inputs, **Choices of …**) may offer only the rows a query gives, in place of
+every record of its object: the presses of the lot's line, the tools qualified for the step. Pick the query
+(it must give an `id` column), tick the columns that say each one (none: the record's title), and bind each
+of its parameters: on a form to what is being filled (`{"data": "line"}`), on a transaction to its inputs and
+the records they name (`{"input": "kind"}`, `{"lookup": "lot.product"}`) or the route step
+(`{"node": "area"}`). The picker lists the choices as the field is entered, narrowed as the person types; a
+save or a run naming any other record is refused, on that field, in words.
+
+**A screen's table of a query's rows.** On a screen's table block, **Rows from: a named query**: pick it, tick
+the columns shown (none: all but `id`), bind its parameters to the screen's parameter or the viewer, and sort
+by one of its columns. **Each row a record of** an object, when the query gives the records' `id`: a row then
+links to its record and offers that object's transactions as row buttons.
+
+**Kept in line.** The query's **Used by** tab shows the columns it gives (the database describes them without
+running it) and every design that names them. A change to a query that takes a column away, or adds a
+parameter that must be bound, names every screen, form, transaction and plan it would break, in the change or
+not; so does a change that takes from an object a field a query reads. **Align** (on the change's problems, or
+the **Used by** tab) brings those designs into the change, each without what is no longer there, to finish and
+approve with the rest.
+
+**A query read over the web.** On its **Web** tab, tick **Published over HTTP** and name who may read it (people
+or groups; nobody until named). An outside system (a BI tool, an ERP) then reads it with
+`GET /svc/v1/<name>?state=created` and a token (scope `query:run`, read only) whose person is among them: a page
+of rows as that person may read them, each an object by column, at most its limit; `offset` (the answer's
+`next`), `limit`, `sort` and `dir` page through the rest. A parameter missing, of the wrong type or one it does
+not have is named in the answer. Its name is its address: no web service or transaction published over HTTP may
+have it. Once others read it, a change that would break them (a parameter or a column taken away) needs their
+notice first: **Deprecated**, with a sunset.
+
 ## 12. Getting a change approved
 
 1. **Give the reason** in **Why this change**. Write it for the approvers: what, why, and what the
@@ -1258,6 +1582,9 @@ asks, in order.
      comes with what it refers to, its product, its step), or give one (its data as JSON, `"@product"`
      naming another). Only what you may see is copied. **Find a record** searches every object at once
      (a lot number, a tool, a name): click a hit to add it, its key made from its object.
+   - **Starts as**, beside each record you picked: the state its copy starts in. "As it is live" by
+     default; pick another to start it so here (a tool down in the plant starts idle in the sandbox).
+     Only the copy changes: the plant's record stays as it is.
    - A server keeps six sandboxes open at a time, two of them yours: close one you no longer need
      (they also close by themselves after a quarter of an hour unused). Scenario runs take turns, a
      few at a time; when many are queued, the fitness test asks you to try again in a minute.
@@ -1272,6 +1599,22 @@ asks, in order.
      records), a record's action, an edit, a new record, a service or a screen, **As** anyone: their
      roles decide, as they will live. Each step says whether it ran or was refused, and what moved.
      **Start again** gives fresh copies.
+   - **What a route needs**, before you open it: pick a route, and it lists every record walking it to
+     the end takes, in order: first the traveler itself (a lot of the kind the route's start takes: its
+     route, its product), then a tool for each step's process (inside its sub routes too), what its
+     transactions must be given, the lot's own device. Ticked when one you chose gives it; else live
+     ones to add with a click (for the traveler, those on their way along the route first), or **Add all
+     required records**. The traveler may be made instead: it names the transaction that makes one
+     (Receive lot, Start lot), to run as a step once the sandbox is open.
+   - **Follow a route**: pick a **Traveler**, a record on a route here (one a step made too: the lot
+     your receiving transaction just made). You see where it is and its route's map (click a sub flow
+     to open it). Each transaction its step offers is a button that fills the step in, the traveler
+     already its input; under each record input, the step **suggests** what it allows (a tool of its
+     process), each tried as the person: ticked if it would be taken, crossed with the reason if not
+     (the tool is down). A transaction picked under **Which** gets the followed traveler too; with no
+     traveler given, it asks for one first rather than listing every record to guess among, and when
+     none can be tried (the person in **As** may not run it) it says why, once. A plan waiting on it shows its question: a button per choice, or **Fill it
+     in…**. You still fill the form in and press **Run** yourself; after each step it moves on.
    - **Keep it as a scenario of** a transaction of the change, **Named** what it shows. The scenario
      is kept with every version of the transaction, and the fitness test runs it again, on fresh
      copies of the records as they are then. The transaction's **Scenarios** tab lists them, with
@@ -1311,6 +1654,31 @@ stewards answers to the governance department, also when the rest of the change 
 
 **Withdraw** abandons a change at any time before execution.
 
+**When the plant cannot wait** (a line down, someone who must have access now), **Submit as an
+emergency…** instead of Submit for review. It asks why it cannot wait; that is required, and the approver
+reads it. The same problems and fitness test must pass. It skips review: the first approver of any
+department in **Will need approval from** who signs it (never you) makes it live at once. It must then be
+**reviewed afterwards**, within the days your organization sets (3 unless it says otherwise). A reviewer
+who neither wrote nor signed it passes it or flags it, then one approver of each department confirms it
+or flags it, signing as for an approval. Until then it carries an **emergency** badge, waits on
+**Approvals** and in the inbox of whoever may act on it, and past its due date it is marked **overdue**
+and written to the event log. A flagged emergency stays live: a designer rolls it back from its page
+(**Roll back this change**), and one approval executes the rollback. **Emergencies** in the designer's
+change list shows them all. Your organization may forbid emergencies, or set the days, on People &
+departments' **Approvals** tab; then the button is not offered.
+
+**While the plant is being set up** (a new installation, before there is anyone to review your work), the
+designer says **Setup is open** in a banner, and a change in design offers **Execute now (setup)**. The same
+problems and fitness test must pass; then you sign, and the change goes live at once, without review or
+approval. It is marked **setup** in the change list (the **Setup** filter lists them all, for the validation
+that follows) and kept in the audit trail with your name and signature. **Submit for review** still works
+as usual. IT opens setup for a new installation (on a plant's own, empty installation, naming you its first
+administrator from the server opens it: you hold the designer's roles and sign-in administration, and add
+everyone else); it is ended on People & departments' **Approvals** tab
+(clear **Setup is open**), which you execute the same way, once someone besides the designers can review and
+every department has its approvers (the change says what is still missing). From then on every change is
+reviewed and approved. Opening setup again later is a change your governance department approves.
+
 A design is in **one open change at a time**: starting a change on it, bringing it into one, or
 saving it into one is refused while another open change holds it, naming that change and its author.
 Finish or withdraw that one, or make your edit there.
@@ -1334,8 +1702,17 @@ one is executed or withdrawn, a change can start here.
   Specialist, 2. Manager), each with the people who may sign it. The steps are signed one after the
   other, each by a different person, never the change's author or reviewer. Departments sign in
   parallel with each other. **+ step** adds one; **Governance** names the department that approves what
-  nobody else stewards, new departments and new people.
-- **People**: everyone who signs in. Untick **Active** instead of deleting someone. Each person also has
+  nobody else stewards, new departments and new people. Its **Email** (a mailbox the department reads,
+  engineering@plant.example) is told by mail when a change to a record waits for the department: what
+  waits, the fields it changes (by name, never their values), why, who asked, and the link to sign it.
+- **Groups**: people from any departments, a team of power engineers from Engineering and Quality. The tab
+  lists them a window at a time, with a box to find one by its name, id or a member; **Edit** opens one in a
+  panel: its name, an **Email** told when a change waits for it, and its **Members**, picked from everyone. Give a group roles on **Roles**; name it in an object's **Who approves
+  follows a value of the record** and it approves those records' changes, any one member signing (never the
+  one who asked). A group an object's approval still names cannot be removed: the check says which object.
+- **People**: everyone who signs in, each by their sign-in id as your directory or identity provider knows
+  them (lower case letters, digits, `_` and `-`: an employee number such as `104523` works, a dot does not).
+  Untick **Active** instead of deleting someone. Each person also has
   a **Person** record (the built-in Person object), made, renamed and made inactive as this change
   executes: add what the plant keeps about people (a badge, a shift, skills) to Person in the designer.
   Their sign-in id, name and whether active stay here: Person shows them read only.
@@ -1370,7 +1747,28 @@ at a time: scroll to the end of them (or press **show more**) for the next fifte
 - **Reads every record** (on the Approvals tab): people and groups who may read every object's
   records, those designed later and a suite's included, every field but one a policy hides. It writes
   nothing and takes no action; for IT building services, or an auditor. Governance approves it, and
-  **What this changes for people** shows who gains it.
+  **What this changes for people** shows who gains it. It never opens a record reserved to a
+  certification they do not hold.
+- **Certifications**: the certifications the plant recognizes (ITAR, a cleanroom grade, a customer's
+  clearance), each an id designs name (`itar`) and a name people read. An object may reserve records to
+  one (its **Roles & policies** tab). One an object requires cannot be removed here. Governance approves
+  the list. Who holds one is kept as **Certification** records (Organization, in the navigator): the
+  person, which certification, valid from and until, a certificate number; **Revoke** and **Reinstate**.
+  It counts while it is active and in date, on the plant's calendar; revoked or past its date, the
+  records it opened are gone from that person's pages at once. The designers keep them at first; the
+  plant gives Certification's editor role to whoever records them, or lets a training suite or its
+  learning system write them through the HTTP API.
+- **Approval level** (on the Approvals tab): how much approval a change needs. **Full** (the default): a
+  reviewer, then each department it touches. **One approval**: no review; the first signature by an approver of
+  a department it touches (never its designer) executes it, and the change page's button says **Submit for
+  approval**. **None**: the designer signs their own change and it executes (**Execute (sign)**), marked
+  **signed alone**. A plant that answers to regulators keeps Full. At One, someone besides each designer must
+  approve for the governance department, or nobody could approve a change to People & departments; the change
+  says so before you can save it. Going back to Full needs someone besides the designers to review.
+- **Setup** and **Emergency changes** (on the Approvals tab): whether setup is open (a designer's change
+  executes on their signature; clear it to end setup, see Getting a change approved), whether emergencies
+  are allowed, and within how many days one is reviewed afterwards. A change to either is approved by
+  governance; while setup is open, ending it executes on your signature like any other change.
 
 **Adding IT to the approval flow**: add the IT department with its people and steps (**Departments**,
 **People**), give them the designer's reviewer role so they can see what they approve (**Roles** →
@@ -1387,11 +1785,72 @@ Approved by governance; pages follow when next opened. Nothing stored changes.
 
 **How the pages look** (the **Theme** tab): **Light or dark**: each person chooses (the default), or
 always light, or always dark, for everyone (then nobody is offered a choice). The **name** in the top
-bar and the **label** beside it (the site, plant or line). The **colours** of the accent and of the
-ok, warn and danger tones, for light and dark, each with a colour picker; empty is the default. A
-preview shows them on a top bar, a button, the tones and a link, and every colour is checked: one
-people could not read (below 4.5:1) is listed in red and the change cannot be submitted until it is
-fixed. Approved by governance; pages follow when next opened.
+bar (the app's name, "OpenCore MES" when empty) and the **label** beside it (the site, plant or line).
+The **colours** of the top bar (its background and its text), of the accent and of the ok, warn and
+danger tones, for light and dark, each with a colour picker; empty is the default (a dark top bar left
+empty takes the light one's). Everything in the top bar (its buttons, search, badges) is drawn from its
+two colours; give the background alone and its text is white or dark, whichever stands out on it. A
+preview shows them on a top bar, a button, the tones and a link. The colours are the plant's choice:
+nothing checks how they read. Approved by governance; pages follow when next opened.
+
+**How long data is kept** (the **Retention** tab): a period per kind of data, in days (365 a year), years
+("6y") or `forever`; empty keeps the default shown. Archived records and the audit trail are never
+removed by the platform: their period is what the plant keeps (the audit trail at least six years, and as
+long as the records), and Data retention counts what is past it. Everything else past its period is
+removed every six hours. A period too short is named and the change cannot be submitted. Approved by
+governance.
+
+**Data retention** (navigator, Design; for privacy officers, given on the Roles tab under Privacy): the
+periods in force, what would go at the next run, the last runs, and **Run the purge now**. **Erase a
+person's data from a record**: choose the object, find the record (its title, a personal field's value,
+or its id), **Erase**, and give the request's reference. Only fields marked erasable are erased; the
+record and its history stay.
+
+**Database** (navigator, Design; for database administrators, given on the Roles tab under Database): what
+people and systems ask of the platform, what it asks of the database, and how long each takes. **Calls**: every
+web service, transaction and named query by its own name, however it was called (a page, the web, a route, a
+screen's table, a reference's choices), or the platform's own services (**Which calls**), over the same hours,
+slowest in all first: calls, mean, the time 95% of them stayed within, slowest, how many were refused and
+failed, and where they came from. Click one for each way in apart (Move in at the screen, and Move in from the
+ERP), its last 48 hours an hour a bar, who called (a token by its name), why it was refused (by code: never
+what was sent) and the statements it sent, each one click from its plan. **Statements**: every statement it sent over the
+last hour, day, week or two, slowest in all first, with its calls, mean and slowest time, rows, and the
+service it mostly came from; find one by any word, sort by any column, and click it for its full text (with
+`$1` where values go: values are never kept), who sent it, and its plan (nothing is run). **Indexes**:
+every index with its size and how often it is used (one never used costs every write and serves nothing);
+**Tables**: rows, size, and how they are read. **Ask the AI for indexes** (when an AI is set up): it reads
+the slowest statements and their plans and proposes indexes, each with why and, with HypoPG installed, its
+statements' plan cost now and with it. **Build it** builds one at once, without stopping writes, after you
+say why; **Effect** later shows its statements' time before and since; the bin drops one built here (never
+the platform's own). Each build and drop is in the audit trail.
+
+**Where integrity reports go** (the **Integrity** tab): the object your plant keeps its non-conformance
+reports in (a deviation, say), and which of its fields takes each part of a report (what happened, why, the
+decision, the action, the finding); a required field no part fills gets the same value every time (a
+severity). Then closing a data integrity finding also raises a record there, as the reviewer who closed it,
+through its own policies and rules. None: the reports stay on the Data integrity page and in the audit trail.
+Approved by governance.
+
+**What the sign-in page calls the id** (the **Sign-in** tab): any words your people know it by (*Windows user
+name*, *Employee number*, *Badge number*; *Username* if left empty), what the empty box shows (*PLANT\username*,
+*username@plant.local*, *6 digits*), and the plant's domains (*PLANT, plant.local*). A domain listed there may be
+typed with the id and is dropped: *PLANT\jdoe*, *PLANT/jdoe* and *jdoe@plant.local* all sign in as *jdoe*, the
+id in People & departments (which never has a domain); another domain is refused. It holds for the sign-in,
+a setup code and signing in beside someone. The tab shows the box as the sign-in page will. Approved by
+governance; the sign-in page follows when next opened.
+
+**Data integrity** (navigator, Design; for integrity reviewers, given on the Roles tab under Data integrity):
+what was changed in the database itself, around the platform. Every write through the platform seals the
+record; a record, a design, a person or a role changed, added or removed by SQL, or a record put back as an
+earlier version, is found by the scan (every 15 minutes; **Scan now**, or **Full scan** to read every
+record), with who wrote it, from where, and each field before and after where the database caught it. Open
+a finding with **Review**, and close it with a **non-conformance report**, signed: what happened, why, the
+decision and the action taken. **Accepted as it is** keeps what is there and seals it. **Corrected** means
+you put it right first, the normal way (its form or a transaction; a design, through a change request), so
+its rules, policies and approvals apply: closing as corrected is refused until then. Nothing is ever
+restored from here. **Periodic review**: sign that the findings of a period were reviewed. If the page says
+no integrity key is set, or that the seals were made with another key, ask IT (`INTEGRITY_KEY`); after a
+key changes, a reviewer seals everything again, signed, once they know why.
 
 ## 13. After it is live: the integration monitor
 
@@ -1532,7 +1991,11 @@ is shared.
   every few hours (at most once an hour), at the plant's time. It is asked as you, with your rights
   as they are then, and each report it draws is kept as yours, titled with the prompt's title and the
   date and time. If you leave, or may no longer query, it is not asked, and says why. At most ten of
-  your prompts run by the clock.
+  your prompts run by the clock. If the server was not running at its time, it is asked as soon as the
+  server is back, once for all the times it missed; that report (and the prompt) says when it was due
+  and how many runs were not made. A run cut off by a stop is made again when the server starts, and one
+  that fails because the AI or the network is away is tried again after 5, 15 and 30 minutes (the prompt
+  says when).
 - **The same report every time.** Asked again, the copilot arranges each report afresh (on a layout,
   it keeps the layout's blocks but writes new queries and words). When one of a prompt's reports is the
   one you want every time, press **Keep this report's queries** on the prompt: it is pinned to its last
@@ -1726,6 +2189,10 @@ ever sees a secret's value (§16).
   approved and applied, rejected (with why) or withdrawn. If the record changes meanwhile, the
   approved change is void, not applied, and is asked again. Approvers sign on the record or on
   **Approvals** (*Changes to records*); a new record's request has a page of its own.
+- **A list**: the box at the start of its bar finds records by any value you may read (a reference by
+  its name, the state); click a column's head to sort by it (again for the reverse order, a third time
+  for the list's own order). Sorting and finding cover every record, not only the rows shown, and the
+  order you chose is kept for that list in your browser.
 - **Archived records** leave the lists (**Show archived** brings them back), and are read-only until
   someone allowed to restores them.
 - **When the database is unavailable,** nothing can be saved: a banner says so, Save is disabled,
@@ -1738,7 +2205,17 @@ ever sees a secret's value (§16).
   loads once they save or discard. Tablets and phones can **install** OpenCore MES as an app (on HTTPS),
   and show a page of its own while the server cannot be reached, coming back by itself.
 
+**Spaces around what is typed are dropped.** A lot number typed as " 4711 " is kept as "4711", in a form, a
+transaction, a plan's screen, an import or a web service call, and a field of only spaces counts as empty, so a
+required one asks again. Spaces inside a value stay; a long text (several lines) keeps its lines and indents as
+written. Passwords are kept exactly as typed.
+
 ## 16. Quick reference
+
+**Worked examples.** [USECASES.md](USECASES.md) has a design for each common need, from a lot's
+lifecycle to future holds, OCAP plans, ERP integration and the daily report, as JSON you can paste
+into an element's JSON tab or ask the copilot to adapt. Every whole element in it is checked against
+the designer's own checks by the test pipeline, so what it shows is what the designer takes.
 
 **Rule script context:** `event` (`kind`, `object`, `action`, `changed`, `prev`, `source`), `user`,
 `record`, `data`, `now`, `lookup(object, id or title)` (backend only).
@@ -1823,6 +2300,15 @@ what its steps set, a screen's filter, a pop-up's trigger, a flow's branch. It i
 and the designer checks it as you type (a box that does not read right turns red, and the problem says
 what it read that it may not). It never runs code: the platform walks it.
 
+**You rarely type one.** Wherever a design takes a condition, the designer shows it in words and builds it
+for you: **Add a condition** (or **Edit**) opens rows of *a field, an operator, a value*, picked from what that
+place can read, with the field's own choices, numbers or dates; **+ condition** adds another (all of them must
+hold; switch the group to *any of these* or *none of these*), **+ group** nests one, and **+ from a pattern…**
+starts from a common one (*is in state…*, *is one of…*, *is empty*, *is between…*, *the person has the
+role…*). A problem is named as you build (a field that place cannot read). **Try** checks it on values you type
+and says whether it holds, and why. **JSON** shows the same condition as text, for the rare one the rows do not
+draw (a count's conditions, every row of a table): it is the language below.
+
 ```json
 {"in": [{"lookup": "carrier.kind"}, ["magazine", "carrier"]]}
 ```
@@ -1857,7 +2343,7 @@ is written; the designer says so if you read from somewhere it cannot.
 |---|---|---|
 | `record` | The record as it is saved: a field, or `state`, `type`, `id` | `{"record": "state"}` |
 | `data` | The form as it is being filled in, before it is saved | `{"data": "disposition"}` |
-| `user` | The person: `id`; in a policy, also `roles` | `{"user": "id"}` |
+| `user` | The person: `id`; in a policy, also `roles`; in a transaction, also `certifications` (held today) | `{"user": "id"}` |
 | `person` | A field of the built-in Person record of who runs it (a badge, certifications) | `{"person": "semi_certified_for"}` |
 | `event` | In a rule's entry: `kind`, `action`, `changed` (the fields being changed) | `{"event": "kind"}` |
 | `input` | What was entered in a transaction or an input flow; a reference input is its record's id | `{"input": "good_qty"}` |

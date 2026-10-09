@@ -223,3 +223,14 @@ test("a route's sub flow runs another route for the same traveler; a route may b
     assert.equal(flowSetsOff(route()), true);
     assert.equal(flowSetsOff({ ...route(), asSub: true }), false, "tried through the routes that run it: no scenario of its own");
 });
+
+test("a sequence's place in the route's guide (§35.4): a page or a time", () => {
+    const r = route();
+    r.nodes.cut.guide = "3";
+    r.nodes.pack.guide = "1:05";
+    assert.deepEqual(problems(r), []);
+    for (const bad of ["page 3", "1:75", 3, ""]) {
+        r.nodes.cut.guide = bad;
+        assert.match(problems(r).join("\n"), /Cut: guide is where it is in the guide: a page \("3"\) or a time \("0:45"\)/, String(bad));
+    }
+});

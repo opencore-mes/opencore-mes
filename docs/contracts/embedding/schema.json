@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opencoremes.com/contracts/embedding/1.0/schema.json",
+  "title": "embedding 1.0",
+  "description": "How a page of another site, named by the plant (EMBED_ORIGINS), shows OpenCore MES in a frame and talks to it by window messages: it hears where the person is and may ask that something be outlined by its visible name. It can do nothing else. The specification is README.md beside this file.",
+  "type": "object",
+  "x-contract": {
+    "name": "embedding",
+    "version": "1.0"
+  },
+  "x-protocol": "opencore-mes.embed",
+  "x-setting": {
+    "name": "EMBED_ORIGINS",
+    "description": "The origins that may frame OpenCore MES, comma-separated, each https://host[:port] exactly (http only for 127.0.0.1 and localhost). Unset: none; every page says frame-ancestors 'none' and X-Frame-Options: DENY. Set: every page's Content-Security-Policy says frame-ancestors <those origins>, and X-Frame-Options is left out."
+  },
+  "x-messages": {
+    "in": {
+      "hello": {
+        "description": "Asks for ready again (after the embedding page reloads, say).",
+        "schema": {
+          "type": "object",
+          "required": [
+            "protocol",
+            "version",
+            "type"
+          ],
+          "properties": {
+            "protocol": {
+              "const": "opencore-mes.embed"
+            },
+            "version": {
+              "type": "string",
+              "pattern": "^1\\.[0-9]+$"
+            },
+            "type": {
+              "const": "hello"
+            }
+          }
+        }
+      },
+      "outline": {
+        "description": "Outlines every visible element (at most 40) of the kind whose visible name is label: exact names first, else names that begin with it; scrolls the first into view; keeps looking every half second (what it names may appear a moment later) until clear, another outline, or another page. Answered by outlined.",
+        "schema": {
+          "type": "object",
+          "required": [
+            "protocol",
+            "version",
+            "type",
+            "label"
+          ],
+          "properties": {
+            "protocol": {
+              "const": "opencore-mes.embed"
+            },
+            "version": {
+              "type": "string",
+              "pattern": "^1\\.[0-9]+$"
+            },
+            "type": {
+              "const": "outline"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "The words a person sees on it, in any case; spaces, a trailing ':' or '*' do not count."
+            },
+            "kind": {
+              "$ref": "#/$defs/kind"
+            }
+          }
+        }
+      },
+      "clear": {
+        "description": "Takes the outlines away.",
+        "schema": {
+          "type": "object",
+          "required": [
+            "protocol",
+            "version",
+            "type"
+          ],
+          "properties": {
+            "protocol": {
+              "const": "opencore-mes.embed"
+            },
+            "version": {
+              "type": "string",
+              "pattern": "^1\\.[0-9]+$"
+            },
+            "type": {
+              "const": "clear"
+            }
+          }
+        }
+      }
+    },
+    "out": {
+      "ready": {
+        "description": "Sent once the page has started, and in answer to hello.",
+        "schema": {
+          "type": "object",
+          "required": [
+            "protocol",
+            "version",
+            "type",
+            "viewer",
+            "path",
+            "title"
+          ],
+          "properties": {
+            "protocol": {
+              "const": "opencore-mes.embed"
+            },
+            "version": {
+              "type": "string",
+              "pattern": "^1\\.[0-9]+$"
+            },
+            "type": {
+              "const": "ready"
+            },
+            "viewer": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "name"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                }
+              ],
+              "description": "Who is signed in, or null."
+            },
+            "instance": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The instance's name (INSTANCE), or null."
+            },
+            "path": {
+              "type": "string",
+              "description": "The page's path and query in OpenCore MES, e.g. /designer/changes/42."
+            },
+            "title": {
+              "type": "string",
+              "description": "The page's title, as the browser shows it."
+            }
+          }
+        }
+      },
+      "location": {
+        "description": "Sent each time the person goes to another page of OpenCore MES (the outlines are cleared then).",
+        "schema": {
+          "type": "object",
+          "required": [
+            "protocol",
+            "version",
+            "type",
+            "path",
+            "title"
+          ],
+          "properties": {
+            "protocol": {
+              "const": "opencore-mes.embed"
+            },
+            "version": {
+              "type": "string",
+              "pattern": "^1\\.[0-9]+$"
+            },
+            "type": {
+              "const": "location"
+            },
+            "path": {
+              "type": "string",
+              "description": "The page's path and query in OpenCore MES, e.g. /designer/changes/42."
+            },
+            "title": {
+              "type": "string",
+              "description": "The page's title, as the browser shows it."
+            }
+          }
+        }
+      },
+      "outlined": {
+        "description": "The answer to outline: how many elements are outlined (0: none yet; it keeps looking); sent again each time that number changes while it looks.",
+        "schema": {
+          "type": "object",
+          "required": [
+            "protocol",
+            "version",
+            "type",
+            "label",
+            "found"
+          ],
+          "properties": {
+            "protocol": {
+              "const": "opencore-mes.embed"
+            },
+            "version": {
+              "type": "string",
+              "pattern": "^1\\.[0-9]+$"
+            },
+            "type": {
+              "const": "outlined"
+            },
+            "label": {
+              "type": "string"
+            },
+            "found": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "kind": {
+      "enum": [
+        "any",
+        "button",
+        "link",
+        "tab",
+        "field",
+        "heading"
+      ],
+      "default": "any",
+      "description": "What to look among: any; a button; a link (the navigator's entries are links); a tab; a field (by its label: the whole field is outlined); a heading."
+    }
+  }
+}

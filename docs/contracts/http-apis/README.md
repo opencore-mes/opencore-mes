@@ -6,7 +6,7 @@ path:
 | API | Who calls it | Described by |
 | --- | --- | --- |
 | `/ai/v1` | AI agents working in the designer as a person, through a token (design:read, design:draft, design:submit) | `GET /ai/v1/openapi.json` |
-| `/svc/v1` | Outside systems (ERP, LIMS, a plant's own tools) calling the web services the plant designed, through a token (service:call) | `GET /svc/v1/openapi.json`: the services the token's person may call |
+| `/svc/v1` | Outside systems (ERP, LIMS, a plant's own tools) calling what the plant designed and published over HTTP: its web services (service:call), transactions (transaction:run) and named queries (query:run), through a token | `GET /svc/v1/openapi.json`: what the token's person may call |
 
 This contract says what `/v1` promises, how that may change, and how a caller is told before it does.
 `schema.json` beside this file holds the same promise as data: every `/ai/v1` operation (its scope, its
@@ -22,7 +22,20 @@ OpenAPI document with it, and `kit.mjs` checks a running instance.
   out, `Idempotency-Key` (the first answer is given again for the same key and caller), and the answers
   listed in `schema.json` (`x-apis./svc/v1.answers`), each error as `{ error, code?, fields? }`: words a
   person reads, a stable `code` where there is one, a message per input in `fields`.
-- **Every answer** of both carries `API-Version: 1.0`, the version of this contract the core provides.
+- **`/svc/v1`, transactions and named queries** (1.3): a design publishes one over HTTP (`http.enabled`), under
+  its own name, which no other kind there may take:
+  - `POST /svc/v1/{transaction}` runs a transaction as the token's person (`transaction:run`): its inputs by
+    name, a reference as a record's id or its title (as a scanner reads it), a rows input as an array; the
+    same callers, checks, policies, all or nothing and audit as at its screen; `Idempotency-Key` as above.
+    `POST /svc/v1/{transaction}/preview` says what it would change, record by record, and writes nothing. A
+    transaction a person signs, or one only routes run, is never published.
+  - `GET /svc/v1/{query}?<parameter>=<value>` reads a named query as the token's person (`query:run`): its
+    parameters typed as it declares them, `offset`, `sort`, `dir` and `limit` to page; the answer `{ columns,
+    rows, next }` holds at most the query's limit, `next` the offset of the next page or null. It changes
+    nothing; it takes no `Idempotency-Key`.
+  - `409` with `code: stale` says a record a run read changed meanwhile (run it again); `503` that the server
+    is busy (`Retry-After`), nothing changed.
+- **Every answer** of both carries `API-Version: 1.3`, the version of this contract the core provides.
 
 ## How it may change
 
@@ -42,13 +55,14 @@ OpenAPI document with it, and `kit.mjs` checks a running instance.
 
 ## A plant's own web services
 
-What each designed web service takes and answers is the plant's promise to its callers, not the core's:
+What each designed web service (a service, a transaction or a named query published over HTTP) takes and answers is the plant's promise to its callers, not the core's:
 it changes through the plant's change requests. The core holds it to the same rule:
 
 - **A change that would break callers is refused** at the fitness test when someone called the service
   over HTTP in the last 30 days: an input removed, made required, added as required, its type changed or
-  a value taken from its list; HTTP turned off; a caller taken off its callers. The test names the
-  callers and how often they called.
+  a value taken from its list; HTTP turned off; a caller taken off its callers; for a query, a parameter
+  gone, made required or of another type, a column it gives taken away. The test names the callers and how
+  often they called.
 - **Give notice instead**: mark the service deprecated (on its General tab: since, sunset, its
   successor, a note). Its callers then get the same `Deprecation`, `Sunset` and `Link` headers on every
   call, its OpenAPI operation says `deprecated: true`, and once the sunset has passed the change goes

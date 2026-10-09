@@ -10,7 +10,7 @@
 // (mes.copilot_conversations): what the model was told and answered, and what the person reads, saved
 // as it grows, so it resumes any time, after a reload, a later visit or a restart. A run that a stopped
 // process left half done is said so, and the person asks it to go on.
-import { fail } from "../../../src/errors.js";
+import { fail } from "@opencore-mes/juris-kit/errors.js";
 import { designTools, contract } from "./design-tools.js";
 
 const MAX_STEPS = 24;
@@ -18,7 +18,7 @@ const MAX_STEPS = 24;
 const STALE_MS = 10 * 60_000;
 const MAX_RESULT_CHARS = 24000;
 // What the copilot may use: everything but submitting (a person submits) and starting other changes.
-const COPILOT_TOOLS = ["get_contract", "get_catalog", "get_object", "get_script", "get_change", "add_to_change", "save_draft", "validate", "test_script", "run_pipe", "simulate_access", "dry_run", "run_fitness", "get_flow", "check_flow", "layout_flow", "explain_flow", "walk_input_flow"];
+const COPILOT_TOOLS = ["get_contract", "get_catalog", "get_suites", "get_object", "get_script", "get_change", "add_to_change", "save_draft", "validate", "test_script", "run_pipe", "simulate_access", "dry_run", "run_fitness", "get_flow", "check_flow", "layout_flow", "explain_flow", "walk_input_flow"];
 
 // The tools that name a change request by its id.
 const ON_ITS_CHANGE = ["get_change", "add_to_change", "save_draft", "run_fitness"];
@@ -54,6 +54,7 @@ function summarize(name, ok, result) {
         case "simulate_access": return `roles ${result?.roles?.join(", ") || "none"}: ${result?.actions?.length ?? 0} action(s), writes ${Object.entries(result?.fields ?? {}).filter(([, l]) => l === "w").map(([f]) => f).join(", ") || "nothing"}`;
         case "get_change": return `change "${result?.title}" (${result?.state})`;
         case "get_catalog": return `${result?.objects?.length ?? 0} object(s)`;
+        case "get_suites": return `${result?.suites?.length ?? 0} suite(s)${result?.suites?.some((x) => x.newest) ? `, ${result.suites.filter((x) => x.newest).length} with a newer version` : ""}${result?.broken?.length ? `; ${result.broken.length} need(s) not met` : ""}`;
         case "run_fitness": return result?.passed ? `passed${result.counts?.warn ? `, ${result.counts.warn} warning(s)` : ""}` : `failed: ${(result?.checks ?? []).filter((c) => c.status === "fail").map((c) => c.title).join(", ")}`;
         case "dry_run": return result?.ok ? `ran; would write ${result.writes?.length ?? 0}, send ${result.requests?.length ?? 0}` : `${result?.error?.line ? `line ${result.error.line}: ` : ""}${result?.error?.message ?? "failed"}`;
         default: return "done";

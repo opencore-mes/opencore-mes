@@ -1,16 +1,18 @@
 // OpenCore MES, the server: one createJurisServer call (Juris README, "Your first app"). The database is
 // passed in, so a test can pass its own.
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { createJurisServer } from "../../src/server/kernel.js";
-import { clientIp } from "../../src/server/http.js";
-import { CALL_KIND } from "../../src/live-protocol.js";
+import { createJurisServer } from "@opencore-mes/juris-kit/server/kernel.js";
+import { clientIp } from "@opencore-mes/juris-kit/server/http.js";
+import { CALL_KIND } from "@opencore-mes/juris-kit/live-protocol.js";
 import { title, guard, withSuites, designPath } from "./client/app.js";
 import { createStore } from "./server/store.js";
+import { keepGuestsWhole } from "./db/guest.mjs";
 import { createServices } from "./server/services.js";
 import { createDesign } from "./server/design.js";
 import { createPresence } from "./server/presence.js";
 import { authHandler, methodsOf, sessionIdOf, setSessionCookie } from "./server/auth.js";
+import { signInSettings } from "./server/sign-in.js";
 import { PICKER_SHOWN, searchWords } from "./client/people-file.js";
 import { aiApi, createTokens, SCOPES } from "./server/ai-api.js";
 import { apiContract } from "./server/api-contract.js";
@@ -31,22 +33,33 @@ import { createAccount } from "./server/account.js";
 import { createTitles } from "./server/titles.js";
 import { createScreens } from "./server/screens.js";
 import { createRecordRequests } from "./server/record-requests.js";
-import { fail, ServiceError } from "../../src/errors.js";
-import { appendAudit } from "./server/audit.js";
+import { createMail } from "./server/mail.js";
+import { createSqlStats } from "./server/sql-stats.js";
+import { createCallStats, channelOf } from "./server/call-stats.js";
+import { createDatabase } from "./server/database.js";
+import { fail, ServiceError } from "@opencore-mes/juris-kit/errors.js";
+import { appendAudit, checkAudit, deferAudit } from "./server/audit.js";
 import { mask, decide } from "./server/policy.js";
 import { servicePrefix } from "./suites.mjs";
 import { suiteClashes } from "./client/builtins.js";
-import { createSamples, samplesTouches } from "./server/packs.js";
+import { createSamples, samplesTouches, forInstalled } from "./server/packs.js";
 import { createSandboxes } from "./server/sandbox.js";
 import { createFlows } from "./server/flows.js";
 import { createGuides } from "./server/guides.js";
 import { FLOW_EXTENDABLE } from "./client/definition.js";
 import { runServiceScript, scriptRunnerIsolation } from "./server/rules.js";
 import { organizationSettings } from "./server/organization.js";
+import { createRetention, RUN_EVERY_MS as RETENTION_EVERY_MS } from "./server/retention.js";
+import { createIntegrity, SCAN_EVERY_MS as INTEGRITY_EVERY_MS } from "./server/integrity.js";
 import { formatsOf } from "./client/format.js";
 import { themeCss, schemeOf, personalChoice } from "./client/theme.js";
 // The chart library (§34.9): from this installation's node_modules (a checkout), else the copy an npm
 // package of the app carries beside it (app/mes/vendor), since its dependencies sit outside its root.
+// The PDF library (§35.4): Mozilla's pdf.js, Apache-2.0, its legacy build (for the browsers a plant's
+// tablets run), from node_modules here and vendored into the server's package (ops/npm/build.mjs).
+const vendored = (from, packaged) => [from, packaged].find((f) => existsSync(fileURLToPath(new URL(`../../${f}`, import.meta.url)))) ?? from;
+const PDFJS = vendored("node_modules/pdfjs-dist/legacy/build/pdf.min.mjs", "app/mes/vendor/pdf.min.mjs");
+const PDFJS_WORKER = vendored("node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs", "app/mes/vendor/pdf.worker.min.mjs");
 const ECHARTS = ["node_modules/echarts/dist/echarts.esm.min.mjs", "app/mes/vendor/echarts.esm.min.mjs"].find((f) => existsSync(fileURLToPath(new URL(`../../${f}`, import.meta.url)))) ?? "node_modules/echarts/dist/echarts.esm.min.mjs";
 
 // `routing` (routing.js) routes replica-safe reads and holds the replay fence; without it the primary
@@ -63,16 +76,27 @@ const ECHARTS = ["node_modules/echarts/dist/echarts.esm.min.mjs", "app/mes/vendo
 // `dbState()` says whether the write database is reachable (db-gate.js): { state: "up" | "down", … }.
 // `events` (event-log.js) is the event log: copied into the database by a job, told of triggers given
 // up on; `dbWatch` (event-log.js watchDb) is told of every call refused because the database was down.
-export async function createApp({ db, dbState = () => ({ state: "up", since: null }), events = null, dbWatch = null, node = {}, schedulerEveryMs = 5000, plantTz = "UTC", now = () => Date.now(), routing = null, bus = null, instance = null, ai = null, dev = false, build = "dev", secure = !dev, devReload = null, secrets = () => undefined, outboxEveryMs = 1000, sessionCookie = null, suites = [], demo = false, sandbox = false, signIn = null, fetchFn = fetch, simpleLists = dev || demo, demoAs = null, connectionHosts = null, trustProxy = false, testSandbox = false, testAt = { port: 0, host: "127.0.0.1", url: null } }) {
+export async function createApp({ auditCheck = null, sqlStats = null, suiteUpdates = () => [], suiteKept = () => ({}), db, dbState = () => ({ state: "up", since: null }), events = null, dbWatch = null, node = {}, schedulerEveryMs = 5000, plantTz = "UTC", now = () => Date.now(), routing = null, bus = null, instance = null, ai = null, dev = false, build = "dev", secure = !dev, devReload = null, secrets = () => undefined, outboxEveryMs = 1000, mail: mailSettings = {}, sessionCookie = null, suites = [], demo = false, sandbox = false, signIn = null, fetchFn = fetch, simpleLists = dev || demo, demoAs = null, connectionHosts = null, trustProxy = false, embedOrigins = [], guestsFollow = false, testSandbox = false, testAt = { port: 0, host: "127.0.0.1", url: null } }) {
     setSessionCookie(sessionCookie);
+    // A transaction's audit entries are chained as it commits (§7.3): the chain's head is held for that alone.
+    deferAudit(db);
     // How people sign in (§8.2, auth.js): the picker only on a development or demo instance; a
     // password of their own unless this is the demo; the directory and single sign-on as configured.
     // The demo has no sign-in page: a visitor is the demo person (demoAs, or the first who designs) and
     // switches from the top bar.
     const signInWith = { picker: dev || demo, passwords: !demo, auto: demo, as: demoAs, ...(signIn ?? {}) };
+    // Every statement measured (sql-stats.js, §38): server.mjs measures the primary and the replica before
+    // the read routing; a database given as it is (tests, sandboxes) is measured here.
+    const stats = sqlStats ?? createSqlStats();
+    if (!sqlStats) db = stats.wrap(db);
+    // Every call measured (call-stats.js, §38.1): the platform's services by how they were called, and each design
+    // that answers one (a service, a transaction, a named query) by its own name, its statements put down to it.
+    const calls = createCallStats({ within: stats.within });
     const store = createStore(db, routing ? { read: routing.read } : {});
-    const records = createServices({ store, triggers: createTriggers(store) });
+    const records = createServices({ store, triggers: createTriggers(store), plantTz, now });
     const design = createDesign({ store, plantTz });
+    // Every emergency change goes into the event log, and an overdue review afterwards (§5.7).
+    if (events) design.useEvents(events);
     const presence = createPresence({ store });
     // AI access (§16): tokens a designer issues so an AI can work in the designer as them, through
     // the REST API at /ai/v1/ (ai-api.js). Managed here from the designer's own page.
@@ -112,6 +136,15 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
     let server = null;
     const invalidate = async (targets) => server?.invalidate(routing ? [...targets, { name: "$lsn", args: [routing.lsn()] }] : targets);
     const scheduler = node.scheduler !== false && schedulerEveryMs > 0;
+    // The audit chain, verified every quarter of an hour by the instance that schedules (COMPLIANCE.md G3):
+    // what it found is in /healthz, and a break is a critical event, once, until it is put right.
+    let auditState = null;
+    const verifyAuditChain = async () => {
+        // In a worker thread where the server gives one (auditCheck: server.mjs), else here, giving way between batches.
+        const r = await (auditCheck ?? checkAudit)(db);
+        if (!r.ok && auditState?.brokenAt !== r.brokenAt) events?.emit?.("audit.broken", { severity: "critical", message: `The audit trail's chain is broken: ${r.problem}. Run node app/mes/db/verify-audit.mjs, find what changed it, and tell whoever answers for the system's integrity.`, details: { brokenAt: r.brokenAt } });
+        auditState = { ok: r.ok, verifiedTo: r.verifiedTo, at: r.at, ...(r.ok ? {} : { brokenAt: r.brokenAt, problem: r.problem }) };
+    };
     const integration = createIntegration({
         store, records: records.services, recordTargets: records.recordTargets, tokens, secrets, invalidate, events, plantTz, now,
         // A public demo calls no outside system: nobody uses it to reach the rest of the internet; nor
@@ -131,12 +164,23 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
     });
     sandboxes?.sweepLeftovers().catch(() => {});
     // The fitness test (§5.9): run on demand, and by every submit, which it can refuse.
-    const fitness = createFitness({ store, design, integration, records: records.services, sandboxes });
+    // (Named queries, §23.1: run as the submitter by the query module made below.)
+    const fitness = createFitness({ store, design, integration, records: records.services, sandboxes, queries: { runNamed: (...args) => query.runNamed(...args), describeNamed: (...args) => query.describeNamed(...args) } });
     design.useFitness(fitness.run);
     // The page a desktop opens at sign-in, by the address it comes from (§6.8).
     const desktops = createDesktops({ store });
     // Pictures and documents (§35, §34.10): the file store, and what the copilots are given of it.
-    const blobs = createBlobs({ store });
+    // A record's file (§35.4): served only to someone the record services let read that record and that field
+    // (its policies, what its access requires), the field a file or a picture.
+    const fileOf = async (user, object, id, field) => {
+        const def = await store.definition(object);
+        if (!["file", "image"].includes(def?.body.fields?.[field]?.type)) return null;
+        const x = records.internals;
+        const row = await x.loadRow(x.reader, object, id);
+        const seen = row && mask(def.body, await x.actorFor(user, object), x.rowOut(row));
+        return seen && typeof seen[field] === "string" ? seen[field] : null;
+    };
+    const blobs = createBlobs({ store, fileOf });
     const attachments = createAttachments({ blobs });
     const copilot = createCopilot({ store, attachments, services: { ...designAndRecords, "design.dryRun": integration.services["design.dryRun"], ...fitness.services, ...(sandboxes ? { "sandbox.tryScenario": sandboxes.services["sandbox.tryScenario"] } : {}) }, provider: ai ?? { name: "none", model: null, available: false, hint: "No AI is configured on this server.", complete: async () => { throw new Error("no AI"); } } });
     // Whether the write database answers (db-gate.js), for the banner a page shows while it does not.
@@ -148,16 +192,19 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
         },
     };
     // Analytics (§22): state intervals and what they answer.
-    const analytics = createAnalytics({ store, plantTz });
+    const analytics = createAnalytics({ store, plantTz, certificationsOf: (id) => records.internals.certificationsOf(id) });
     // Queries (§23): SQL and JSON over views with each object's policies compiled in.
-    const query = createQuery({ store });
+    const query = createQuery({ store, certificationsOf: (id) => records.internals.certificationsOf(id) });
+    // What a design naming a query's columns is checked against (§23.1).
+    design.useQueryDescribe(query.describeNamed);
+    records.useQuery(query);
     // Reports and the analytics copilot (§34): a report's queries run as whoever opens it, over those
     // views; the copilot reads the schema and queries as the person, and draws.
     // What people call a record, never its id (§34.9): every answer a person or the copilot reads.
     const titles = createTitles({ store, records });
-    const reports = createReports({ store, records: records.services, requireViewer: records.internals.requireViewer, query, titles, blobs, attachments, plantTz, provider: ai ?? { name: "none", model: null, available: false, hint: "No AI is configured on this server.", complete: async () => { throw new Error("no AI"); } } });
+    const reports = createReports({ instance: instance ?? "local", events, store, records: records.services, requireViewer: records.internals.requireViewer, query, titles, blobs, attachments, plantTz, provider: ai ?? { name: "none", model: null, available: false, hint: "No AI is configured on this server.", complete: async () => { throw new Error("no AI"); } } });
     // Excel import and export (§24): through the record services, as the person.
-    const transfer = createTransfer({ store, records: records.services, recordTargets: records.recordTargets, invalidate });
+    const transfer = createTransfer({ store, records: records.services, recordTargets: records.recordTargets, invalidate, actorFor: records.internals.actorFor });
     // A model file (§24.1): the whole model to another installation: its designs as a change there, then
     // its records through the record services.
     const modelFile = createModelFile({ store, design, transfer, records, secrets, suites: suites.map((x) => x.name), invalidate, instance, build: typeof build === "function" ? build() : build });
@@ -170,21 +217,38 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
     // Approvals of changes and of record changes are signatures too (§7.4).
     design.useSignatures(signatures);
     const transactions = createTransactions({ store, records, outbound: !demo && !sandbox, signatures });
+    transactions.useQuery(query);
+    // A transaction input's choices read the inputs and the records they name, as a pop-up's scope does (§23.1).
+    records.useTransactionScope((user, name, values) => transactions.scopeFor(user, name, values));
     transactions.useSuiteSteps(() => design.suiteExtensions().steps);
     // A service's script runs the transactions its design names (§15.2): through the same service.
     integration.useTransactions(transactions);
+    // …and an outside system reads the named queries published over HTTP (§23.3).
+    integration.useQuery(query);
     // Flows (§32): a route's runs. They place a traveler's transactions (the gate), move it on once a run
     // has committed, start it when it is made, and take up travelers already there when a route is published.
-    const flows = createFlows({ store, records, design, sandbox, plantTz });
+    const flows = createFlows({ store, records, design, query, sandbox, plantTz });
     transactions.useFlows(flows);
+    // Calls counted by design (call-stats.js, §38.1): who a call is for, a transaction's and a service's runs, a query's.
+    for (const m of [records, transactions, integration, query]) m.useCallStats(calls);
+    flows.useTransactions(transactions.services);
     records.useAfterCreate((made) => flows.afterCreate(made));
     flows.useInvalidate((targets) => invalidate(targets));
     records.useAfterWrite((written) => flows.afterWrite(written));
     design.onFlowsPublished((names) => flows.adopt(names));
+    // A training plant's guests (§6.9, §37: DEMO_GUESTS_FOLLOW=1) take up the roles of an object a change makes
+    // live, so a learner's own copy of Lot opens for them at once; the public demo's wait for the reset.
+    if (demo && guestsFollow) design.onExecuted(async () => { if ((await keepGuestsWhole(db)).length) store.forget(); });
     // Screens (§26): designed pages of fixed building blocks, read with each viewer's own rights.
     const screens = createScreens({ store, records, design, transactions, query, titles, plantTz });
     // Approval of record changes (§28): what an object's design says waits, waits here.
-    const requests = createRecordRequests({ store, records });
+    // Mail to approving departments (§28.6): sent by the instance that runs the outbox; logged with no SMTP_URL.
+    const mail = createMail({ db, smtpUrl: mailSettings.smtpUrl ?? null, from: mailSettings.from ?? null, publicUrl: mailSettings.publicUrl ?? null, ...(mailSettings.send ? { send: mailSettings.send } : {}), ...(mailSettings.log ? { log: mailSettings.log } : {}) });
+    const requests = createRecordRequests({ store, records, mail });
+    // How long each kind of data is kept, its purge, and erasure of a person's data (§27.8, G11).
+    const retention = createRetention({ store, records, events, instance });
+    // The data integrity review (§7.7): changes made around the platform, found and reported.
+    const integrity = createIntegrity({ store, records, signatures, events });
     requests.useSignatures(signatures);
     records.useApprovals(requests);
     // What waits for the viewer, beside their name (§5.3, §28): changes they may review, the steps of
@@ -198,8 +262,9 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
             const items = [
                 // Plans waiting for them (§32.5): a decision to make, a screen to fill in, a wait to acknowledge.
                 ...(await flows.tasksFor(user.id)),
-                ...designs.review.map((c) => ({ kind: "review", id: c.id, title: c.title, link: `/design/c/${c.id}` })),
-                ...designs.sign.map((c) => ({ kind: "sign", id: c.id, title: c.title, department: c.department, step: c.step, link: `/design/c/${c.id}` })),
+                // (`emergency`: one to approve at once, or to review or confirm afterwards, §5.7.)
+                ...designs.review.map((c) => ({ kind: "review", id: c.id, title: c.title, link: `/design/c/${c.id}`, ...(c.emergency ? { emergency: c.emergency, overdue: Boolean(c.overdue) } : {}) })),
+                ...designs.sign.map((c) => ({ kind: "sign", id: c.id, title: c.title, department: c.department, step: c.step, link: `/design/c/${c.id}`, ...(c.emergency ? { emergency: c.emergency, overdue: Boolean(c.overdue) } : {}) })),
                 ...recordsWaiting.map((c) => ({ kind: "sign", record: true, id: c.id, title: c.title, department: c.department, step: c.step, link: `/request/${c.id}` })),
                 ...(await suiteAlerts(user)),
                 // A sign-in administrator's: ids locked, wrong passwords spread over many ids (G9).
@@ -253,10 +318,15 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
         const own = suite.name.replace(/-/g, "_");
         const actingAs = ({ name, label, roles = {}, reason } = {}) => {
             if (typeof name !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name)) throw new Error(`suite ${suite.name}: an identity of its own is named in letters, digits, ., _ and -`);
-            return { [CALL_KIND]: "internal", reason: String(reason ?? `${suite.name} suite`), user: { id: `${suite.name}:${name}`, name: String(label ?? name), serviceRoles: roles } };
+            // A suite's own identity (a machine) is not held to what access requires (§9.9): it reports what it does.
+            return { [CALL_KIND]: "internal", reason: String(reason ?? `${suite.name} suite`), user: { id: `${suite.name}:${name}`, name: String(label ?? name), serviceRoles: roles, unrestricted: true } };
         };
         const ownSecret = (name) => (typeof name === "string" && /^[a-z][a-z0-9_]{0,40}$/.test(name) ? secrets(`${own}_${name}`) : undefined);
-        const part = (await suite.register?.({ ...suiteContext, records: { ...suiteContext.records, actingAs }, secrets: ownSecret, outbound: !demo && !sandbox, suite: { name: suite.name, label: suite.label, version: suite.version } })) ?? {};
+        // Keep a file it was handed from outside (a shipping label, a certificate a supplier sends) in the file
+        // store, by its own name (`suite:<name>`), under the checks an upload has (a kind the store keeps, its
+        // size): → { blob, type, size, name }, or { status, error } when it is refused. Records then name it.
+        const files = { keep: async (bytes, name = null) => (Buffer.isBuffer(bytes) ? blobs.put({ id: `suite:${suite.name}` }, bytes, name) : { status: 400, error: "A file is its bytes (a Buffer)." }) };
+        const part = (await suite.register?.({ ...suiteContext, records: { ...suiteContext.records, actingAs }, secrets: ownSecret, files, outbound: !demo && !sandbox, suite: { name: suite.name, label: suite.label, version: suite.version } })) ?? {};
         const prefix = servicePrefix(suite.name);
         for (const name of [...Object.keys(part.services ?? {}), ...(part.queries ?? [])]) {
             if (!name.startsWith(prefix)) throw new Error(`suite ${suite.name}: "${name}" is not named after it ("${prefix}…")`);
@@ -303,9 +373,34 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
     integration.useSuiteCapabilities(capabilities);
     integration.useSuiteSchedules(scheduleKinds, (trigger) => design.scheduleCheck(trigger));
     design.useSuiteExtensions({ capabilities: Object.fromEntries(Object.entries(capabilities).map(([suite, given]) => [suite, Object.keys(given)])), steps: stepKinds, blocks: blockKinds, elements: elementKinds, schedules: scheduleKinds });
+    // Each suite version this installation runs, and what it gives designs, kept for good (§29.5, §29.10): the AI
+    // and the designer read what an earlier version gave, and which one gave what an update dropped. A sandbox or a
+    // test copy records nothing of its own; a version first run here is audited.
+    const givesOf = (x) => ({
+        capabilities: Object.keys(capabilities[x.name] ?? {}), steps: Object.keys(stepKinds).filter((k) => k.startsWith(`${x.name}.`)),
+        blocks: Object.keys(blockKinds).filter((k) => k.startsWith(`${x.name}.`)), schedules: Object.keys(scheduleKinds).filter((k) => k.startsWith(`${x.name}.`)),
+        elements: Object.keys(elementKinds).filter((k) => k.startsWith(`${x.name}.`)), flowNodes: Object.keys(flowNodes).filter((k) => k.startsWith(`${x.name}.`)),
+        designPart: Boolean(suiteParts[suites.indexOf(x)].designs?.object?.validate),
+    });
+    if (!sandbox && suites.length) {
+        await db.transaction(async (tx) => {
+            for (const x of suites) {
+                const [row] = await tx.query(`INSERT INTO mes.suite_versions (name, version, label, gives, pack_version) VALUES ($1, $2, $3, $4, $5)
+                    ON CONFLICT (name, version) DO UPDATE SET label = EXCLUDED.label, gives = EXCLUDED.gives, pack_version = EXCLUDED.pack_version, last_run = now()
+                    RETURNING (xmax = 0) AS first`, [x.name, x.version, x.label, JSON.stringify(givesOf(x)), x.designs?.version ? String(x.designs.version) : null]);
+                if (row?.first) await appendAudit(tx, { actor: "platform", object: "$suites", action: "suite:first run", after: { name: x.name, version: x.version } });
+            }
+        }).catch((error) => console.error("suites: their versions not recorded", error));
+    }
+    design.useSuiteHistory({ read: () => db.query("SELECT name, version, label, gives, pack_version, first_run, last_run FROM mes.suite_versions ORDER BY name, last_run DESC"), kept: suiteKept });
     // The suites' design packs (§29.6): offered to the designers, loaded as samples through the records.
-    const packs = Object.fromEntries(suites.filter((x) => x.designs).map((x) => [x.name, x.designs]));
-    design.useSuitePacks(Object.fromEntries(suites.filter((x) => x.designs).map((x) => [x.name, { suite: x.label, name: x.name, ...x.designs }])));
+    const packs = Object.fromEntries(suites.filter((x) => x.designs).map((x) => [x.name, forInstalled(x.designs, suites.map((y) => y.name))]));
+    // Each pack as offered here: what it brings only with a suite installed, only where that one is (§29.6).
+    design.useSuitePacks(Object.fromEntries(suites.filter((x) => x.designs).map((x) => [x.name, forInstalled({ suite: x.label, name: x.name, ...x.designs }, suites.map((y) => y.name))])));
+    // Their set-up guides (§29.8), shown in the designer.
+    design.useSuiteUpdates(suiteUpdates);
+    design.useSuitesInstalled(suites);
+    design.useSuiteGuides(Object.fromEntries(suites.filter((x) => x.guide).map((x) => [x.name, { suite: x.label, version: x.version, ...x.guide }])));
     // Several suites at once (§29): each its own prefix, and none locking what another locks differently.
     const clash = suiteClashes(suites.filter((x) => x.designs).map((x) => ({ name: x.name, label: x.label, pack: x.designs })));
     if (clash.length) throw new Error(`suites: ${clash.join("; ")}`);
@@ -314,7 +409,7 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
     const suiteTouches = Object.assign({}, ...suiteParts.map((p) => p.touches ?? {}));
     // The UI guides a panel's "?" opens (§33).
     const guides = createGuides({ records });
-    const services = { ...suiteServices, ...guides.services, ...modelFile.services, ...designAndRecords, ...samples, ...(sandboxes?.services ?? {}), ...flows.services, ...presence.services, ...aiServices, ...copilot.services, ...integration.services, ...fitness.services, ...statusServices, ...analytics.services, ...query.services, ...reports.services, ...transfer.services, ...transactions.services, ...screens.services, ...requests.services, ...inbox, ...signatures.services };
+    const services = { ...suiteServices, ...guides.services, ...modelFile.services, ...designAndRecords, ...samples, ...(sandboxes?.services ?? {}), ...flows.services, ...presence.services, ...aiServices, ...copilot.services, ...integration.services, ...fitness.services, ...statusServices, ...analytics.services, ...query.services, ...reports.services, ...transfer.services, ...transactions.services, ...screens.services, ...requests.services, ...retention.services, ...integrity.services, ...inbox, ...signatures.services };
     // Every change that says what it touches also says where the primary's WAL had reached once it
     // committed ($lsn): an instance that hears of it on the bus waits for its replica to replay that far
     // before it re-runs anything (routing.js). A service that changes nothing adds nothing.
@@ -326,7 +421,7 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
             return list.length ? [...list, { name: "$lsn", args: [routing.lsn()] }] : list;
         };
     };
-    const touches = Object.fromEntries(Object.entries({ ...records.touches, ...design.touches, ...presence.touches, "ai.tokens": [], "ai.token.create": [], "ai.token.revoke": [], "status.db": [], ...analytics.touches, ...query.touches, ...reports.touches, ...transfer.touches, ...modelFile.touches, ...transactions.touches, ...screens.touches, ...requests.touches, "inbox.mine": [], ...suiteTouches, ...samplesTouches, ...guides.touches, ...flows.touches, ...(sandboxes?.touches ?? {}), ...copilot.touches, ...integration.touches, ...fitness.touches }).map(([name, t]) => [name, withPosition(t)]));
+    const touches = Object.fromEntries(Object.entries({ ...records.touches, ...design.touches, ...presence.touches, "ai.tokens": [], "ai.token.create": [], "ai.token.revoke": [], "status.db": [], ...analytics.touches, ...query.touches, ...reports.touches, ...transfer.touches, ...modelFile.touches, ...transactions.touches, ...screens.touches, ...requests.touches, ...retention.touches, ...integrity.touches, "inbox.mine": [], ...suiteTouches, ...samplesTouches, ...guides.touches, ...flows.touches, ...(sandboxes?.touches ?? {}), ...copilot.touches, ...integration.touches, ...fitness.touches }).map(([name, t]) => [name, withPosition(t)]));
 
     // Told of every invalidation, local or off the bus, before anything re-runs (Juris onInvalidate):
     // a remote write moves the fence; a published definition empties every instance's cache of them.
@@ -337,7 +432,7 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
             if (name === "defs.get" || name === "defs.list" || name === "transactions.list" || name === "screens.list") store.forget();
         }
     };
-    const queries = [...records.queries, ...design.queries, ...presence.queries, ...transactions.queries, ...flows.queries, ...screens.queries, ...reports.queries, ...requests.queries, "inbox.mine", ...(sandboxes?.queries ?? []), ...suiteParts.flatMap((p) => p.queries ?? [])];
+    const queries = [...records.queries, ...design.queries, ...presence.queries, ...transactions.queries, ...flows.queries, ...screens.queries, ...reports.queries, ...requests.queries, ...integrity.queries, "inbox.mine", ...(sandboxes?.queries ?? []), ...suiteParts.flatMap((p) => p.queries ?? [])];
     // Each family of live queries decides who may hold one.
     const authorize = function (name, args, info) {
         return (name.startsWith("design.") ? design.authorize : records.authorize).call(this, name, args, info);
@@ -346,9 +441,32 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
     // What the sign-in page offers, to anyone: nothing secret in it (and the plant's policy, which the
     // pages follow: how long a session may idle, whether a signature asks for a password).
     const methods = { ...methodsOf(signInWith), idleMinutes: account.policy.idleMinutes, signWithPassword: signatures.asksProof, mfa: account.policy.mfa };
-    services["auth.methods"] = async () => methods;
+    // What People & departments calls the sign-in id, and its hint (§8.2): read each time, so a change approved shows at once.
+    services["auth.methods"] = async () => {
+        const said = await signInSettings(db);
+        return { ...methods, ...(said.idLabel ? { idLabel: said.idLabel } : {}), ...(said.idHint ? { idHint: said.idHint } : {}) };
+    };
+    // About (the navigator's About, §29.9): the platform's version and build, the framework's, and every suite
+    // installed with its version and its design pack's. To anyone signed in: nothing in it is secret, and a
+    // person reporting a problem says what they run.
+    const about = {
+        product: "OpenCore MES", edition: "Community edition", licence: "Apache-2.0",
+        version: JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")).version,
+        framework: { name: "Juris", version: JSON.parse(readFileSync(new URL("package.json", import.meta.resolve("@opencore-mes/juris-kit/errors.js")), "utf8")).version },
+        node: process.version,
+        suites: suites.map((x) => ({ name: x.name, label: x.label, version: x.version, ...(x.designs ? { designs: { label: x.designs.label ?? x.label, version: String(x.designs.version ?? "") } } : {}) })),
+    };
+    services["about.get"] = async function () {
+        if (!(await store.userForSession(this?.sessionId))) fail("Sign in first.", { status: 401 });
+        // A newer version of a suite on the registry (§29.7), where the server asks it: said beside the suite.
+        const newer = new Map((suiteUpdates() ?? []).map((u) => [u.name, u.newest]));
+        return { ...about, suites: about.suites.map((x) => (newer.has(x.name) ? { ...x, newest: newer.get(x.name) } : x)), build: typeof build === "function" ? build() : build, instance: instance ?? null };
+    };
     // The person's own account and its administration (account.js).
     Object.assign(services, account.services);
+    // The Database area (§38): the statements measured, plans, tables, indexes; for its administrators.
+    const database = createDatabase({ store, sqlStats: stats, callStats: calls, ai, instance: instance ?? "local" });
+    Object.assign(services, database.services);
     // The picker lists the people to pick from: a development or demo instance only (the demo says so on
     // every page). Elsewhere the list is empty: who is a person here is not for anyone to read.
     const all = signInWith.picker
@@ -415,6 +533,9 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
             }
         }]))
         : all;
+    // Each statement put down to the service (or live query) that sent it (sql-stats.js), and each call counted by
+    // how it came (call-stats.js).
+    const measured = Object.fromEntries(Object.entries(served).map(([name, fn]) => [name, function (...args) { return calls.measure({ kind: "platform", name, channel: channelOf(this) }, () => stats.within(name, () => fn.apply(this, args))); }]));
 
     // The pages and components of the platform and of every suite, in one router (app.js).
     const composed = withSuites(suites.map((x) => x.client).filter(Boolean));
@@ -425,12 +546,14 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
         ...(trustProxy ? { trustProxy } : {}),
         build,
         devReload,
-        services: served,
+        services: measured,
         // The pages and components, the suites' among them (app.js withSuites).
         routes: composed.routes,
         setup: composed.register,
         router: { guard },
-        juris: {},
+        // An <iframe> is drawn only by the media view (client/media.js): a PDF of this site's file store
+        // (/blob/, /file/), never anything a design or a record names (§35.4). The browser's is the same.
+        juris: { allowTags: ["iframe"] },
         api: {
             context: (req) => ({ sessionId: sessionIdOf(req) }),
             // A design is saved whole: People & departments with a plant's people (30K is about 2 MB)
@@ -439,7 +562,7 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
             live: {
                 queries,
                 strictQueries: true,
-                touches: { ...touches, "auth.methods": [], "auth.users": [], ...account.touches, ...signatures.touches },
+                touches: { ...touches, "auth.methods": [], "auth.users": [], "about.get": [], ...account.touches, ...signatures.touches, ...database.touches },
                 // One answer may be megabytes (People & departments with a plant's people): a stream is
                 // dropped as too far behind only past what a request may carry too.
                 maxBufferBytes: 8_000_000,
@@ -458,6 +581,9 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
         jobs: [
             ...suiteParts.flatMap((p) => p.jobs ?? []),
             ...(outboxEveryMs > 0 ? [{ name: "integration-outbox", every: outboxEveryMs, run: () => integration.drain() }] : []),
+            // The statements and calls this instance counted, written once a minute (every instance its own).
+            { name: "sql-stats", every: 60_000, run: () => stats.within("sql-stats", () => database.flush()).catch((error) => { if (error?.code !== "db.unavailable") throw error; }) },
+            ...(outboxEveryMs > 0 ? [{ name: "mail-outbox", every: Math.max(outboxEveryMs, 2000), run: () => mail.drain().catch((error) => { if (error?.code !== "db.unavailable") throw error; }) }] : []),
             // Schedules (§15.3): planned into the outbox, once per time due, whichever nodes plan.
             ...(scheduler ? [{ name: "scheduler", every: schedulerEveryMs, atStart: true, run: () => integration.plan().catch((error) => { if (error?.code !== "db.unavailable") throw error; }) }] : []),
             // Plans' waits whose time is up (§32.5), on by their wire.
@@ -465,6 +591,17 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
             ...(scheduler ? [{ name: "report-prompts", every: schedulerEveryMs * 6, run: () => reports.tick().catch((error) => { if (error?.code !== "db.unavailable") throw error; }) }] : []),
             ...(scheduler ? [{ name: "flow-waits", every: schedulerEveryMs, run: () => flows.tick().catch((error) => { if (error?.code !== "db.unavailable") throw error; }) }] : []),
             // This node, as the monitor and the other nodes see it.
+            // What is past the plant's retention periods (§27.8), removed; never at start, so a test's app does not.
+            ...(scheduler ? [{ name: "retention", every: RETENTION_EVERY_MS, run: () => retention.purge().catch((error) => { if (error?.code !== "db.unavailable") throw error; }) }] : []),
+            // The data integrity scan (§7.7): never at start, so a test's app does not.
+            ...(scheduler ? [{ name: "integrity", every: INTEGRITY_EVERY_MS, run: () => integrity.scan().catch((error) => { if (error?.code !== "db.unavailable") throw error; }) }] : []),
+            ...(scheduler ? [{ name: "audit-verify", every: 15 * 60_000, atStart: true, run: () => verifyAuditChain().catch((error) => { if (error?.code !== "db.unavailable") throw error; }) }] : []),
+            // Emergency changes whose review afterwards is overdue (§5.7): flagged once each, on the change,
+            // in the audit trail and the event log.
+            ...(scheduler ? [{ name: "emergency-reviews", every: 60_000, atStart: true, run: async () => {
+                const flagged = await design.emergencyTick().catch((error) => { if (error?.code !== "db.unavailable") throw error; return []; });
+                if (flagged.length) await invalidate([{ name: "design.home" }, { name: "design.change" }, { name: "design.approvals" }, { name: "inbox.mine" }]);
+            } }] : []),
             { name: "node-heartbeat", every: 10_000, atStart: true, run: () => integration.heartbeat().catch((error) => { if (error?.code !== "db.unavailable") throw error; }) },
             // The event log's file, copied into mes.event_log whenever the database takes it.
             ...(events ? [{ name: "event-log", every: 5000, atStart: true, run: () => events.flush(db).catch((error) => { if (error?.code !== "db.unavailable") throw error; }) }] : []),
@@ -474,10 +611,12 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
         // The instance stays in rotation while the database is down (every instance shares it); /healthz
         // says so.
         // `scripts`: how walled in the script runner said it is when it last started (§12.4).
-        health: { details: () => ({ db: dbState(), ...(events ? { events: events.state() } : {}), ...(scriptRunnerIsolation() ? { scripts: scriptRunnerIsolation() } : {}), ...(routing ? { reads: { ...routing.stats } } : {}), ...(bus ? { bus: bus.stats() } : {}) }) },
+        health: { details: () => ({ db: dbState(), ...(auditState ? { audit: auditState } : {}), ...(integrity.state() ? { integrity: integrity.state() } : {}), ...(events ? { events: events.state() } : {}), ...(scriptRunnerIsolation() ? { scripts: scriptRunnerIsolation() } : {}), ...(routing ? { reads: { ...routing.stats } } : {}), ...(bus ? { bus: bus.stats() } : {}) }) },
         onShutdown: bus ? [() => bus.stop()] : [],
         modules: {
-            mounts: [{ url: "/app/mes/client/", dir: "app/mes/client", only: [".js", ".css"] }, ...suites.filter((x) => x.clientDir).map((x) => ({ url: `/${x.clientDir}/`, dir: x.clientDir, only: [".js", ".css"] }))],
+            // A suite's browser module is mounted from wherever it is installed (`outside`: the plant
+            // folder's suites/ for an npm installation, beside a package nothing writes to; §29).
+            mounts: [{ url: "/app/mes/client/", dir: "app/mes/client", only: [".js", ".css"] }, ...suites.filter((x) => x.clientDir).map((x) => ({ url: `/${x.clientDir}/`, dir: x.clientHome, only: [".js", ".css"], outside: true }))],
             // The installable app (§14): at the root, so the service worker's scope is the whole site.
             rootFiles: {
                 "/sw.js": { file: "app/mes/pwa/sw.js", headers: { "service-worker-allowed": "/" } },
@@ -491,6 +630,9 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
                 // The chart library (§34.9): Apache ECharts, Apache-2.0, its own licence in the file; one module,
                 // loaded by the first chart shown (chart-view.js).
                 "/vendor/echarts.js": { file: ECHARTS, type: "text/javascript; charset=utf-8" },
+                // PDF pages drawn one at a time with their step controls (media.js PdfPages), and its worker.
+                "/vendor/pdf.js": { file: PDFJS, type: "text/javascript; charset=utf-8" },
+                "/vendor/pdf.worker.js": { file: PDFJS_WORKER, type: "text/javascript; charset=utf-8" },
             },
             entry: "/app/mes/client/boot.js",
         },
@@ -499,16 +641,17 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
             // What a page may load and where it may be shown (COMPLIANCE.md G6): its own scripts and
             // the loader by its hash, never an inline script or one from elsewhere; requests, workers,
             // forms and fonts to this site only; pictures from here or held in the page (a preview, a
-            // collected file); in no frame. Styles are inline in server-drawn markup. Only the designer's
+            // collected file); in no frame, but those of the sites the plant names (EMBED_ORIGINS, §37). Styles are inline in server-drawn markup. Only the designer's
             // pages may build a function from text ('unsafe-eval'): its editors parse a script that way,
             // never calling it. Where people work on records, nothing may (client/app.js guard loads the
             // designer afresh when it is come to from there).
             headers: ({ scriptHashes, url }) => ({
                 "content-security-policy": [
                     "default-src 'self'", `script-src 'self' ${designPath(url.pathname) ? "'unsafe-eval' " : ""}${scriptHashes.join(" ")}`.trim(), "style-src 'self' 'unsafe-inline'",
-                    "img-src 'self' data: blob:", "connect-src 'self'", "worker-src 'self'", "object-src 'none'", "base-uri 'self'", "form-action 'self'", "frame-ancestors 'none'",
+                    "img-src 'self' data: blob:", "connect-src 'self'", "worker-src 'self'", "object-src 'none'", "base-uri 'self'", "form-action 'self'", `frame-ancestors ${embedOrigins.length ? embedOrigins.join(" ") : "'none'"}`,
                 ].join("; "),
-                "x-frame-options": "DENY",
+                // X-Frame-Options names no site: it is left out when some may frame the app (the policy decides).
+                ...(embedOrigins.length ? {} : { "x-frame-options": "DENY" }),
                 "x-content-type-options": "nosniff",
                 "referrer-policy": "same-origin",
             }),
@@ -520,7 +663,7 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
                 // when that was (what a page remembers of this sign-in is told apart by it). `designer`:
                 // may start a change (`design` is any role on the designer: a reviewer, an approver).
                 const designRoles = user ? await design.designRolesOf(user.id) : [];
-                return user ? { ...(testSandbox ? { test: true } : {}), id: user.id, name: user.name, design: designRoles.length > 0, designer: designRoles.includes("designer"), signInAdmin: (await store.rolesFor(user.id, "auth")).includes("administrator"), query: (await store.rolesFor(user.id, "query")).length > 0, reports: (await store.rolesFor(user.id, "query")).length > 0 || (await store.rolesFor(user.id, "report")).length > 0, ...(user.home ? { home: user.home, homeLabel: user.home_label ?? null } : {}), since: user.since, second: user.second ?? null } : null;
+                return user ? { ...(testSandbox ? { test: true } : {}), id: user.id, name: user.name, design: designRoles.length > 0, designer: designRoles.includes("designer"), signInAdmin: (await store.rolesFor(user.id, "auth")).includes("administrator"), databaseAdmin: (await store.rolesFor(user.id, "database")).includes("administrator"), privacy: (await store.rolesFor(user.id, "privacy")).includes("officer"), integrity: (await store.rolesFor(user.id, "integrity")).includes("reviewer"), query: (await store.rolesFor(user.id, "query")).length > 0, reports: (await store.rolesFor(user.id, "query")).length > 0 || (await store.rolesFor(user.id, "report")).length > 0, ...(user.home ? { home: user.home, homeLabel: user.home_label ?? null } : {}), since: user.since, second: user.second ?? null } : null;
             },
             extra: (viewer) => ({ viewer: viewer?.id ?? null }),
             // The instance's name, for the header: a training instance says so on every page.
@@ -537,9 +680,11 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
                     // Lists of people start with a search box; development, the demo and test instances
                     // (SIMPLE_LISTS) list them at once.
                     me: viewer, instance, demo, simpleLists, picker: Boolean(signInWith.picker),
+                    // The sites that may show this one in a frame and talk to it (§37, embed.js).
+                    ...(embedOrigins.length ? { embed: embedOrigins } : {}),
                     // The plant's sign-in policy the pages follow (§8.2, §7.4): a signature asks its signer's
                     // password (or a fresh single sign-on); a session ends after so long idle.
-                    signing: { password: signatures.asksProof, sso: Boolean(signInWith.sso), idleMinutes: account.policy.idleMinutes }, suites: suites.map((x) => ({ name: x.name, label: x.label, version: x.version, nav: x.nav })),
+                    signing: { password: signatures.asksProof, sso: Boolean(signInWith.sso), idleMinutes: account.policy.idleMinutes, linkDays: signInWith.linkDays ?? 3, idLabel: settings?.signIn?.idLabel ?? null, idHint: settings?.signIn?.idHint ?? null }, suites: suites.map((x) => ({ name: x.name, label: x.label, version: x.version, nav: x.nav })),
                     formats: formatsOf({ timeZone: plantTz, ...(settings?.formats ?? {}) }),
                     theme: { scheme: theme.scheme ?? "choice", name: theme.name ?? null, scope: theme.scope ?? null },
                 };
@@ -577,6 +722,9 @@ export async function createApp({ db, dbState = () => ({ state: "up", since: nul
             },
         },
     });
+    // What it keeps of people (their certifications, a few seconds), read anew: a sandbox writes a scenario's
+    // records straight into its database, not through the services that would say so.
+    server.forgetPeople = () => records.internals.forgetCertifications();
     // Closing the app closes its sandboxes (their databases dropped) first.
     const closeServer = server.close.bind(server);
     server.close = async (...a) => { await sandboxes?.closeAll(); return closeServer(...a); };

@@ -106,15 +106,17 @@ CREATE TABLE audit_log (
   after        jsonb,
   rules        jsonb,
   prev_hash    text NOT NULL,
-  hash         text NOT NULL
+  hash         text NOT NULL,
+  chain        smallint NOT NULL DEFAULT 0   -- which of the chains (§7.3): the record's
 );
+CREATE INDEX audit_log_chain_seq ON audit_log (chain, seq);
 
--- The chain's head: one row, locked by every writer so the chain stays a single line.
+-- The chains' heads: one row a chain, locked by whoever links an entry to it (migrate-audit-chains.sql).
 CREATE TABLE audit_head (
-  id    boolean PRIMARY KEY DEFAULT true CHECK (id),
-  hash  text NOT NULL
+  chain  smallint PRIMARY KEY,
+  hash   text NOT NULL
 );
-INSERT INTO audit_head (hash) VALUES (repeat('0', 64));
+INSERT INTO audit_head (chain, hash) SELECT c, repeat('0', 64) FROM generate_series(0, 15) c;
 
 CREATE FUNCTION audit_is_append_only() RETURNS trigger AS $$
 BEGIN
@@ -143,7 +145,8 @@ GRANT USAGE ON SCHEMA q TO mes_query;
 CREATE TABLE IF NOT EXISTS mes.query_context (
   txid     bigint PRIMARY KEY,
   user_id  text   NOT NULL,
-  roles    jsonb  NOT NULL
+  roles    jsonb  NOT NULL,
+  certifications jsonb   -- what they hold (§27.9): what an object's access requires reads it (§9.9)
 );
 -- Which definitions the views were last built from.
 CREATE TABLE IF NOT EXISTS mes.query_views (
@@ -198,6 +201,12 @@ CREATE INDEX event_log_incident ON event_log (incident) WHERE incident IS NOT NU
 
 CREATE FUNCTION event_log_is_append_only() RETURNS trigger AS $$
 BEGIN
+  -- The retention purge alone (§27.8, migrate-retention.sql: the same body, whichever file runs last) may
+  -- delete, and only rows past a year.
+  IF TG_OP = 'DELETE' AND TG_LEVEL = 'ROW' AND current_setting('mes.retention_purge', true) = 'on'
+     AND OLD.at < now() - interval '365 days' THEN
+    RETURN OLD;
+  END IF;
   RAISE EXCEPTION 'event_log is append-only';
 END;
 $$ LANGUAGE plpgsql;

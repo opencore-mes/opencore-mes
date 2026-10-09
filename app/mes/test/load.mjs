@@ -9,7 +9,7 @@
 // transaction rate.
 import pg from "pg";
 import { randomBytes } from "node:crypto";
-import { liveKey } from "../../../src/live-protocol.js";
+import { liveKey } from "@opencore-mes/juris-kit/live-protocol.js";
 
 const [rate = 100, seconds = 30, lotCount = 60, watcherCount = 10] = process.argv.slice(2).map(Number);
 const BASE = process.env.BASE ?? "http://127.0.0.1:3200";

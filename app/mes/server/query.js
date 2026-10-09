@@ -22,8 +22,10 @@
 //   - with a statement timeout, a row limit and a size limit.
 // POC: run the app's database user without superuser rights in production (see §23).
 import { createHash } from "node:crypto";
-import { fail } from "../../../src/errors.js";
-import { decide, readAllRule } from "./policy.js";
+import { fail } from "@opencore-mes/juris-kit/errors.js";
+import { decide, readAllRule, requirementsOf } from "./policy.js";
+import { isSensitive } from "../client/definition.js";
+import { bindNamed, QUERY_LIMIT } from "../client/query-def.js";
 
 const IDENTIFIER = /^[a-z][a-z0-9_]{0,47}$/;
 const DEFAULT_LIMIT = 1000;
@@ -84,6 +86,7 @@ function recordRef(path, r = "r") {
 function userRef(path) {
     if (path === "id") return "to_jsonb(ctx.user_id)";
     if (path === "roles") return "ctx.roles";
+    if (path === "certifications") return "ctx.certifications";
     // What a person has on a form and a query does not carry (their departments, their name): read as
     // empty, a condition on one failed and its negation held, so "not in my department" showed every
     // record. It cannot be said here, and the rule that reads it grants nothing to a query (viewSql).
@@ -154,7 +157,10 @@ export const conditionSql = (when, env = VIEWER) => (when === undefined ? "true"
 
 // ---- the views ---------------------------------------------------------------------------------
 // How the views are built: raised when viewSql changes, so every installation rebuilds them.
-const VIEWS = 3;
+const VIEWS = 5;
+// A sensitive field (§6.10) has no column in any view: no query, AI report or the analytics copilot
+// reads it, whoever asks; it is shown only on a record, to someone who asks for it with a reason.
+const queried = (definition) => Object.entries(definition.fields ?? {}).filter(([name]) => !isSensitive(definition, name));
 // One view per object: the read rule and each field's read rule, from its policies (policy.js decide).
 export function viewSql(definition) {
     const object = definition.object;
@@ -173,21 +179,29 @@ export function viewSql(definition) {
         const parts = rules.map((rule, k) => (pick(rule) ? from[k] : null)).filter(Boolean);
         return parts.length ? `(${parts.join(" OR ")})` : "false";
     };
-    const read = anyOf((rule) => Boolean(rule.record?.read));
+    // What the object's access requires (§9.9), before any rule: a record whose condition holds for a
+    // certification the viewer does not hold is not in the view at all, whoever reads. A condition SQL
+    // cannot say reserves every record (fail closed).
+    const reserved = requirementsOf(definition).map((q) => {
+        const holds = `ctx.certifications ? ${lit(q.certification)}`;
+        try { return `(${holds} OR NOT ${q.when === undefined ? "true" : conditionSql(q.when)})`; } catch { return holds; }
+    });
+    const granted = anyOf((rule) => Boolean(rule.record?.read));
+    const read = reserved.length ? `(${granted} AND ${reserved.join(" AND ")})` : granted;
     const fieldReadable = (name) => {
         const granted = anyOf((rule) => ["read", "write"].includes(rule.fields?.[name] ?? rule.fields?.["*"]));
         const hidden = anyOf((rule) => (Array.isArray(rule.deny?.read) ? rule.deny.read : []).includes(name), denies);
         return `(${granted} AND NOT ${hidden})`;
     };
-    const fields = Object.entries(definition.fields ?? {});
+    const fields = queried(definition);
     const columns = [
         ...SYSTEM_COLUMNS.map(([name, , expr]) => `${expr} AS ${ident(name)}`),
         ...fields.map(([name, field]) => `CASE WHEN ${fieldReadable(name)} THEN ${column(name, field)} END AS ${ident(name)}`),
     ];
     const from = `FROM mes.records r
-  JOIN (SELECT c.user_id, coalesce(c.roles->${lit(object)}, '[]'::jsonb) AS roles FROM mes.query_context c WHERE c.txid = txid_current()) ctx ON true
+  JOIN (SELECT c.user_id, coalesce(c.roles->${lit(object)}, '[]'::jsonb) AS roles, coalesce(c.certifications, '[]'::jsonb) AS certifications FROM mes.query_context c WHERE c.txid = txid_current()) ctx ON true
   WHERE r.object = ${lit(object)} AND ${read}`;
-    const dims = definition.analytics?.dimensions ?? [];
+    const dims = (definition.analytics?.dimensions ?? []).filter((d) => !isSensitive(definition, d));
     const dimsSql = dims.length
         ? `jsonb_strip_nulls(jsonb_build_object(${dims.map((d) => `${lit(d)}, CASE WHEN ${fieldReadable(d)} THEN i.dims->${lit(d)} END`).join(", ")}))`
         : "'{}'::jsonb";
@@ -196,7 +210,7 @@ export function viewSql(definition) {
         `CREATE VIEW q.${ident(`${object}_stays`)} AS SELECT i.record_id, i.state, i.entered_at, i.left_at, i.entered_by, i.left_by, i.enter_action, i.leave_action,
   extract(epoch FROM coalesce(i.left_at, clock_timestamp()) - i.entered_at)::numeric AS seconds, ${dimsSql} AS dims
 FROM mes.state_intervals i JOIN mes.records r ON r.object = i.object AND r.id = i.record_id
-  JOIN (SELECT c.user_id, coalesce(c.roles->${lit(object)}, '[]'::jsonb) AS roles FROM mes.query_context c WHERE c.txid = txid_current()) ctx ON true
+  JOIN (SELECT c.user_id, coalesce(c.roles->${lit(object)}, '[]'::jsonb) AS roles, coalesce(c.certifications, '[]'::jsonb) AS certifications FROM mes.query_context c WHERE c.txid = txid_current()) ctx ON true
 WHERE i.object = ${lit(object)} AND ${read}`,
     ];
 }
@@ -215,9 +229,9 @@ function describe(definition, actor) {
             name: definition.object, object: definition.object, label: definition.label, kind: "records", states,
             columns: [
                 ...SYSTEM_COLUMNS.map(([name, type]) => ({ name, type, label: name.replace(/_/g, " "), system: true, access: "always" })),
-                ...Object.entries(definition.fields ?? {}).map(([name, f]) => ({ name, type: f.multiple ? "text[]" : SQL_TYPES[f.type] ?? "text", label: f.label ?? name, fieldType: f.type, values: f.values, to: f.to, access: access(name) })),
+                ...queried(definition).map(([name, f]) => ({ name, type: f.multiple ? "text[]" : SQL_TYPES[f.type] ?? "text", label: f.label ?? name, fieldType: f.type, values: f.values, to: f.to, access: access(name) })),
             ],
-            sample: `SELECT ${[definition.titleField, "state", ...Object.keys(definition.fields ?? {}).filter((n) => n !== definition.titleField).slice(0, 3)].filter(Boolean).join(", ")}\nFROM ${definition.object}\nORDER BY updated_at DESC\nLIMIT 50`,
+            sample: `SELECT ${[definition.titleField, "state", ...queried(definition).map(([n]) => n).filter((n) => n !== definition.titleField).slice(0, 3)].filter(Boolean).join(", ")}\nFROM ${definition.object}\nORDER BY updated_at DESC\nLIMIT 50`,
         },
         {
             name: `${definition.object}_stays`, object: definition.object, label: `${definition.label}: stays in states`, kind: "stays", states,
@@ -292,7 +306,7 @@ export function compileJsonQuery(query, schema) {
 }
 
 // ---- the module ------------------------------------------------------------------------------
-export function createQuery({ store, timeoutMs = 5000, log = console }) {
+export function createQuery({ store, timeoutMs = 5000, log = console, certificationsOf = async () => [] }) {
     const { db } = store;
     let built = null; // the signature of the views this instance last saw built
 
@@ -339,7 +353,9 @@ export function createQuery({ store, timeoutMs = 5000, log = console }) {
     }
 
     // Runs one SELECT as the viewer: { columns, rows, truncated, ms, sql }.
-    async function execute(user, defs, sql, params = [], limit = DEFAULT_LIMIT) {
+    // `describe`: the columns alone, from the database's description of a result with no rows (what a design that
+    // names a query's columns is checked against).
+    async function execute(user, defs, sql, params = [], limit = DEFAULT_LIMIT, { describe = false } = {}) {
         if (typeof sql !== "string" || !sql.trim()) fail("Write a query.", { fields: { sql: "Empty." } });
         if (sql.length > 20_000) fail("A query is at most 20 000 characters.", { fields: { sql: "Too long." } });
         const text = sql.trim().replace(/;\s*$/, "");
@@ -355,7 +371,7 @@ export function createQuery({ store, timeoutMs = 5000, log = console }) {
             return await db.transaction(async (tx) => {
                 await tx.query(`SET LOCAL statement_timeout = ${Math.max(100, Math.round(timeoutMs))}`);
                 await tx.query("SET LOCAL lock_timeout = 1000");
-                await tx.query("INSERT INTO mes.query_context (txid, user_id, roles) VALUES (txid_current(), $1, $2)", [user.id, JSON.stringify(roles)]);
+                await tx.query("INSERT INTO mes.query_context (txid, user_id, roles, certifications) VALUES (txid_current(), $1, $2, $3)", [user.id, JSON.stringify(roles), JSON.stringify(await certificationsOf(user.id))]);
                 await tx.query("SET LOCAL ROLE mes_query");
                 await tx.query("SET LOCAL search_path = q");
                 // The plan, first: the functions it calls, as the planner resolved them.
@@ -366,6 +382,7 @@ export function createQuery({ store, timeoutMs = 5000, log = console }) {
                 // The columns, from the database's own description of the result (none of its rows).
                 const columns = (await tx.query(namesOf, [...params, 0])).fields ?? [];
                 if (new Set(columns).size !== columns.length) throw Object.assign(new Error("Two columns have the same name: name each once (… AS name)."), { refusal: true });
+                if (describe) { await tx.query("RESET ROLE"); await tx.query("DELETE FROM mes.query_context WHERE txid = txid_current()"); return { columns }; }
                 const rows = await tx.query(wrapped, [...params, max + 1]);
                 await tx.query("RESET ROLE");
                 await tx.query("DELETE FROM mes.query_context WHERE txid = txid_current()");
@@ -399,6 +416,11 @@ export function createQuery({ store, timeoutMs = 5000, log = console }) {
             const defs = await ensureViews();
             return execute(user, defs, sql, [], limit);
         },
+        // A named query's draft tried in the designer (§23.1), with values typed in, as whoever tries it.
+        async "query.named"({ sql, params, values, limit } = {}) {
+            const user = await analyst(this);
+            return runNamed(user, { sql, params, limit }, values);
+        },
         async "query.json"({ query } = {}) {
             const user = await analyst(this);
             const defs = await ensureViews();
@@ -418,5 +440,73 @@ export function createQuery({ store, timeoutMs = 5000, log = console }) {
         return execute(user, defs, sql, [], limit);
     }
     const schemaAs = async (user) => schemaFor(user, await ensureViews());
-    return { services, touches, ensureViews, runAs, schemaAs };
+    // A named query (§23.1) run as `user` (a person filling a plan's screen, the fitness test's submitter):
+    // its ":name" parameters bound as SQL parameters, typed; at most its limit. It grants nothing: the
+    // views give `user` what their policies do.
+    // Each counted by its name and how it was asked (call-stats.js, §38.1): `channel`, a screen's table, a
+    // reference's choices, a plan, the web, the fitness test.
+    let calls = null;
+    // (`channel` null: counted by whoever called, as a request over the web is.)
+    const measured = (body, channel, fn, who = null) => (calls && channel && typeof body?.name === "string" ? calls.measure({ kind: "query", name: body.name, channel, who }, fn) : fn());
+    async function runNamed(user, body, values = {}, { channel = "internal" } = {}) {
+        return measured(body, channel, () => runNamedNow(user, body, values));
+    }
+    async function runNamedNow(user, body, values) {
+        const bound = bindNamed(body?.sql ?? "", body?.params ?? {}, values ?? {});
+        if (bound.problems.length) fail(bound.problems.join(" "), { code: "query.params" });
+        const limit = Math.min(Math.max(1, Number(body?.limit) || QUERY_LIMIT.default), QUERY_LIMIT.max);
+        return execute(user, await ensureViews(), bound.text, bound.values, limit);
+    }
+    // A named query's columns, without running it (§23.1): its parameters given no values (each NULL, typed), its
+    // rows none. As the platform, whose roles are none: what it describes is the views' columns, not anyone's rows.
+    // Kept per text and the views it reads (a design published changes them). → { columns } or { problem: words }.
+    const described = new Map();
+    async function describeNamed(body) {
+        const defs = await ensureViews();
+        const key = JSON.stringify([body?.sql ?? "", body?.params ?? {}, defs.map((d) => `${d.object}:${d.version ?? ""}`)]);
+        if (described.has(key)) return described.get(key);
+        let out;
+        try {
+            const bound = bindNamed(body?.sql ?? "", body?.params ?? {}, {});
+            const hard = bound.problems.filter((m) => !/ is required\.$/.test(m));
+            out = hard.length ? { problem: hard.join(" ") } : { columns: (await execute({ id: "platform" }, defs, bound.text, bound.values, 1, { describe: true })).columns };
+        } catch (error) {
+            out = { problem: error.message };
+        }
+        if (described.size > 500) described.delete(described.keys().next().value);
+        described.set(key, out);
+        return out;
+    }
+    // A window of a named query's rows (a screen's table, §26), as `user`: in the order asked (one of its columns,
+    // checked against what it gives), from `offset`, at most `limit`. → execute's { columns, rows, truncated }.
+    async function pageNamed(user, body, values = {}, { sort = null, offset = 0, limit = QUERY_LIMIT.default, channel = "internal", who = null } = {}) {
+        return measured(body, channel, () => pageNamedNow(user, body, values, { sort, offset, limit }), who);
+    }
+    async function pageNamedNow(user, body, values, { sort, offset, limit }) {
+        const bound = bindNamed(body?.sql ?? "", body?.params ?? {}, values ?? {});
+        if (bound.problems.length) fail(bound.problems.join(" "), { code: "query.params" });
+        const n = bound.values.length;
+        let order = "";
+        if (sort?.field) {
+            const d = await describeNamed(body);
+            if (!d.columns?.includes(sort.field)) fail(`The query gives no column "${sort.field}" to sort by.`, { code: "query.params" });
+            order = ` ORDER BY "${sort.field.replace(/"/g, '""')}" ${sort.dir === "desc" ? "DESC" : "ASC"} NULLS LAST`;
+        }
+        const text = `SELECT * FROM (\n${bound.text}\n) AS _page${order} OFFSET $${n + 1}`;
+        const max = Math.min(Math.max(1, Number(limit) || QUERY_LIMIT.default), QUERY_LIMIT.max);
+        return execute(user, await ensureViews(), text, [...bound.values, Math.max(0, Number(offset) || 0)], max);
+    }
+    // Whether a record is among a named query's rows for `user` (a reference's choices, §23.1): asked of the query
+    // by its id, so a long list is never cut short by the query's limit.
+    async function hasId(user, body, values, id, { channel = "internal" } = {}) {
+        return measured(body, channel, () => hasIdNow(user, body, values, id));
+    }
+    async function hasIdNow(user, body, values, id) {
+        const bound = bindNamed(body?.sql ?? "", body?.params ?? {}, values ?? {});
+        if (bound.problems.length) return { ok: false, problem: bound.problems.join(" ") };
+        const n = bound.values.length;
+        const ran = await execute(user, await ensureViews(), `SELECT id FROM (\n${bound.text}\n) AS _has WHERE _has.id::text = $${n + 1}`, [...bound.values, String(id)], 1);
+        return { ok: ran.rows.length > 0 };
+    }
+    return { services, touches, ensureViews, runAs, schemaAs, runNamed, describeNamed, pageNamed, hasId, useCallStats: (c) => { calls = c; } };
 }

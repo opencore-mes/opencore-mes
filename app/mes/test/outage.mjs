@@ -13,7 +13,7 @@
 //   DATABASE_URL=postgres:///openmes_poc node app/mes/test/outage.mjs
 import pg from "pg";
 import { randomBytes } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 import { gateDb } from "../server/db-gate.js";
 import { createEventLog, watchDb, readEvents, verifyEvents } from "../server/event-log.js";
@@ -46,7 +46,7 @@ const flaky = {
         return out;
     },
 };
-const events = createEventLog({ dir: mkdtempSync(path.join(tmpdir(), "openmes-outage-")), instance: `outage-${tag}`, build: "test" });
+const events = createEventLog({ dir: mkdtempSync(path.join(tmpdir(), "opencore-mes-outage-")), instance: `outage-${tag}`, build: "test" });
 const dbWatch = watchDb(events);
 const gate = gateDb(flaky, { probeMs: 100, log: { warn() {} }, onDown: dbWatch.onDown, onUp: dbWatch.onUp });
 const app = await createApp({ db: gate, dbState: gate.state, events, dbWatch, dev: false, build: "test", outboxEveryMs: 0 });

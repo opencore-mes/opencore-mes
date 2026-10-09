@@ -1,4 +1,5 @@
-<!-- The designer's guide (DESIGN.md §33): a change request, or a live design viewed. -->
+<!-- The designer's guide (DESIGN.md §33): a change request, or a live design viewed. The "?" shows it
+     first, then the guide of each kind of part the change holds (designer-<kind>.html). -->
 <article data-title="The designer">
   <p>Every change reaches the plant the same way: <strong>designed</strong> here, <strong>reviewed</strong>,
   <strong>approved</strong> by everyone it concerns, then <strong>executed</strong>. A live design is
@@ -19,14 +20,39 @@
     <dt data-highlight=".el-picker">This window shows</dt>
     <dd>A drop-down of the change's parts (objects, transactions, screens, flow templates): pick the one
     to work on.</dd>
+    <dt data-highlight=".undo-redo">Undo, Redo</dt>
+    <dd>Takes back the last edit to the change, in any of its windows, and puts it forward again. ⌘Z or
+    Ctrl+Z, and ⇧⌘Z or Ctrl+Y, do the same outside a text box. Typing in one box is one step; an undo is
+    saved like any edit. The steps start again when someone else's edit to the change comes in.</dd>
+    <dt data-highlight=".include-live">Change also</dt>
+    <dd>Brings a live design into this change (an object, a transaction, a screen…): pick it, then
+    <strong>Bring in</strong>. It is then edited here and approved with the rest.</dd>
     <dt data-highlight=".pane-bar select[title='Add to this change']">+ service, + flow template…</dt>
-    <dd>Adds another part to the change.</dd>
+    <dd>Adds a new part to the change: choose its kind, type its name, then Add.</dd>
     <dt data-highlight=".pane-bar button[title^='Open another window']">Split</dt>
     <dd>Opens another window beside this one (up to three), to compare or copy.</dd>
     <dt data-highlight=".maximize-btn">Maximize</dt>
     <dd>Fills the browser window with the designer; Restore brings the navigator back.</dd>
     <dt data-highlight=".subtabs">Its tabs</dt>
     <dd>Each part's settings, by topic. A number on a tab counts what differs from the live version.</dd>
+  </dl>
+
+  <h3>In every editor</h3>
+  <dl>
+    <dt data-highlight=".pick">Lists of words (chips)</dt>
+    <dd>Roles, values, states, fields, columns, people: each is a chip, and × removes it. Click into the
+    box to see what exists, type to narrow it, Enter or a click adds. Where a new one is allowed,
+    <strong>Add “…”</strong> is offered (several at once with commas); where it must exist already, a word
+    that is not one is said not to match. Backspace in the empty box removes the last.</dd>
+    <dt data-highlight=".expr-rule">Conditions (Only when…)</dt>
+    <dd>The condition as a rule, in a box: click it, or <strong>Edit</strong>, to build it from fields,
+    the person and values; <strong>JSON</strong> shows it as data; <strong>Try</strong> tests it on values
+    you type. A dashed box means none (it always holds, or as it says).</dd>
+    <dt>Remove</dt>
+    <dd>Asks first, naming what goes. It is taken out of this change only; Undo brings it back.</dd>
+    <dt data-highlight=".diff-pill, .tab-diff">changed, new</dt>
+    <dd>Marks what differs from the live version; a number on a tab counts its differences, and
+    <strong>Changes</strong> lists them all.</dd>
   </dl>
 
   <h3>Beside it</h3>

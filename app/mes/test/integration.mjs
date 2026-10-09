@@ -12,7 +12,7 @@
 import http from "node:http";
 import pg from "pg";
 import { randomBytes } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 import { createTokens } from "../server/ai-api.js";
 import { sessionKey } from "../server/store.js";
@@ -297,6 +297,32 @@ export default async function ${OUT}(ctx) {
     const accessCheck = lotFit.checks.find((c) => c.id === "access");
     step("fitness: existing lots that a new required field would block are counted, for the approvers (a warning)", lotFit.passed && recordsCheck.status === "warn" && recordsCheck.items.some((i) => i.includes("batch_ref") && i.includes("could no longer be saved")), recordsCheck.items);
     step("fitness: the access diff shows who gains what, by role and state", accessCheck.items.some((i) => i.includes("quality") && i.includes("batch_ref")), accessCheck.items.slice(0, 4));
+
+    // ---- 7. fitness on a service with the object it brings: none of its records exists yet ----
+    const NOTE = `note_t${tag}`;
+    const NOTES = `notes_t${tag}`;
+    const { id: noteChange } = await call("dana", "design.start", { object: NOTE, label: "Handover note" });
+    created.changes.push(noteChange);
+    const [{ content: noteContent }] = await db.query("SELECT content FROM mes.change_requests WHERE id = $1", [noteChange]);
+    await call("dana", "design.save", {
+        id: noteChange, reason: "Handover notes, and a service that writes the day's.",
+        services: { [NOTES]: {
+            name: NOTES, label: "Today's note", description: "Writes today's handover note unless there is one.", input: {}, http: { enabled: false },
+            callers: { users: ["erp"], groups: [] }, on: [], runAs: "erp", uses: { connections: [], objects: { [NOTE]: ["read", "create"] } }, stewards: ["production"],
+        } },
+        scripts: { [NOTES]: `// Today's handover note, once.
+export default async function ${NOTES}(ctx) {
+  const had = await ctx.records.list("${NOTE}", {});
+  const made = had.length ? null : await ctx.records.create("${NOTE}", { ${noteContent.definitions[NOTE].titleField}: "Today" });
+  ctx.output = { had: had.length, made: Boolean(made), after: (await ctx.records.list("${NOTE}", {})).length };
+  return ctx;
+}` },
+        tests: { [NOTES]: [{ name: "none yet: it writes one", run: { input: {} }, expect: { ok: true, output: { had: 0, made: true, after: 1 }, writes: 1 } }] },
+    });
+    const noteFit = await call("dana", "design.fitness", { id: noteChange });
+    const noteCase = noteFit.checks.find((c) => c.id === "tests")?.cases?.[0];
+    step("fitness: a service tested with the object its change brings: that object has no records yet, so it reads none, and what it creates is simulated (its policy applies once live)",
+        noteCase?.passed, noteFit.checks.find((c) => c.id === "tests"));
 } catch (error) {
     step("unexpected", false, { message: error.message, body: error.body });
 } finally {

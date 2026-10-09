@@ -19,13 +19,15 @@
 //   a script a suite's part of a design names (§29.4): { name, run: {its input}, expect: { output?: {…}, throws?: { message? } } }
 // A service's case runs as the service will in production: its own service role (the draft's roles),
 // its user, or its caller (the author, or one of its callers named in `as`). A rule's, as the author.
-import { fail } from "../../../src/errors.js";
-import { CALL_KIND } from "../../../src/live-protocol.js";
+import { fail } from "@opencore-mes/juris-kit/errors.js";
+import { CALL_KIND } from "@opencore-mes/juris-kit/live-protocol.js";
 import { canonical, sha256 } from "./audit.js";
-import { checkScript, runRules, runDryScript } from "./rules.js";
+import { checkScript, runRules, runDryScript, givenLookups } from "./rules.js";
 import { decide } from "./policy.js";
 import { validate } from "./services.js";
-import { validateScript, roleChanges, suiteScripts, flowSetsOff, breakingForCallers } from "../client/definition.js";
+import { validateScript, roleChanges, suiteScripts, flowSetsOff } from "../client/definition.js";
+import { breaking, WEB_TAKES, WEB_CALLERS, WEB_KINDS } from "../client/web-publish.js";
+import { namesIn } from "../client/query-def.js";
 import { organizationSnapshot, draftOf } from "./organization.js";
 import { resolveIdentity } from "./integration.js";
 import { callableProblems } from "../client/code-editor.js";
@@ -39,7 +41,7 @@ const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 const holds = (want, have) => (isPlain(want) ? isPlain(have) && Object.entries(want).every(([k, v]) => holds(v, have[k]))
     : Array.isArray(want) ? Array.isArray(have) && want.length === have.length && want.every((v, i) => holds(v, have[i])) : same(want, have));
 
-export function createFitness({ store, design, integration, records, sandboxes = null, log = console }) {
+export function createFitness({ store, design, integration, records, sandboxes = null, queries = null, log = console }) {
     const { db } = store;
 
     // The objects and scripts as they will be once the change executes.
@@ -57,7 +59,9 @@ export function createFitness({ store, design, integration, records, sandboxes =
         if (kind === "plain") {
             if (!isPlain(c) || !isPlain(c.run)) return { script: name, name: label, passed: false, detail: "A test case is { name, run, expect }." };
             const expect = isPlain(c.expect) ? c.expect : {};
-            const r = await runDryScript({ name, source, ctx: { ...c.run, now: c.run.now ?? new Date().toISOString() } });
+            // A node script's lookups (§32.6) answered from the case's own `lookups`, so it replays the same.
+            const given = givenLookups(c.run);
+            const r = await runDryScript({ name, source, ctx: { ...given.ctx, now: c.run.now ?? new Date().toISOString(), lookup: given.lookup } });
             if (expect.throws) {
                 const ok = Boolean(r.error) && !r.error.fault && (expect.throws.message === undefined || String(r.error.message).includes(expect.throws.message));
                 return { script: name, name: label, passed: ok, detail: ok ? `refused: ${r.error.message}` : r.error ? `refused differently: ${r.error.message}` : "expected a refusal; it ran" };
@@ -93,7 +97,8 @@ export function createFitness({ store, design, integration, records, sandboxes =
         }
         let as;
         try { as = await resolveIdentity(store, service, { caller: event ? null : caller, event }); } catch (e) { return { script: name, name: label, passed: false, detail: e.message }; }
-        const r = await integration.dryRunService({ user: as, service, source, connections: content.connections ?? {}, transactions: content.transactions ?? {}, input: isPlain(c.run.input) ? c.run.input : {}, event, responses: c.run.responses });
+        const r = await integration.dryRunService({ user: as, service, source, connections: content.connections ?? {}, transactions: content.transactions ?? {}, input: isPlain(c.run.input) ? c.run.input : {}, event, responses: c.run.responses,
+            unborn: Object.keys(content.definitions ?? {}).filter((o) => !w.live.definitions[o]) });
         const wantOk = expect.ok ?? true;
         const where = r.error?.line ? ` (line ${r.error.line})` : "";
         if (wantOk !== r.ok) return { script: name, name: label, passed: false, detail: r.ok ? "expected a refusal; it ran" : `${r.error?.message ?? "failed"}${where}` };
@@ -129,9 +134,15 @@ export function createFitness({ store, design, integration, records, sandboxes =
     }
 
     // What each role may do, by state, before and after: the changes only.
+    // A field made sensitive (§6.10), or no longer, is an access change for everyone who reads it.
+    const SENSITIVE_ON = "now sensitive: masked wherever records are shown or leave, never in queries, analytics or the AI; shown on its record only to who may read it and says why, each showing audited";
+    const SENSITIVE_OFF = "no longer sensitive: shown as it is to everyone who may read it, in queries and analytics too, and the values it is given from then on kept in the audit trail as they are";
     function accessDiff(object, before, after) {
-        if (!before) return [`new object ${object}: roles ${(after.roles ?? []).join(", ") || "none"}`];
-        const out = [];
+        const hidden = (body) => new Set(Object.entries(body?.fields ?? {}).filter(([, f]) => f?.sensitive === true).map(([n]) => n));
+        const [was, is] = [hidden(before), hidden(after)];
+        const sensitive = [...[...is].filter((n) => !was.has(n)).map((n) => `${object} · ${n}: ${SENSITIVE_ON}`), ...[...was].filter((n) => !is.has(n) && after?.fields?.[n]).map((n) => `${object} · ${n}: ${SENSITIVE_OFF}`)];
+        if (!before) return [`new object ${object}: roles ${(after.roles ?? []).join(", ") || "none"}`, ...sensitive];
+        const out = [...sensitive];
         const roles = [...new Set([...(before.roles ?? []), ...(after.roles ?? [])])];
         const states = [...new Set([...(before.states?.list ?? []), ...(after.states?.list ?? [])])];
         for (const role of roles) {
@@ -189,30 +200,56 @@ export function createFitness({ store, design, integration, records, sandboxes =
         checks.push({ id: "scripts", title: "Scripts compile and call only what they have", status: scriptItems.length ? "fail" : scriptCount ? "pass" : "info", summary: scriptCount ? (scriptItems.length ? `${scriptItems.length} finding(s)` : `${scriptCount} script(s) clean`) : "no scripts in this change", items: scriptItems });
 
         // 2b. Web services' callers (docs/contracts/http-apis): a change that would break whoever called a
-        // web service over HTTP in the last 30 days needs their notice first: the service deprecated (they
-        // are told on every call) and its sunset passed, or the new shape under a new name.
+        // web service, a transaction or a named query over HTTP in the last 30 days needs their notice first:
+        // it deprecated (they are told on every call) and its sunset passed, or the new shape under a new name.
+        // A service's and a transaction's calls are in the audit trail; a query's reads are counted (call-stats.js).
         const callerItems = [];
         let callersBroken = 0;
         let callersWarned = 0;
-        const live = Object.keys(content.services ?? {}).length ? await store.services() : new Map();
-        for (const [name, draft] of Object.entries(content.services ?? {})) {
-            const was = live.get(name)?.body;
-            const breaks = draft ? breakingForCallers(was, draft) : [];
-            if (!breaks.length) continue;
-            const callers = await store.db.query(
+        const LIVE = { service: () => store.services(), transaction: () => store.transactions(), query: () => store.queries() };
+        const CALLED = {
+            service: (name) => store.db.query(
                 `SELECT actor, after->'via'->>'http' AS token, count(*)::int AS n, max(at) AS last FROM mes.audit_log
                  WHERE object = '$service' AND after->>'service' = $1 AND after->'via' ? 'http' AND at > now() - interval '30 days'
-                 GROUP BY 1, 2 ORDER BY n DESC LIMIT 10`, [name]);
-            const who = callers.map((c) => `${c.actor} (token ${c.token}: ${c.n} call${c.n === 1 ? "" : "s"}, the last ${new Date(c.last).toISOString().slice(0, 10)})`).join("; ");
-            const d = was.deprecated;
-            if (!callers.length) { callersWarned++; callerItems.push(`${name}: ${breaks.join("; ")}. Nobody called it over HTTP in the last 30 days.`); }
-            else if (d?.sunset && Date.parse(d.sunset) <= Date.now()) { callersWarned++; callerItems.push(`${name}: ${breaks.join("; ")}. Its callers were told (deprecated since ${d.since}, its sunset ${d.sunset} has passed): ${who}.`); }
-            else {
-                callersBroken++;
-                callerItems.push(`${name} would break its callers, ${who}: ${breaks.join("; ")}. ${d ? `It is deprecated, and its sunset is ${d.sunset}: change it after then, or` : "Give them notice first: mark it deprecated with a sunset (they are told on every call) and change it after the sunset, or"} publish the new shape under a new name, as its successor.`);
+                 GROUP BY 1, 2 ORDER BY n DESC LIMIT 10`, [name]),
+            transaction: (name) => store.db.query(
+                `SELECT actor, after->'via'->>'http' AS token, count(*)::int AS n, max(at) AS last FROM mes.audit_log
+                 WHERE object = '$transaction' AND after->>'transaction' = $1 AND after->'via' ? 'http' AND at > now() - interval '30 days'
+                 GROUP BY 1, 2 ORDER BY n DESC LIMIT 10`, [name]),
+            // "erp (token ERP production)" as counted: who, by their token.
+            query: async (name) => (await store.db.query(
+                `SELECT k AS who, sum((c.callers->>k)::bigint)::int AS n, max(c.hour) AS last FROM mes.call_stats c, jsonb_object_keys(c.callers) k
+                 WHERE c.kind = 'query' AND c.name = $1 AND c.channel = 'web' AND c.hour > now() - interval '30 days'
+                 GROUP BY k ORDER BY n DESC LIMIT 10`, [name])).map((r) => { const m = /^(.*) \(token (.*)\)$/.exec(r.who); return { actor: m ? m[1] : r.who, token: m ? m[2] : "?", n: r.n, last: r.last }; }),
+        };
+        const KEY = { service: "services", transaction: "transactions", query: "queries" };
+        // A query's columns its callers read, as published, that the draft would no longer give.
+        const columnsGone = async (was, draft) => {
+            if (!was?.http?.enabled || !draft?.http?.enabled || !queries) return [];
+            const [a, b] = [await queries.describeNamed(was), await queries.describeNamed(draft)];
+            return (a.columns ?? []).filter((c) => Array.isArray(b.columns) && !b.columns.includes(c)).map((c) => `column ${c} would be gone`);
+        };
+        for (const kind of Object.keys(KEY)) {
+            const drafts = Object.entries(content[KEY[kind]] ?? {});
+            if (!drafts.length) continue;
+            const live = await LIVE[kind]();
+            for (const [name, draft] of drafts) {
+                const was = live.get(name)?.body;
+                const breaks = draft ? [...breaking(was, draft, { takes: WEB_TAKES[kind], callers: WEB_CALLERS[kind], noun: kind === "query" ? "parameter" : "input" }), ...(kind === "query" ? await columnsGone(was, draft) : [])] : [];
+                if (!breaks.length) continue;
+                const callers = await CALLED[kind](name);
+                const noun = `${WEB_KINDS[kind]} ${name}`;
+                const who = callers.map((c) => `${c.actor} (token ${c.token}: ${c.n} call${c.n === 1 ? "" : "s"}, the last ${new Date(c.last).toISOString().slice(0, 10)})`).join("; ");
+                const d = was.deprecated;
+                if (!callers.length) { callersWarned++; callerItems.push(`${noun}: ${breaks.join("; ")}. Nobody called it over HTTP in the last 30 days.`); }
+                else if (d?.sunset && Date.parse(d.sunset) <= Date.now()) { callersWarned++; callerItems.push(`${noun}: ${breaks.join("; ")}. Its callers were told (deprecated since ${d.since}, its sunset ${d.sunset} has passed): ${who}.`); }
+                else {
+                    callersBroken++;
+                    callerItems.push(`${noun} would break its callers, ${who}: ${breaks.join("; ")}. ${d ? `It is deprecated, and its sunset is ${d.sunset}: change it after then, or` : "Give them notice first: mark it deprecated with a sunset (they are told on every call) and change it after the sunset, or"} publish the new shape under a new name, as its successor.`);
+                }
             }
         }
-        checks.push({ id: "callers", title: "Web services' callers", status: callersBroken ? "fail" : callersWarned ? "warn" : "info", summary: callersBroken ? `${callersBroken} web service(s) would break their callers` : callersWarned ? `${callersWarned} change(s) callers would notice` : "nothing a caller would notice", items: callerItems });
+        checks.push({ id: "callers", title: "Web services' callers", status: callersBroken ? "fail" : callersWarned ? "warn" : "info", summary: callersBroken ? `${callersBroken} design(s) published over HTTP would break their callers` : callersWarned ? `${callersWarned} change(s) callers would notice` : "nothing a caller would notice", items: callerItems });
 
         // 3. Test cases: every new or changed script has some, and they pass.
         const cases = [];
@@ -253,11 +290,19 @@ export function createFitness({ store, design, integration, records, sandboxes =
         // What it does, for this: the input flow it names (§32.13) says how it is filled from the keyboard,
         // not what it does, so naming one asks for no new evidence.
         const doing = (b) => { const { inputFlow, ...rest } = b ?? {}; return canonical(rest); };
+        // A transaction only routes run (§32.15: their every-step transaction; its callers name routes alone) is
+        // proven by those routes' scenarios, which make them run it: run here even where the route is unchanged.
+        const flowsNow = { ...Object.fromEntries(Object.entries(w.live.flows ?? {}).map(([n, f]) => [n, f.body])), ...(content.flows ?? {}) };
+        const provenBy = new Set();
         for (const [name, body] of Object.entries(content.transactions ?? {})) {
             const before = w.live.transactions?.[name]?.body;
             if (before && doing(before) === doing(body)) continue;
             const list = Array.isArray(body?.scenarios) ? body.scenarios : [];
-            if (!list.length) noScenario.push(`${name}: a new or changed transaction carries a scenario: open the sandbox, run it on real records (or records you give), and save the run.`);
+            const c = body?.callers ?? {};
+            const routes = !(c.users ?? []).length && !(c.groups ?? []).length && !(c.services ?? []).length
+                ? (c.flows ?? []).filter((f) => Object.values(flowsNow[f]?.everySequence ?? {}).some((x) => x?.run === name) && (flowsNow[f]?.scenarios ?? []).length) : [];
+            if (!list.length && routes.length) { for (const f of routes) provenBy.add(f); continue; }
+            if (!list.length) noScenario.push(`${name}: a new or changed transaction carries a scenario: open the sandbox, run it on real records (or records you give), and save the run.${(c.flows ?? []).length ? " Only routes run it: a scenario of a route that runs it at every step proves it too." : ""}`);
             for (const scenario of list) toRun.push({ transaction: name, scenario });
         }
         // And every new or changed flow template that sets off on its own (§32.8): walked through, its nodes expected.
@@ -268,6 +313,7 @@ export function createFitness({ store, design, integration, records, sandboxes =
             if (!list.length) noScenario.push(`${name}: a new or changed flow template carries a scenario: open the sandbox, walk a record through it (a lot along the route, a reading that sets the plan off), and save the run.`);
             for (const scenario of list) toRun.push({ flow: name, scenario });
         }
+        for (const name of provenBy) if (!toRun.some((r) => r.flow === name)) for (const scenario of flowsNow[name]?.scenarios ?? []) toRun.push({ flow: name, scenario });
         const runs = sandboxes ? await sandboxes.runScenarios(row, user, toRun) : toRun.map(({ transaction, flow, scenario }) => ({ ...(flow ? { flow } : { transaction }), name: scenario?.name ?? "(unnamed)", passed: false, detail: "no sandbox can be made here" }));
         const failedRuns = runs.filter((r) => !r.passed);
         checks.push({
@@ -296,6 +342,45 @@ export function createFitness({ store, design, integration, records, sandboxes =
             summary: !affected.size ? "no object's rules or definition change" : faultItems.length ? `${faultItems.length} script failure(s) on real records` : replayItems.length ? `${replayItems.length} finding(s) in ${replayed} record(s) replayed` : `${replayed} record(s) replayed, all still savable`,
             items: [...faultItems, ...replayItems],
         });
+
+        // 4b. Named queries (§23.1): each of its tests run as the submitter, over the views as they are now;
+        // and the columns the lists drawn from it name (a plan's input screen, §32.6) among those it gives.
+        const queryItems = [];
+        const queryWaits = [];
+        let queryRuns = 0;
+        // Objects this change makes, not live yet: a query reading one cannot run until it is (its view is made
+        // as the change executes), so its tests wait for then, said so, rather than fail.
+        const making = Object.keys(content.definitions ?? {}).filter((o) => content.definitions[o] && !w.live.definitions[o]);
+        const drafted = Object.entries(content.queries ?? {}).filter(([, b]) => b);
+        if (drafted.length && queries) {
+            const flows = { ...Object.fromEntries([...(await store.flows()).entries()].map(([k, v]) => [k, v.body])), ...(content.flows ?? {}) };
+            const wants = {};
+            for (const [fname, fb] of Object.entries(flows)) {
+                for (const [nid, n] of Object.entries(fb?.nodes ?? {})) for (const fld of Array.isArray(n?.fields) ? n.fields : []) {
+                    if (fld?.type === "query" && typeof fld.query === "string") (wants[fld.query] ??= []).push({ where: `${fb.label ?? fname} · ${n.label ?? nid} · ${fld.label ?? fld.name}`, columns: [fld.value, ...(Array.isArray(fld.display) ? fld.display : [])].filter(Boolean) });
+                }
+            }
+            for (const [name, body] of drafted) {
+                const reads = making.filter((o) => namesIn(body.sql ?? "").has(o));
+                if (reads.length) { queryWaits.push(`${body.label ?? name}: it reads ${reads.join(", ")}, which this change makes; its tests run once that is live (the fitness test of a later change, or Try in the query page).`); continue; }
+                const tests = Array.isArray(body.tests) && body.tests.length ? body.tests : [{ name: "with no values", params: {} }];
+                let columns = null;
+                for (const t of tests) {
+                    queryRuns++;
+                    try {
+                        const ran = await queries.runNamed(user, body, t.params ?? {}, { channel: "test" });
+                        columns ??= ran.columns;
+                    } catch (error) {
+                        queryItems.push(`${body.label ?? name} · ${t.name}: ${error.message}`);
+                    }
+                }
+                for (const w2 of columns ? wants[name] ?? [] : []) {
+                    const missing = w2.columns.filter((c) => !columns.includes(c));
+                    if (missing.length) queryItems.push(`${w2.where}: ${body.label ?? name} gives no column ${missing.join(", ")} (it gives ${columns.join(", ")}).`);
+                }
+            }
+        }
+        if (drafted.length) checks.push({ id: "queries", title: "Named queries run", status: queryItems.length ? "fail" : queryWaits.length ? "warn" : "pass", summary: queryItems.length ? `${queryItems.length} finding(s)` : `${queryRuns} test run(s), as you${queryWaits.length ? `; ${queryWaits.length} wait for objects this change makes` : ""}`, items: [...queryItems, ...queryWaits] });
 
         // 5. Access, per role and state.
         const accessItems = [];

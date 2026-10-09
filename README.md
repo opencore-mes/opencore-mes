@@ -7,8 +7,9 @@ traced, machines report what they do, and auditors follow every change.
 Your engineers design the objects, states, roles, rules, screens, transactions, services and flows in a
 browser designer, with an AI that drafts what they describe. Every change goes through **design →
 review → approval → execution** before it reaches the plant, and every write goes through the same
-policies, rules and hash-chained audit trail, whatever path it takes. Lots, machines, OEE, quality and SPC
-are not modules: they are designs, and the platform knows none of them by name.
+policies, rules and hash-chained audit trail, whatever path it takes. Every record is sealed: a change made
+straight in the database is found, and closed only with a signed non-conformance report. Lots, machines,
+OEE, quality and SPC are not modules: they are designs, and the platform knows none of them by name.
 
 This is the **community edition**: the whole platform, open source under the Apache License 2.0. It is a
 proof of concept on its way to a first release.
@@ -19,6 +20,22 @@ proof of concept on its way to a first release.
 ## Run it
 
 Node 24 or later and PostgreSQL; plain JavaScript ES modules, no build step.
+
+From npm, with a plant folder of its own for its settings, suites and event log:
+
+```bash
+npm install -g @opencore-mes/server
+opencore-mes init my-plant && cd my-plant
+opencore-mes db reset --yes   # creates the database named in .env and loads the seed (sample people, to try it)
+opencore-mes start            # http://127.0.0.1:9090
+```
+
+For a plant's own installation (a Linux server with HTTPS, backups and a hardened host, or a plant folder),
+follow the installation procedure: [docs/installation/installation-procedure.html](docs/installation/installation-procedure.html)
+([PDF](docs/installation/installation-procedure.pdf)). It starts from an empty database
+(`opencore-mes db reset --yes --empty`) and the first administrator IT names (`opencore-mes admin`).
+
+From a checkout, to work on it:
 
 ```bash
 npm ci
@@ -37,8 +54,8 @@ a PDF.
 | Path | What |
 | --- | --- |
 | `app/mes/` | The application: `server/` (the services), `client/` (browser modules, also rendered on the server), `db/` (schema, seed, migrations), `test/` |
-| `src/` | Juris, the real-time web framework it runs on; its contract is `src/README.md` |
-| `docs/contracts/` | The published contracts that adapters, extensions and outside systems build on (an equipment adapter, the HTTP APIs), each with a specification, a schema and a conformance kit |
+| `@opencore-mes/juris-kit` (npm) | Juris, the real-time web framework it runs on, a dependency in `package.json`; developed in its own repository, [opencore-mes/juris-kit](https://github.com/opencore-mes/juris-kit), whose `REFERENCE.md` is its contract |
+| `docs/contracts/` | The published contracts that adapters, extensions and outside systems build on (an equipment adapter, the HTTP APIs), each with a specification, a schema and a conformance kit (on npm as `@opencore-mes/equipment-adapter` and `@opencore-mes/http-apis`) |
 | `docs/developers/` | The developer's guide |
 | `USERGUIDES.md`, `TRAINING.md` | The user guide for designers, and a hands-on course |
 | `COMPLIANCE.md` | SOC 2 and ISO 27001 readiness: each control area, its evidence in the code, the gaps |

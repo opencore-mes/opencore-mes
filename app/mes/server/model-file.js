@@ -22,7 +22,7 @@
 // What is live there and not in the file is left alone. History (versions, signatures, the audit
 // trail) is not carried: the change's first audit entry says where the file came from, and its hash.
 import { createHash } from "node:crypto";
-import { fail } from "../../../src/errors.js";
+import { fail } from "@opencore-mes/juris-kit/errors.js";
 import { mask } from "./policy.js";
 import { recordWhere } from "./record-where.js";
 import { sessionIdOf } from "./auth.js";
@@ -40,7 +40,7 @@ const IDENT = /^[a-z][a-z0-9_]{0,47}$/;
 const isPlain = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 // (`elements`: design elements of the suites' own kinds, §30.11, carried untouched whether or not the
 // suite is installed on either side.)
-const DESIGN_KINDS = ["definitions", "connections", "services", "transactions", "screens", "flows", "layouts", "elements"];
+const DESIGN_KINDS = ["definitions", "connections", "services", "transactions", "screens", "flows", "layouts", "queries", "elements"];
 
 // What is wrong with a model file's shape, in words. → [message]
 export function modelFileProblems(file) {
@@ -99,7 +99,8 @@ export function createModelFile({ store, design, transfer, records, secrets = ()
             const data = {};
             for (const [f, field] of Object.entries(v.def.body.fields ?? {})) {
                 const value = row.data?.[f];
-                if (value === undefined || v.seen[f] === undefined || field.type === "image") continue;
+                // Never a sensitive field's value (§6.10): a model file is a design, carried to other plants.
+                if (value === undefined || v.seen[f] === undefined || field.type === "image" || field.sensitive === true) continue;
                 if (field.type !== "ref") { data[f] = value; continue; }
                 const named = [];
                 for (const id of [].concat(value).filter((id) => typeof id === "string" && UUID.test(id))) {

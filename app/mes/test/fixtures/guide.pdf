@@ -1,0 +1,54 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 520 220] /Contents 6 0 R /Resources << /Font << /F1 9 0 R >> >> >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 520 220] /Contents 7 0 R /Resources << /Font << /F1 9 0 R >> >> >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 520 220] /Contents 8 0 R /Resources << /Font << /F1 9 0 R >> >> >>
+endobj
+6 0 obj
+<< /Length 131 >>
+stream
+BT /F1 20 Tf 30 160 Td (Step 1: Remove the cover) Tj 0 -40 Td /F1 14 Tf (Loosen the four screws, lift the cover straight up.) Tj ET
+endstream
+endobj
+7 0 obj
+<< /Length 125 >>
+stream
+BT /F1 20 Tf 30 160 Td (Step 2: Clean the seal) Tj 0 -40 Td /F1 14 Tf (Wipe the groove with a lint-free cloth and IPA.) Tj ET
+endstream
+endobj
+8 0 obj
+<< /Length 112 >>
+stream
+BT /F1 20 Tf 30 160 Td (Step 3: Torque the cover) Tj 0 -40 Td /F1 14 Tf (12 Nm, crosswise, in two passes.) Tj ET
+endstream
+endobj
+9 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 10
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000127 00000 n 
+0000000253 00000 n 
+0000000379 00000 n 
+0000000505 00000 n 
+0000000687 00000 n 
+0000000863 00000 n 
+0000001026 00000 n 
+trailer
+<< /Size 10 /Root 1 0 R >>
+startxref
+1096
+%%EOF

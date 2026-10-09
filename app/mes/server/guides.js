@@ -4,7 +4,7 @@
 // never as HTML; the guides of a plant's own forms are made in the browser from their designs.
 import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { fail } from "../../../src/errors.js";
+import { fail } from "@opencore-mes/juris-kit/errors.js";
 
 const DIR = fileURLToPath(new URL("../guides/", import.meta.url));
 const KEY = /^[a-z][a-z0-9-]{0,40}$/;

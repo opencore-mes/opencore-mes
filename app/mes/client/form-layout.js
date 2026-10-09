@@ -6,7 +6,9 @@
 //   section  { "label", "collapsible", "collapsed", "fields": [ "qty" | { entry } ] }
 //   entry    { "field": "qty", "width": up to 12 (of a 12-column row; at least the widget's minWidth),
 //              "widget": see widgetsFor,
-//              "help": "…", "placeholder": "…", "rows": 2–20 (long text),
+//              "help": "…", "placeholder": "…", "rows": 2–20 (long text: its smallest height, in lines),
+//              "maxRows": rows–40 (its largest: it grows with what is typed, then scrolls),
+//              "minChars": 1–6 (a reference searched as typed: letters before it searches; 2 if not said),
 //              "show": <expression>, "enable": <expression> }
 //
 // `show` and `enable` are presentation, in the policies' expression language, over the form's data
@@ -14,7 +16,7 @@
 // greyed out as the data changes. They never grant anything: what a person may read or write is the
 // policies' (§9), and a field a policy locks stays locked whatever `enable` says. A field's
 // `requiredWhen` (on the field, since it decides what is valid) is checked by the server too.
-import { referencesOf } from "./expr.js";
+import { referencesOf, shapeProblems } from "./expr.js";
 
 const isPlain = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const list = (v) => (Array.isArray(v) ? v : []);
@@ -24,7 +26,9 @@ export function widgetsFor(field) {
     switch (field?.type) {
         case "enum": return field.multiple ? ["checkboxes", "multiselect", "chips"] : ["select", "radio", "buttons"];
         case "boolean": return ["checkbox", "toggle", "yesno"];
-        case "ref": return ["select", "search", "scan"];
+        // Searched as typed first (§10.4): a plant's references run to thousands; a dropdown lists the most
+        // recent 200 only, for a short list a designer picks it for.
+        case "ref": return ["search", "select", "scan"];
         case "integer": case "decimal": return ["number", "stepper"];
         case "text": return ["textarea"];
         case "date": return ["date"];
@@ -93,6 +97,9 @@ export function layoutProblems(def) {
                 if (entry.width !== undefined && !(Number.isInteger(entry.width) && entry.width >= minWidth(widget) && entry.width <= 12)) add(where, `"${entry.field}": width is ${minWidth(widget)} to 12 (of a 12-column row) drawn as ${WIDGET_LABELS[widget]}.`);
                 if (entry.widget !== undefined && !widgetsFor(fields[entry.field]).includes(entry.widget)) add(where, `"${entry.field}": a ${fields[entry.field].type}${fields[entry.field].multiple ? " with several values" : ""} is drawn as ${widgetsFor(fields[entry.field]).join(", ")}, not "${entry.widget}".`);
                 if (entry.rows !== undefined && !(Number.isInteger(entry.rows) && entry.rows >= 2 && entry.rows <= 20)) add(where, `"${entry.field}": rows is 2 to 20.`);
+                if (entry.maxRows !== undefined && !(Number.isInteger(entry.maxRows) && entry.maxRows >= (entry.rows ?? 3) && entry.maxRows <= 40)) add(where, `"${entry.field}": its largest height is ${entry.rows ?? 3} to 40 lines (at least its smallest).`);
+                if ((entry.rows !== undefined || entry.maxRows !== undefined) && fields[entry.field].type !== "text") add(where, `"${entry.field}": only a long text has a height in lines.`);
+                if (entry.minChars !== undefined && !(Number.isInteger(entry.minChars) && entry.minChars >= 1 && entry.minChars <= 6 && widget === "search")) add(where, `"${entry.field}": letters before searching is 1 to 6, for a reference searched as typed.`);
                 for (const k of ["help", "placeholder"]) if (entry[k] !== undefined && (typeof entry[k] !== "string" || entry[k].length > 300)) add(where, `"${entry.field}": ${k} is text, at most 300 characters.`);
                 for (const k of ["show", "enable"]) if (entry[k] !== undefined) for (const m of expressionProblems(entry[k], fields)) add(where, `"${entry.field}" ${k} when: ${m}`);
             });
@@ -104,7 +111,7 @@ export function layoutProblems(def) {
 // What is wrong with a condition over the form: it reads the form's data, the record and the user.
 export function expressionProblems(expr, fields) {
     try {
-        const out = [];
+        const out = shapeProblems(expr);
         for (const ref of referencesOf(expr)) {
             if (!["data", "record", "user"].includes(ref.scope)) out.push(`it reads ${ref.scope}, but a form's condition reads data, record or user.`);
             else if (ref.scope !== "user" && !["state", "type", "id"].includes(ref.path) && !Object.hasOwn(fields, String(ref.path).split(".")[0])) out.push(`it reads ${ref.scope}.${ref.path}, which is not a field.`);
@@ -122,7 +129,7 @@ export function storeForm(normalized, def) {
         const out = { field: e.field };
         if (e.width !== undefined && e.width !== defaultWidth(fields[e.field])) out.width = e.width;
         if (e.widget && e.widget !== widgetsFor(fields[e.field])[0]) out.widget = e.widget;
-        for (const k of ["help", "placeholder", "rows", "show", "enable"]) if (e[k] !== undefined && e[k] !== "") out[k] = e[k];
+        for (const k of ["help", "placeholder", "rows", "maxRows", "minChars", "show", "enable"]) if (e[k] !== undefined && e[k] !== "") out[k] = e[k];
         return Object.keys(out).length === 1 ? e.field : out;
     };
     const section = (s) => ({ label: s.label, ...(s.collapsible ? { collapsible: true } : {}), ...(s.collapsible && s.collapsed ? { collapsed: true } : {}), fields: s.fields.map(entry) });

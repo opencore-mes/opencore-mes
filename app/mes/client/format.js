@@ -120,3 +120,7 @@ export const fmt = (api) => formatter(api.getState("formats", null));
 let current = formatter(null);
 export function usePlantFormats(f) { current = formatter(f); }
 export const plant = () => current;
+
+// A design's label as a noun in a sentence ("New PM record", "a metrology reading"): lower case, except a
+// word written with two or more capitals, which is an abbreviation people read as such (PM, WAT, AI).
+export const noun = (label) => String(label ?? "").split(/(\s+)/).map((w) => ((w.match(/[A-Z]/g) ?? []).length >= 2 ? w : w.toLowerCase())).join("");

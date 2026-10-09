@@ -18,11 +18,11 @@
 //
 // Scripts run in the script runner (script-runner.mjs, §12.4), a process of its own with no credentials,
 // as rule scripts do; running it as an OS user without network is the deployment's part, not done yet.
-import { CALL_KIND } from "../../../src/live-protocol.js";
-import { ServiceError, fail } from "../../../src/errors.js";
+import { CALL_KIND } from "@opencore-mes/juris-kit/live-protocol.js";
+import { ServiceError, fail } from "@opencore-mes/juris-kit/errors.js";
 import { isFault } from "../client/pipe.js";
 import { pathAllowed, IDENTIFIER, serviceIdentity } from "../client/definition.js";
-import { runServiceScript, runDryScript } from "./rules.js";
+import { runServiceScript, runDryScript, givenLookups } from "./rules.js";
 import { isSchedule, isSuiteSchedule, suiteSettings, suiteOf, scheduleProblems, runsOf, describeSchedule, MAX_CATCH_UP } from "../client/schedule.js";
 import { appendAudit } from "./audit.js";
 import { isIP } from "node:net";
@@ -30,6 +30,9 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { lookup } from "node:dns/promises";
 import { apiContract } from "./api-contract.js";
+import { createHash, randomUUID } from "node:crypto";
+import { WEB_KINDS, WEB_SCOPE } from "../client/web-publish.js";
+import { asParam, QUERY_LIMIT } from "../client/query-def.js";
 
 // A path a script may not ask a connection for: the allow list is matched on the path as written,
 // and the URL parser then reads "%2e%2e" as "..", drops tabs and newlines, and reads "\" as "/", so
@@ -164,7 +167,9 @@ export function createTriggers(store) {
 export async function resolveIdentity(store, body, { caller = null, event = null } = {}) {
     const mode = serviceIdentity(body);
     const onBehalfOf = caller?.id ?? onBehalfOfEvent(event);
-    if (mode === "service") return { id: `service:${body.name}`, name: `${body.label ?? body.name} (service)`, serviceRoles: isPlain(body.roles) ? body.roles : {}, onBehalfOf };
+    // Its own identity holds the certifications its design names (§9.9), none unless it says: what it reads
+    // may leave the plant (a connection), so a record reserved to one is not its to read by default.
+    if (mode === "service") return { id: `service:${body.name}`, name: `${body.label ?? body.name} (service)`, serviceRoles: isPlain(body.roles) ? body.roles : {}, certifications: Array.isArray(body.certifications) ? body.certifications : [], onBehalfOf };
     if (mode === "caller") {
         if (!caller) throw fault(`service ${body.name} runs as its caller, and a record event has none: give it its own service role, or a user`);
         return caller;
@@ -182,7 +187,9 @@ function checkInput(spec, input) {
     const values = {};
     const fields = {};
     for (const [name, field] of Object.entries(spec ?? {})) {
-        const value = input?.[name];
+        // Text as sent, trimmed (§11.1a; a multi-line text kept as written): only spaces is nothing.
+        const given = input?.[name];
+        const value = typeof given === "string" ? (field.type === "text" ? (given.trim() ? given : "") : given.trim()) : given;
         if (value === undefined || value === null || value === "") {
             if (field.required) fields[name] = `${field.label ?? name} is required.`;
             continue;
@@ -341,6 +348,10 @@ export function createIntegration({ store, records, recordTargets = ({ object, i
     // the change being tested (`drafts`), where it is, so a service and its transaction's callers naming
     // it are tested together.
     let transactionsApi = null;
+    // What a run over HTTP changed, for the pages showing it (the transaction's own touches).
+    const transactionTargets = (r) => transactionsApi?.touches?.["transactions.run"]?.({}, r) ?? [];
+    // The named queries (query.js), read over HTTP (§23.3).
+    let query = null;
     function transactionsFor(service, self, { touched = null, dry = false, done, drafts = {} }) {
         return {
             async run(name, input = {}, { key } = {}) {
@@ -419,8 +430,20 @@ export function createIntegration({ store, records, recordTargets = ({ object, i
 
     // Runs a published service: { output } or a thrown ServiceError (a refusal, with words for the
     // caller) or a fault (status 500; the words are logged). `event` is a trigger's; `via` says how
-    // it was set off, for the audit.
-    async function run(name, { user, input = {}, event = null, via, chain = [] }) {
+    // it was set off, for the audit. Each run counted by the service's name and how it came (call-stats.js,
+    // §38.1): the web (who, by their token), a page, a trigger, a schedule; its statements put down to it.
+    let calls = null;
+    async function run(name, opts) {
+        const { user, event = null, via, chain = [] } = opts;
+        // Over the web the request is counted where it arrives (the handler), once.
+        if (!calls || via?.http || !IDENTIFIER.test(String(name))) return runNow(name, opts);
+        const channel = via?.http ? "web" : via?.ui ? "page" : via?.schedule ? "schedule" : via?.trigger || event ? "trigger" : chain.length ? "service" : "internal";
+        return calls.measure({ kind: "service", name, channel }, () => {
+            if (user?.id) calls.note({ who: via?.http ? `${user.id} (token ${via.http})` : user.id });
+            return runNow(name, opts);
+        });
+    }
+    async function runNow(name, { user, input = {}, event = null, via, chain = [] }) {
         let service = (await store.services()).get(name);
         if (!service) {
             // Published since this instance last read them (by another instance, off the bus)?
@@ -495,8 +518,11 @@ export function createIntegration({ store, records, recordTargets = ({ object, i
     // Reads are real (the person's rights). Creates, updates and actions go through the object's
     // policy and rule pipe and are not saved. Requests are checked against the connection and
     // answered from `responses` ({ "POST /confirmations": { status, body } }), never sent. `user` is
-    // who it acts as, resolved by the caller of this (resolveIdentity): as in production.
-    async function dryRunService({ user, service: body, source, connections: drafts = {}, transactions: draftTransactions = {}, input = {}, event = null, responses = {} }) {
+    // who it acts as, resolved by the caller of this (resolveIdentity): as in production. `unborn`
+    // names the objects new in the change under test (fitness.js): not live yet, so none of their
+    // records exists; a read finds none, and a create is simulated, unchecked (their policy applies once
+    // live), so a pack's service is tested with the objects it brings (§5.9, §29.6).
+    async function dryRunService({ user, service: body, source, connections: drafts = {}, transactions: draftTransactions = {}, input = {}, event = null, responses = {}, unborn = [] }) {
         const started = Date.now();
         const service = { body, version: "draft" };
         const published = await store.connections();
@@ -541,20 +567,20 @@ export function createIntegration({ store, records, recordTargets = ({ object, i
             records: {
                 async get(object, id) {
                     may(object, "read");
-                    const row = made.get(id) ?? await call("records.get", { object, id });
+                    const row = made.get(id) ?? (unborn.includes(object) ? null : await call("records.get", { object, id }));
                     reads.push({ op: "get", object, id, found: Boolean(row) });
                     return clone(row);
                 },
                 async list(object, where = {}) {
                     may(object, "read");
-                    const { rows } = await call("records.list", { object, ...(isPlain(where) ? { where } : {}) });
+                    const { rows } = unborn.includes(object) ? { rows: [...made.values()].filter((r) => r.object === object) } : await call("records.list", { object, ...(isPlain(where) ? { where } : {}) });
                     const found = rows.filter((r) => Object.entries(isPlain(where) ? where : {}).every(([k, v]) => r[k] === v));
                     reads.push({ op: "list", object, where, count: found.length });
                     return clone(found);
                 },
                 async create(object, data) {
                     may(object, "create");
-                    const r = await call("records.create", { object, data });
+                    const r = unborn.includes(object) ? { ...clone(data), id: randomUUID(), object, unchecked: true } : await call("records.create", { object, data });
                     made.set(r.id, r);
                     writes.push({ op: "create", object, data: clone(data), result: clone(r) });
                     return clone(r);
@@ -833,12 +859,34 @@ export function createIntegration({ store, records, recordTargets = ({ object, i
     }
 
     // ---- the web services: POST /svc/v1/<name>, and their OpenAPI description ---------------------
-    async function describe(origin, user) {
+    // What answers at /svc/v1 under a name (docs/contracts/http-apis): a web service, a transaction or a named
+    // query, each only as its design publishes it (http.enabled); the three share one set of names.
+    async function published(name) {
+        let s = (await store.services()).get(name);
+        if (!s) { store.forgetIntegration(); s = (await store.services()).get(name); }
+        if (s?.body.http?.enabled) return { kind: "service", design: s };
+        const t = (await store.transactions()).get(name);
+        if (t?.body.http?.enabled) return { kind: "transaction", design: t };
+        const q = (await store.queries()).get(name);
+        if (q?.body.http?.enabled) return { kind: "query", design: q };
+        return null;
+    }
+    // A query's web callers are its http.callers: inside the platform it serves anyone it is put before.
+    const mayRead = (q, user) => mayCall({ body: { callers: q.body.http?.callers ?? {} } }, user);
+    const TYPES = { integer: "integer", decimal: "number", boolean: "boolean" };
+    const schemaOf = (f, k) => (f?.type === "rows"
+        ? { type: "array", description: f.label ?? k, items: { type: "object", properties: Object.fromEntries(Object.entries(f.fields ?? {}).map(([n, x]) => [n, schemaOf(x, n)])) } }
+        : { type: TYPES[f?.type] ?? "string", ...(f?.type === "enum" ? { enum: f.values } : {}), ...(f?.type === "date" ? { format: "date" } : {}),
+            description: f?.type === "ref" ? `${f.label ?? k}: a ${f.to} record's id, or its title` : f?.label ?? k });
+    const deprecationWords = (body) => { const d = body.deprecated; return d ? ` Deprecated since ${d.since}; it may change or go after ${d.sunset}${d.successor ? `: use ${d.successor}` : ""}.${d.note ? ` ${d.note}` : ""}` : ""; };
+    const KEY_HEADER = { name: "Idempotency-Key", in: "header", required: false, schema: { type: "string" }, description: "Send the same key to retry safely: the first answer is returned again." };
+    const ERRORS = { 400: { description: "Bad input: { error, fields }" }, 401: { description: "No or bad token" }, 403: { description: "Not among its callers" }, 422: { description: "Refused by a check, a rule or a policy: { error, fields }" }, 500: { description: "It failed" }, 503: { description: "Busy: nothing changed; ask again (Retry-After)" } };
+    async function describe(origin, user, scopes) {
         const paths = {};
-        for (const [name, s] of await store.services()) {
+        if (scopes.includes(WEB_SCOPE.service)) for (const [name, s] of await store.services()) {
             if (!s.body.http?.enabled || !(await mayCall(s, user))) continue;
             const properties = Object.fromEntries(Object.entries(s.body.input ?? {}).map(([k, f]) => [k, {
-                type: { integer: "integer", decimal: "number", boolean: "boolean" }[f.type] ?? "string",
+                type: TYPES[f.type] ?? "string",
                 ...(f.type === "enum" ? { enum: f.values } : {}), ...(f.type === "date" ? { format: "date" } : {}), ...(f.type === "ref" ? { format: "uuid" } : {}),
                 description: f.label ?? k,
             }]));
@@ -848,15 +896,42 @@ export function createIntegration({ store, records, recordTargets = ({ object, i
                 post: {
                     summary: s.body.label, description: `${s.body.description ?? ""}${d ? `${s.body.description ? " " : ""}Deprecated since ${d.since}; it may change or go after ${d.sunset}${d.successor ? `: use ${d.successor}` : ""}.${d.note ? ` ${d.note}` : ""}` : ""}`, security: [{ bearer: [] }],
                     ...(d ? { deprecated: true } : {}),
-                    parameters: [{ name: "Idempotency-Key", in: "header", required: false, schema: { type: "string" }, description: "Send the same key to retry safely: the first answer is returned again." }],
+                    parameters: [KEY_HEADER],
                     requestBody: { required: true, content: { "application/json": { schema: { type: "object", properties, required: Object.entries(s.body.input ?? {}).filter(([, f]) => f.required).map(([k]) => k) } } } },
                     responses: { 200: { description: "{ output }" }, 400: { description: "Bad input: { error, fields }" }, 401: { description: "No or bad token" }, 403: { description: "Not among its callers" }, 422: { description: "Refused by the service, a rule or a policy: { error, fields }" }, 500: { description: "The service failed" }, 502: { description: "A system it depends on could not be reached" } },
                 },
             };
         }
+        // Transactions published over HTTP that this person may run (§25.7): its inputs but those it fills in itself.
+        if (scopes.includes(WEB_SCOPE.transaction)) for (const [name, t] of await store.transactions()) {
+            if (!t.body.http?.enabled || !(await mayCall(t, user))) continue;
+            const given = Object.entries(t.body.inputs ?? {}).filter(([, f]) => f?.from === undefined);
+            const body = { required: true, content: { "application/json": { schema: { type: "object", properties: Object.fromEntries(given.map(([k, f]) => [k, schemaOf(f, k)])), required: given.filter(([, f]) => f.required).map(([k]) => k) } } } };
+            const d = Boolean(t.body.deprecated);
+            const about = `${t.body.description ?? ""}${deprecationWords(t.body)}`.trim();
+            paths[`/${name}`] = { post: { summary: t.body.label, description: `${about ? `${about} ` : ""}Runs the transaction, all or nothing, as the token's person.`, security: [{ bearer: [] }], ...(d ? { deprecated: true } : {}), parameters: [KEY_HEADER], requestBody: body,
+                responses: { 200: { description: "{ ok, run, transaction, changes, records }" }, 409: { description: "A record it reads changed meanwhile (code stale): run it again" }, ...ERRORS } } };
+            paths[`/${name}/preview`] = { post: { summary: `${t.body.label}: what it would change`, description: "What running it would change, record by record; nothing is written.", security: [{ bearer: [] }], ...(d ? { deprecated: true } : {}), requestBody: body,
+                responses: { 200: { description: "{ transaction, changes, skipped }" }, ...ERRORS } } };
+        }
+        // Named queries published over HTTP that this person may read (§23.3): their parameters, and the columns they give.
+        if (scopes.includes(WEB_SCOPE.query)) for (const [name, q] of await store.queries()) {
+            if (!q.body.http?.enabled || !(await mayRead(q, user))) continue;
+            const cols = query ? await query.describeNamed(q.body) : {};
+            const about = `${q.body.description ?? ""}${deprecationWords(q.body)}`.trim();
+            paths[`/${name}`] = { get: { summary: q.body.label, description: `${about ? `${about} ` : ""}A page of its rows, read as the token's person: at most ${q.body.limit ?? QUERY_LIMIT.default}.${cols.columns ? ` Its columns: ${cols.columns.join(", ")}.` : ""}`, security: [{ bearer: [] }], ...(q.body.deprecated ? { deprecated: true } : {}),
+                parameters: [
+                    ...Object.entries(q.body.params ?? {}).map(([k, p]) => ({ name: k, in: "query", required: Boolean(p.required), schema: { type: TYPES[p.type] ?? "string", ...(p.type === "date" ? { format: "date" } : {}) }, description: p.label ?? k })),
+                    { name: "offset", in: "query", required: false, schema: { type: "integer", minimum: 0 }, description: "Where the page starts: the answer's next." },
+                    { name: "limit", in: "query", required: false, schema: { type: "integer", minimum: 1 }, description: "At most this many rows (never more than the query's own limit)." },
+                    { name: "sort", in: "query", required: false, schema: { type: "string", ...(cols.columns ? { enum: cols.columns } : {}) }, description: "A column to sort by." },
+                    { name: "dir", in: "query", required: false, schema: { type: "string", enum: ["asc", "desc"] } },
+                ],
+                responses: { 200: { description: "{ columns, rows: [{ column: value }], next: the next page's offset, or null }" }, ...ERRORS } } };
+        }
         return {
             openapi: "3.1.0",
-            info: { title: "OpenCore MES services", version: contract.version, description: "The services published in this plant's designer that this token's user may call. They change as changes are approved and executed; a change that would break a caller comes with notice first (a deprecated service answers with Deprecation, Sunset and Link headers)." },
+            info: { title: "OpenCore MES services", version: contract.version, description: "What this plant published over HTTP that this token's user may call: its web services, transactions and named queries, as the token's scopes allow. They change as changes are approved and executed; a change that would break a caller comes with notice first (a deprecated one answers with Deprecation, Sunset and Link headers)." },
             servers: [{ url: `${origin}${PREFIX}` }],
             components: { securitySchemes: { bearer: { type: "http", scheme: "bearer" } } },
             paths,
@@ -865,6 +940,8 @@ export function createIntegration({ store, records, recordTargets = ({ object, i
     // Every answer says which version of the contract it keeps; a deprecated service's also when it was
     // deprecated, its sunset and its successor.
     const send = (res, status, body, headers = contract.headers(PREFIX, null)) => {
+        // Counted as the call answered (call-stats.js): a refusal here is the caller's to read.
+        calls?.outcome({ status, code: body?.code ?? null });
         res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers });
         res.end(JSON.stringify(body));
         return true;
@@ -880,54 +957,173 @@ export function createIntegration({ store, records, recordTargets = ({ object, i
         });
         req.on("error", () => resolve({ error: 400 }));
     });
+    // A refusal or a failure answered: only words written for the caller (a ServiceError) are; a driver's stay in
+    // the log. A transaction's or a query's: what was sent wrong is 400; who and what as they said (401 to 409,
+    // 503); any other refusal 422, understood and refused.
+    const INPUT_CODES = new Set(["transaction.input", "query.params", "service.input"]);
+    const answerError = (res, name, error, said, { http = false } = {}) => {
+        const status = Number.isInteger(error?.status) && error.status >= 400 && error.status < 600 ? error.status : 500;
+        if (error?.expose !== true && !(error instanceof ServiceError)) { log.error?.(`svc ${name}:`, error); return send(res, status >= 500 ? status : 400, { error: status >= 500 ? "The request failed." : "The request was refused." }, said); }
+        const s = http && status === 400 && !INPUT_CODES.has(error.code) ? 422 : status;
+        return send(res, s, { error: error.message, ...(error.fields ? { fields: error.fields } : {}), ...(error.code ? { code: error.code } : {}) }, s === 503 ? { ...said, "retry-after": "2" } : said);
+    };
+    // A call that changes something, once per Idempotency-Key and caller: the key is claimed before it runs (a
+    // retry sent while the first still runs would otherwise find nothing, and run it again); whoever holds the
+    // claim runs; a retry meanwhile is told to come back; afterwards it reads the first answer. A claim whose
+    // run never ended (the process went away) lapses. → { claimed, done?, key? } where done is the first answer.
+    async function claim(req, name, user) {
+        const key = req.headers["idempotency-key"];
+        const idem = typeof key === "string" && key.length >= 8 && key.length <= 100 ? `svc:${name}:${key}` : null;
+        if (!idem) return { idem: null };
+        await db.query("DELETE FROM mes.idempotency WHERE key = $1 AND user_id = $2 AND result ? '$pending' AND at < now() - interval '2 minutes'", [idem, user.id]);
+        const [mine] = await db.query(`INSERT INTO mes.idempotency (key, user_id, result) VALUES ($1, $2, '{"$pending": true}') ON CONFLICT DO NOTHING RETURNING key`, [idem, user.id]);
+        if (mine) return { idem, key };
+        const [done] = await db.query("SELECT result FROM mes.idempotency WHERE key = $1 AND user_id = $2", [idem, user.id]);
+        return { idem, key, busy: !done || Boolean(done.result?.$pending), done: done && !done.result?.$pending ? done.result : undefined };
+    }
+    const release = (idem, user) => (idem ? db.query("DELETE FROM mes.idempotency WHERE key = $1 AND user_id = $2 AND result ? '$pending'", [idem, user.id]).catch(() => {}) : null);
+    const keep = (idem, user, name, result) => (idem ? db.query("UPDATE mes.idempotency SET result = $2 WHERE key = $1 AND user_id = $3", [idem, JSON.stringify(result), user.id]).catch((error) => log.error?.(`svc ${name}: its answer was not kept for retries`, error)) : null);
+    const running = (res, said) => { res.setHeader("retry-after", "2"); return send(res, 409, { error: "The first request with this Idempotency-Key is still running: ask again in a moment.", code: "idempotency.running" }, said); };
+
+    // A transaction's inputs as an outside system sends them (§25.7): by name; a reference as a record's id or its
+    // title, read as a scanner's label is (records.lookup, as the token's person: the newest in use they may see);
+    // what the transaction fills in itself is never read from the caller.
+    async function webInput(body, value, self) {
+        const inputs = body.inputs ?? {};
+        const fields = {};
+        const out = {};
+        for (const [k, v] of Object.entries(value)) {
+            const spec = inputs[k];
+            if (!spec) { fields[k] = `${body.label} has no input ${k}.`; continue; }
+            if (spec.from !== undefined) continue;
+            if (spec.type === "ref" && typeof v === "string" && v.trim() && !UUID.test(v)) {
+                const found = await records["records.lookup"].call(self, { object: spec.to, key: v });
+                if (!found) { fields[k] = `No ${spec.label ?? k} "${v}" that you may see.`; continue; }
+                out[k] = found.id;
+            } else out[k] = v;
+        }
+        if (Object.keys(fields).length) throw new ServiceError("Some inputs need attention.", { status: 400, fields, code: "transaction.input" });
+        return out;
+    }
+    // A query's parameters as an outside system sends them, in the query string, typed as the query declares them;
+    // offset, limit, sort and dir page it. → { values, page } or a thrown ServiceError naming each one wrong.
+    const PAGE_KEYS = ["offset", "limit", "sort", "dir"];
+    function webParams(body, search) {
+        const params = body.params ?? {};
+        const fields = {};
+        const values = {};
+        for (const [k, v] of search) {
+            if (PAGE_KEYS.includes(k)) continue;
+            const spec = params[k];
+            if (!spec) { fields[k] = `${body.label} has no parameter ${k}.`; continue; }
+            const got = asParam(spec, v);
+            if (!got.ok) fields[k] = `${spec.label ?? k} ${got.message}.`;
+            else values[k] = got.value;
+        }
+        const max = Math.min(Math.max(1, Number(body.limit) || QUERY_LIMIT.default), QUERY_LIMIT.max);
+        const whole = (k, min) => { const v = search.get(k); if (v === null) return null; const n = Number(v); if (!Number.isInteger(n) || n < min) { fields[k] = `${k} is a whole number from ${min}.`; return null; } return n; };
+        const offset = whole("offset", 0) ?? 0;
+        const limit = Math.min(whole("limit", 1) ?? max, max);
+        const dir = search.get("dir") ?? "asc";
+        if (!["asc", "desc"].includes(dir)) fields.dir = "dir is asc or desc.";
+        if (Object.keys(fields).length) throw new ServiceError("Some parameters need attention.", { status: 400, fields, code: "query.params" });
+        return { values, page: { offset, limit, sort: search.get("sort") ? { field: search.get("sort"), dir } : null } };
+    }
+
     const handler = async (req, res, url) => {
         if (url.pathname !== PREFIX && !url.pathname.startsWith(`${PREFIX}/`)) return false;
         const auth = req.headers.authorization ?? "";
         const who = auth.startsWith("Bearer ") ? await tokens.resolve(auth.slice(7).trim()) : null;
         if (!who) return send(res, 401, { error: "A bearer token is required.", code: "token.missing" });
-        if (!who.scopes.includes("service:call")) return send(res, 403, { error: "This token lacks the scope service:call.", code: "scope.missing" });
+        const webScopes = Object.values(WEB_SCOPE);
+        if (!who.scopes.some((s) => webScopes.includes(s))) return send(res, 403, { error: `This token lacks the scope ${webScopes.join(", ")}: any of them.`, code: "scope.missing" });
         const user = { id: who.user_id, name: who.user_name };
         const path = url.pathname.slice(PREFIX.length);
-        if (req.method === "GET" && path === "/openapi.json") return send(res, 200, await describe(`http://${req.headers.host}`, user));
-        const name = path.slice(1);
-        if (req.method !== "POST" || !IDENTIFIER.test(name)) return send(res, 404, { error: `POST ${PREFIX}/<service>; see ${PREFIX}/openapi.json.` });
-        const service = (await store.services()).get(name);
-        if (!service?.body.http?.enabled) return send(res, 404, { error: "No such web service." });
-        const notice = noticeOf(service);
+        if (req.method === "GET" && path === "/openapi.json") return send(res, 200, await describe(`http://${req.headers.host}`, user, who.scopes));
+        const m = /^\/([^/]+)(?:\/(preview))?$/.exec(path);
+        const name = m?.[1] ?? "";
+        if (!m || !IDENTIFIER.test(name)) return send(res, 404, { error: `POST ${PREFIX}/<service or transaction>, GET ${PREFIX}/<query>; see ${PREFIX}/openapi.json.` });
+        const found = await published(name);
+        if (!found) return send(res, 404, { error: "No such web service, transaction or query published over HTTP." });
+        // Every request to a name published over HTTP counted, once, under that name (call-stats.js, §38.1): what it
+        // answered, whoever refused it (the scope, a title not found, the design's own checks), and who, by their token.
+        const as = `${user.id} (token ${who.name})`;
+        const meterKind = found.kind === "transaction" && m[2] ? "preview" : found.kind;
+        return calls ? calls.measure({ kind: meterKind, name, channel: "web", who: as }, () => answerFor(req, res, url, { who, user, as, name, m, ...found })) : answerFor(req, res, url, { who, user, as, name, m, ...found });
+    };
+    const answerFor = async (req, res, url, { who, user, as, name, m, kind, design }) => {
+        if (!who.scopes.includes(WEB_SCOPE[kind])) return send(res, 403, { error: `${design.body.label} is a ${WEB_KINDS[kind]}: this token lacks the scope ${WEB_SCOPE[kind]}.`, code: "scope.missing" });
+        const method = kind === "query" ? "GET" : "POST";
+        if (req.method !== method || (m[2] && kind !== "transaction")) return send(res, 405, { error: kind === "query" ? `${design.body.label} is a named query: read it with GET ${PREFIX}/${name}.` : `${design.body.label} is called with POST ${PREFIX}/${name}${kind === "transaction" ? `, or POST ${PREFIX}/${name}/preview for what it would change` : ""}.`, code: "method" }, { ...contract.headers(PREFIX, null), allow: method });
+        const notice = noticeOf(design);
         const said = contract.headers(PREFIX, null, notice);
-        if (notice) contract.used(PREFIX, `POST /${name}`, `${user.id} (token ${who.name})`, notice);
-        if (!(req.headers["content-type"] ?? "").startsWith("application/json")) return send(res, 415, { error: "Send JSON (application/json)." });
-        const body = await readJson(req);
-        if (body.error) return send(res, body.error, { error: body.error === 413 ? "The body is too large." : "The body is not JSON." });
-        // A retried request (same Idempotency-Key, same caller) gets the first answer, not a second run.
-        const key = req.headers["idempotency-key"];
-        const idem = typeof key === "string" && key.length >= 8 && key.length <= 100 ? `svc:${name}:${key}` : null;
-        // The key is claimed before the service runs (a retry sent while the first call still runs would
-        // otherwise find nothing, and run it again): whoever holds the claim runs; a retry meanwhile is
-        // told to come back; afterwards it reads the first answer. A claim whose run never ended (the
-        // process went away) lapses.
-        if (idem) {
-            await db.query("DELETE FROM mes.idempotency WHERE key = $1 AND user_id = $2 AND result ? '$pending' AND at < now() - interval '2 minutes'", [idem, user.id]);
-            const [claim] = await db.query(`INSERT INTO mes.idempotency (key, user_id, result) VALUES ($1, $2, '{"$pending": true}') ON CONFLICT DO NOTHING RETURNING key`, [idem, user.id]);
-            if (!claim) {
-                const [done] = await db.query("SELECT result FROM mes.idempotency WHERE key = $1 AND user_id = $2", [idem, user.id]);
-                if (done && !done.result?.$pending) return send(res, 200, done.result, said);
-                res.setHeader("retry-after", "2");
-                return send(res, 409, { error: "The first request with this Idempotency-Key is still running: ask again in a moment.", code: "idempotency.running" });
+        if (notice) contract.used(PREFIX, `${method} /${name}`, as, notice);
+
+        // ---- a named query: read, never written; nothing to retry safely, it is safe already ----
+        if (kind === "query") {
+            if (!query) return send(res, 501, { error: "Named queries are not available here." }, said);
+            if (!(await mayRead(design, user))) {
+                const c = design.body.http?.callers ?? {};
+                return send(res, 403, { error: `You may not read ${design.body.label} over HTTP: it is for ${[...(c.users ?? []), ...(c.groups ?? []).map((g) => `group ${g}`)].join(", ") || "nobody yet"}. Its stewards (${(design.body.stewards ?? []).join(", ")}) approve who may.`, code: "query.denied" }, said);
+            }
+            try {
+                const { values, page } = webParams(design.body, url.searchParams);
+                // (Counted as this request, above: not again as a read.)
+                const ran = await query.pageNamed(user, design.body, values, { ...page, channel: null });
+                const rows = ran.rows.map((r) => Object.fromEntries(ran.columns.map((c, i) => [c, r[i]])));
+                return send(res, 200, { columns: ran.columns, rows, next: ran.truncated ? page.offset + rows.length : null }, said);
+            } catch (error) {
+                return answerError(res, name, error, said, { http: true });
             }
         }
+
+        if (!(req.headers["content-type"] ?? "").startsWith("application/json")) return send(res, 415, { error: "Send JSON (application/json)." }, said);
+        const body = await readJson(req);
+        if (body.error) return send(res, body.error, { error: body.error === 413 ? "The body is too large." : "The body is not JSON." }, said);
+
+        // ---- a transaction: run, or previewed, as the token's person, through its own service ----
+        if (kind === "transaction") {
+            if (!transactionsApi) return send(res, 501, { error: "Transactions are not available here." }, said);
+            if (!isPlain(body.value)) return send(res, 400, { error: "Send the inputs as one JSON object: { \"input\": value }.", code: "transaction.input" }, said);
+            const self = { [CALL_KIND]: "internal", reason: `web ${name}`, user, origin: { http: who.name } };
+            if (m[2]) {
+                try {
+                    const p = await transactionsApi.services["transactions.preview"].call(self, { name, input: await webInput(design.body, body.value, self) });
+                    return send(res, 200, { transaction: name, changes: p.changes, skipped: p.skipped }, said);
+                } catch (error) {
+                    return answerError(res, name, error, said, { http: true });
+                }
+            }
+            const c = await claim(req, name, user);
+            if (c.done !== undefined) return send(res, 200, c.done, said);
+            if (c.busy) return running(res, said);
+            let result;
+            try {
+                // Its own key too (§11.1), so the run and its answer are kept in one database transaction.
+                const r = await transactionsApi.services["transactions.run"].call(self, { name, input: await webInput(design.body, body.value, self), ...(c.key ? { key: `web:${createHash("sha256").update(`${name}\n${c.key}`).digest("hex").slice(0, 40)}` } : {}) });
+                result = { ok: true, run: r.run, transaction: name, changes: r.changes, records: r.records };
+            } catch (error) {
+                await release(c.idem, user);
+                return answerError(res, name, error, said, { http: true });
+            }
+            if (result.records?.length) invalidate(transactionTargets(result)).catch((e) => log.error?.("svc invalidate", e));
+            await keep(c.idem, user, name, result);
+            return send(res, 200, result, said);
+        }
+
+        // ---- a web service: its script, as its design says ----
+        const c = await claim(req, name, user);
+        if (c.done !== undefined) return send(res, 200, c.done, said);
+        if (c.busy) return running(res, said);
         let result;
         try {
             result = await run(name, { user, input: body.value, via: { http: who.name } });
         } catch (error) {
-            if (idem) await db.query("DELETE FROM mes.idempotency WHERE key = $1 AND user_id = $2 AND result ? '$pending'", [idem, user.id]).catch(() => {});
-            // Only words written for the caller (a ServiceError) are answered: a driver's stay in the log.
-            const status = Number.isInteger(error?.status) && error.status >= 400 && error.status < 600 ? error.status : 500;
-            if (error?.expose !== true) { log.error?.(`svc ${name}:`, error); return send(res, status >= 500 ? status : 400, { error: status >= 500 ? "The request failed." : "The request was refused." }, said); }
-            return send(res, status, { error: error.message, ...(error.fields ? { fields: error.fields } : {}), ...(error.code ? { code: error.code } : {}) }, said);
+            await release(c.idem, user);
+            return answerError(res, name, error, said);
         }
         // The service ran: a failure to keep its answer is logged, never answered as a failure of the call.
-        if (idem) await db.query("UPDATE mes.idempotency SET result = $2 WHERE key = $1 AND user_id = $3", [idem, JSON.stringify(result), user.id]).catch((error) => log.error?.(`svc ${name}: its answer was not kept for retries`, error));
+        await keep(c.idem, user, name, result);
         return send(res, 200, result, said);
     };
 
@@ -1005,7 +1201,9 @@ export function createIntegration({ store, records, recordTargets = ({ object, i
             // A script a suite's part of a design names (§29.4): the given input in, its output out.
             if (kind === "plain") {
                 const started = Date.now();
-                const r = await runDryScript({ name, source, ctx: { ...given, now: new Date().toISOString() } });
+                // Its lookups (a node script's, §32.6) from the given `lookups`, as its test case will replay them.
+                const run = givenLookups(given);
+                const r = await runDryScript({ name, source, ctx: { ...run.ctx, now: given.now ?? new Date().toISOString(), lookup: run.lookup } });
                 return r.error ? { ok: false, error: r.error, ms: Date.now() - started } : { ok: true, output: r.result, ms: Date.now() - started };
             }
             fail("A dry run is of a service, a rule script, or a suite's script.");
@@ -1172,5 +1370,5 @@ export function createIntegration({ store, records, recordTargets = ({ object, i
         return service;
     }
     const touches = { "integration.call": [], "integration.activity": [], "integration.retry": [], "design.dryRun": [], "integration.monitor": [], "integration.schedule.pause": [], "integration.schedule.resume": [], "integration.schedule.runNow": [], "integration.scheduleRuns": [] };
-    return { run, drain, plan, heartbeat, dryRunService, dryRunRule, handler, services, touches, useTransactions(given) { transactionsApi = given; }, useSuiteCapabilities(given) { suiteCapabilities = { ...given }; }, useSuiteSchedules(given, check) { suiteSchedules = { ...given }; if (check) scheduleCheck = check; } };
+    return { run, drain, plan, heartbeat, dryRunService, dryRunRule, handler, services, touches, useTransactions(given) { transactionsApi = given; }, useQuery(given) { query = given; }, useCallStats(given) { calls = given; }, useSuiteCapabilities(given) { suiteCapabilities = { ...given }; }, useSuiteSchedules(given, check) { suiteSchedules = { ...given }; if (check) scheduleCheck = check; } };
 }

@@ -15,7 +15,7 @@ import pg from "pg";
 import http from "node:http";
 import net from "node:net";
 import { createHash, generateKeyPairSync, randomBytes, sign } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 import { issuePasswordLink, berRead, LOCK_AFTER } from "../server/sign-in.js";
 import { verifyAudit } from "../server/audit.js";

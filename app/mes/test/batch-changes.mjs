@@ -9,11 +9,13 @@
 //   4. A and B edited, C and D left as they were: one review, one approval from each department the
 //      edits touch (Production for A, Quality for B, once each; C and D, unchanged, add none), executed
 //      all at once: A and B at version 2, C and D not published again.
+//   5. A change on C left as it is live: refused at submit, saying C is live already as drafted, and to withdraw
+//      it or change it.
 //
 //   DATABASE_URL=postgres:///openmes_test node app/mes/test/batch-changes.mjs   (after a reset)
 import pg from "pg";
 import { randomBytes } from "node:crypto";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createApp } from "../app.mjs";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL ?? "postgres:///openmes_test" });
@@ -110,6 +112,13 @@ try {
     const [{ body: liveA }] = await db.query("SELECT body FROM mes.definitions WHERE object = $1 AND status = 'published'", [A]);
     step("executed together: A and B at version 2 with their notes; C and D, left as they were, not published again",
         state === "executed" && vA === 2 && vB === 2 && vC === 1 && vD === 1 && liveA.fields.note_a, { state, vA, vB, vC, vD });
+
+    // ---- 5. a change that is live already as drafted ----
+    const idle = await call("dana", "design.start", { object: C });
+    await call("dana", "design.save", { id: idle.id, seen: (await call("dana", "design.change", { id: idle.id, as: "dana" })).draft_rev, reason: "Left as it is." });
+    const nothing = await call("dana", "design.submit", { id: idle.id });
+    step("a change whose draft is what is live already: refused at submit, naming it, and saying to withdraw it or change it",
+        nothing.status >= 400 && new RegExp(`This change changes nothing: Batch C ${tag} is live already, exactly as drafted here.*Withdraw it`).test(nothing.error ?? ""), nothing);
 } catch (error) {
     step("the test ran to the end", false, { error: error.stack ?? error.message });
 } finally {

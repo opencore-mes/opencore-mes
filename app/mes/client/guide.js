@@ -4,6 +4,8 @@
 // elements it is about on the panel itself.
 //
 //   { GuideToggle: { guide: "flow-designer", scope: "[data-guide-scope='…']" } }   a guide of the release
+//   { GuideToggle: { guide: () => ["designer", "designer-object"], name: "change" } }  several, one after
+//                  the other (the designer's frame, then each kind of part a change holds), read when opened
 //   { GuideToggle: { title, make: () => ({ intro, sections }) } }                  one made from a design
 //
 // A guide of the release is HTML (app/mes/guides/<key>.html, the service guides.get), drawn here
@@ -52,7 +54,7 @@ const WIDGET_WORDS = {
     checkbox: () => "A checkbox: ticked means yes, empty means no.",
     toggle: () => "A switch: on means yes, off means no.",
     yesno: () => "Yes or No: pick one.",
-    search: (f) => `A search box: type part of the ${String(f.to ?? "record").replace(/_/g, " ")}'s name and pick it from the list.`,
+    search: (f, e = {}) => `A search box: type at least ${e.minChars ?? 2} letters of the ${String(f.to ?? "record").replace(/_/g, " ")}'s name, then pick it from the matches (the first 20 you may see; type more to narrow them).`,
     scan: (f) => `A scan field: scan the ${String(f.to ?? "record").replace(/_/g, " ")}'s barcode, or type its label and press Enter.`,
     number: (f) => `A number box: type the number${f.type === "integer" ? " (whole numbers)" : ""}.`,
     stepper: () => "A number with − and +: type it, or step it down and up.",
@@ -80,9 +82,11 @@ export function formGuide(def, { intro = "", lead = [] } = {}) {
             const widget = f.type === "rows" ? "table" : e.widget;
             const sample = { boolean: "input[type=checkbox]", enum: widget === "select" ? "select" : null, rows: "table", text: "textarea", date: "input" }[f.type] ?? null;
             if (!kinds.has(widget)) kinds.set(widget, { widget, field: f, name: e.field, sample });
-            const words = [(WIDGET_WORDS[widget] ?? WIDGET_WORDS.input)(f)];
+            const words = [(WIDGET_WORDS[widget] ?? WIDGET_WORDS.input)(f, e)];
             if (f.required) words.push("Required: marked *.");
             if (f.from) words.push(`Filled in for you from ${String(f.from).replace(".", "'s ").replace(/_/g, " ")}.`);
+            // Sensitive (§6.10): hidden until shown, and the showing is recorded.
+            if (f.sensitive) words.push("Sensitive: hidden until you press Show and say why. Each showing is recorded, with who and why; the value is not kept on the page after it.");
             if (e.help) words.push(e.help);
             return { label: f.label ?? e.field, words: words.join(" "), highlight: fieldTarget(e.field) };
         });
@@ -116,12 +120,14 @@ function marksOf(scope, selector, reveal = true) {
 
 export function registerGuides(juris) {
     // The "?" of a panel: opens its guide, or closes it.
-    juris.registerComponent("GuideToggle", ({ guide = null, scope = ".work", title = "", make = null }, api) => {
-        const key = guide ?? `made:${title}`;
+    juris.registerComponent("GuideToggle", ({ guide = null, scope = ".work", title = "", make = null, name = null }, api) => {
+        const key = typeof guide === "string" ? guide : name ? `guides:${name}` : `made:${title}`;
+        const filesOf = () => { const g = typeof guide === "function" ? guide() : guide; return (Array.isArray(g) ? g : g ? [g] : []).filter(Boolean); };
         const on = () => api.getState("ui.guide.key", null) === key;
         const toggle = () => {
             if (on()) { api.setValue("ui.guide", null); return; }
-            api.setValue("ui.guide", { key, file: guide, scope, title, made: make ? make() : null });
+            const files = filesOf();
+            api.setValue("ui.guide", { key, file: files[0] ?? null, files, scope, title, made: make ? make() : null });
         };
         return { button: { type: "button", className: "btn ghost guide-toggle", classList: { on }, title: "What is on this page, and how to use it", "aria-label": "Guide to this page", "aria-pressed": () => String(on()), onclick: toggle, children: [icon("help")] } };
     });
@@ -139,10 +145,12 @@ export function registerGuides(juris) {
             window.addEventListener("resize", clear);
             api.onCleanup(() => { stop(); document.removeEventListener("keydown", esc); window.removeEventListener("scroll", clear, true); window.removeEventListener("resize", clear); });
             // A guide of the release: fetched once, kept for the visit.
-            const stopLoad = api.bindState(() => api.getState("ui.guide.file", null), (file) => {
-                if (!file || api.peek(`guides.${file}`) !== undefined) return;
-                api.setValue(`guides.${file}`, { loading: true });
-                api.call("guides.get", { key: file }).then((g) => api.setValue(`guides.${file}`, { html: g.html }), (e) => api.setValue(`guides.${file}`, { error: e.message }));
+            const stopLoad = api.bindState(() => api.getState("ui.guide.files", null), (files) => {
+                for (const file of files ?? []) {
+                    if (!file || api.peek(`guides.${file}`) !== undefined) continue;
+                    api.setValue(`guides.${file}`, { loading: true });
+                    api.call("guides.get", { key: file }).then((g) => api.setValue(`guides.${file}`, { html: g.html }), (e) => api.setValue(`guides.${file}`, { error: e.message }));
+                }
             });
             api.onCleanup(stopLoad);
         }
@@ -168,12 +176,19 @@ export function registerGuides(juris) {
                     { dd: { key: `d${k}`, textContent: it.words } },
                 ]) } }] } })),
             ] } };
-            const loaded = api.getState(`guides.${g.file}`, null);
-            if (!loaded || loaded.loading) return { p: { className: "muted", textContent: "Loading the guide…" } };
-            if (loaded.error) return { p: { className: "error", textContent: loaded.error } };
-            const doc = new DOMParser().parseFromString(loaded.html, "text/html");
-            const article = doc.querySelector("article") ?? doc.body;
-            return { div: { className: "guide-body", children: [guideLayout(article, item)].filter(Boolean) } };
+            // Each guide in turn; after the first, each under its own title (a part of the change: its editor).
+            const files = g.files?.length ? g.files : [g.file];
+            const parts = [];
+            for (const [i, file] of files.entries()) {
+                const loaded = api.getState(`guides.${file}`, null);
+                if (!loaded || loaded.loading) { parts.push({ p: { key: `l${i}`, className: "muted", textContent: "Loading the guide…" } }); continue; }
+                if (loaded.error) { if (i === 0) parts.push({ p: { key: `e${i}`, className: "error", textContent: loaded.error } }); continue; }
+                const doc = new DOMParser().parseFromString(loaded.html, "text/html");
+                const article = doc.querySelector("article") ?? doc.body;
+                if (i > 0) parts.push({ h2: { key: `h${i}`, className: "guide-part", textContent: article.getAttribute?.("data-title") ?? file } });
+                parts.push(guideLayout(article, item));
+            }
+            return { div: { className: "guide-body", children: parts.filter(Boolean) } };
         };
         const titleOf = () => {
             const g = api.getState("ui.guide", null);

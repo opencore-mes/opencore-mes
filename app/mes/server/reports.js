@@ -27,12 +27,12 @@
 // A report may be drawn on a **report layout** (§34.5), a design element approved like a screen: which
 // blocks, in which order, how wide, and what each is for. The person picks one; the copilot is told
 // it and fills it, and a report that departs from it is handed back to the copilot, not drawn.
-import { fail } from "../../../src/errors.js";
+import { fail } from "@opencore-mes/juris-kit/errors.js";
 import { appendAudit } from "./audit.js";
 import { reportProblems, layoutDepartures, laidOut, widthOf, BLOCK_ROWS, WIDTHS } from "../client/report.js";
 import { KINDS, CHART_KINDS, CHART_KEYS, TONES, chartOf, rowsFor } from "../client/charts.js";
-import { scheduleProblems, nextRunOf, describeSchedule } from "../client/schedule.js";
-import { CALL_KIND } from "../../../src/live-protocol.js";
+import { scheduleProblems, nextRunOf, runsOf, describeSchedule } from "../client/schedule.js";
+import { CALL_KIND } from "@opencore-mes/juris-kit/live-protocol.js";
 import { reportTagsText, reportTagsProblem } from "../client/builtins.js";
 
 const MAX_STEPS = 16;
@@ -49,6 +49,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // run at most (each run asks the AI as a message does), how many the scheduler starts at a time, and
 // how many kept reports the copilot is handed at once, with how much of each.
 const PROMPTS = { perPerson: 50, scheduled: 10, minMinutes: 60, perTick: 2, staleMs: 15 * 60_000 };
+// A run by the clock made sure of (§34.7): one that fails for a reason that passes (the AI or the network
+// away, too many asks this hour) is tried again after 5, 15 and 30 minutes, never past its next time; one
+// that starts more than LATE_MS after it was due (the server was not running) says so in its report.
+export const RETRY = { tries: 3, afterMinutes: [5, 15, 30] };
+export const LATE_MS = 10 * 60_000;
 const WITH_REPORTS = { most: 12, words: 1500, rows: 8 };
 const isPlain = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
@@ -127,7 +132,7 @@ const WORDS_TOOLS = [{
     input_schema: obj({ words: { type: "array", items: obj({ block: { type: "integer", description: "The block's number, as given." }, text: { type: "string", description: "Its words." } }, ["block", "text"]) } }, ["words"]),
 }];
 
-export function createReports({ store, records, requireViewer, query, titles = null, blobs = null, attachments = null, provider, log = console, sendLimits = SENDS, plantTz = "UTC", now = () => Date.now() }) {
+export function createReports({ store, records, requireViewer, query, titles = null, blobs = null, attachments = null, provider, log = console, sendLimits = SENDS, plantTz = "UTC", now = () => Date.now(), instance = "local", events = null }) {
     const { db } = store;
     const sessions = new Map(); // user id → the conversation, while this process runs it
     const shownAs = (user, answer) => (titles ? titles.titled(user, answer) : answer);
@@ -365,7 +370,7 @@ export function createReports({ store, records, requireViewer, query, titles = n
     const promptOut = (p) => ({
         id: p.id, title: p.title, prompt: p.prompt, layout: p.layout ?? null, tags: p.tags ?? null, schedule: p.schedule ?? null, attachments: p.attachments ?? [],
         scheduleWords: p.schedule ? describeSchedule(triggerOf(p.schedule), plantTz) : null,
-        next_at: iso(p.next_at), running: Boolean(p.running), last_at: iso(p.last_at), last_report: p.last_report ?? null, last_error: p.last_error ?? null,
+        next_at: iso(p.next_at), running: Boolean(p.running), last_at: iso(p.last_at), last_report: p.last_report ?? null, last_error: p.last_error ?? null, last_note: p.last_note ?? null, tries: p.tries ?? 0,
         // Pinned to a report (§34.11): which, how many blocks, and whether its words are written fresh.
         fixed: p.fixed ? { from: p.fixed_from ?? null, title: p.fixed.title ?? null, blocks: (p.fixed.blocks ?? []).length, layout: p.fixed.layout ?? null } : null, words: p.words ?? "kept",
     });
@@ -400,12 +405,21 @@ export function createReports({ store, records, requireViewer, query, titles = n
     }
     // One generation: the prompt asked as its owner, beside their own conversation, and what the
     // copilot drew kept as a report of theirs, through the record services. `by`: "clock" or "now".
-    async function generate(p, by) {
-        const done = async (report, error) => {
+    // `note`: what the report says of its run besides (made late, runs not made while the server was down).
+    async function generate(p, by, note = null) {
+        const done = async (report, error, { transient = false } = {}) => {
+            // A run by the clock that failed for a reason that passes: tried again a little later, a few
+            // times, never past its next time; the error says when.
+            const tries = p.tries ?? 0;
+            const retryAt = by === "clock" && error && transient && tries < RETRY.tries ? new Date(now() + RETRY.afterMinutes[tries] * 60_000) : null;
+            const again = retryAt && (!p.next_at || retryAt < new Date(p.next_at)) ? retryAt : null;
+            const words = again ? `${error} It is tried again at ${stamp(again)}.` : error;
             await db.transaction(async (tx) => {
-                await tx.query("UPDATE mes.report_prompts SET running = false, last_at = now(), last_report = coalesce($2, last_report), last_error = $3, updated_at = now() WHERE id = $1", [p.id, report, error]);
-                await promptAudit(tx, p.owner, error ? "prompt:failed" : "prompt:generated", { prompt: p.id, title: p.title, by, ...(report ? { report } : {}), ...(error ? { error } : {}) });
+                await tx.query("UPDATE mes.report_prompts SET running = false, last_at = now(), last_report = coalesce($2, last_report), last_error = $3, last_note = $4, tries = $5, next_at = coalesce($6, next_at), updated_at = now() WHERE id = $1",
+                    [p.id, report, words, note, again ? tries + 1 : 0, again]);
+                await promptAudit(tx, p.owner, error ? "prompt:failed" : "prompt:generated", { prompt: p.id, title: p.title, by, ...(report ? { report } : {}), ...(error ? { error } : {}), ...(note ? { note } : {}), ...(again ? { retryAt: again.toISOString() } : {}) });
             }).catch((e) => log.error?.("report prompt: recording a generation", e));
+            if (error && by === "clock" && !again) events?.emit?.("report.failed", { severity: "warning", message: `${p.title}: its run by the clock failed: ${error}`, details: { prompt: p.id, owner: p.owner } });
         };
         try {
             // Asked as its owner, with their rights as they are now: someone who left, or may no longer
@@ -414,35 +428,36 @@ export function createReports({ store, records, requireViewer, query, titles = n
             if (!owner || owner.active === false) return await done(null, "Its owner is no longer active here.");
             if (!(await store.rolesFor(owner.id, "query")).length) return await done(null, "Its owner may no longer query (the analyst role).");
             if (asksAi(p) && !provider.available) return await done(null, provider.hint ?? "No AI is configured on this server.");
-            if (asksAi(p) && !withinSends(owner.id)) return await done(null, "The copilot has been asked a great deal in the past hour: this run was skipped.");
+            if (asksAi(p) && !withinSends(owner.id)) return await done(null, "The copilot has been asked a great deal in the past hour: this run was skipped.", { transient: true });
             const user = { id: owner.id, name: owner.name };
-            if (p.fixed) return await again(p, by, user, done);
+            if (p.fixed) return await again(p, by, user, done, note);
             const layout = await layoutOf(p.layout);
             if (p.layout && !layout) return await done(null, `Its report layout "${p.layout}" is not published any more: pick another.`);
             // Its attachments (§34.10), given with it each time: those still kept.
             const kept = attachments && (p.attachments ?? []).length ? await attachments.checked(p.attachments) : { list: [] };
             const session = { user: user.id, detached: true, messages: [{ role: "user", content: [{ type: "text", text: p.prompt }, ...(attachments?.blocks(kept.list ?? []) ?? [])] }], transcript: [], report: null, layout: layout?.body.name ?? null, running: true, step: 0, error: null };
             await run(session, user);
-            if (!session.report) return await done(null, session.error ?? "The copilot answered without drawing a report.");
+            // The AI not answering (session.error) passes; an answer without a report is the model's.
+            if (!session.report) return await done(null, session.error ?? "The copilot answered without drawing a report.", { transient: Boolean(session.error) });
             const at = new Date(now());
             const title = `${p.title} · ${stamp(at)}`.slice(0, 200);
             const self = { [CALL_KIND]: "internal", reason: `report prompt ${p.id}`, user, asPerson: true };
             const row = await records["records.create"].call(self, {
                 object: "report", key: `prompt-${p.id}-${at.getTime()}`,
-                data: { title, description: session.report.description ?? `Asked ${by === "clock" ? "by the clock" : "on request"}: ${p.title}.`, spec: JSON.stringify({ blocks: session.report.blocks, ...(session.report.layout ? { layout: session.report.layout } : {}) }), owner: user.id, shared: false, ...(p.tags ? { tags: p.tags } : {}) },
+                data: { title, description: `${session.report.description ?? `Asked ${by === "clock" ? "by the clock" : "on request"}: ${p.title}.`}${note ? ` ${note}` : ""}`.slice(0, 2000), spec: JSON.stringify({ blocks: session.report.blocks, ...(session.report.layout ? { layout: session.report.layout } : {}) }), owner: user.id, shared: false, ...(p.tags ? { tags: p.tags } : {}) },
             });
             if (!row?.id) return await done(null, "The report it drew waits for approval, or could not be kept.");
             await done(row.id, null);
         } catch (error) {
             if (error?.expose !== true) log.error?.("report prompt", error);
-            await done(null, error?.expose === true ? error.message : "The generation failed.");
+            await done(null, error?.expose === true ? error.message : "The generation failed.", { transient: error?.expose !== true });
         }
     }
     // A run of a prompt pinned to a report (§34.11): the report's queries run again as its owner, its
     // blocks, titles, charts and widths as they were kept; its words as written, or written fresh by the
     // copilot from what the blocks answer now. Kept as a new report of the owner's. A block whose query
     // fails now (a field gone) is kept in its place, saying why, and the run says which.
-    async function again(p, by, user, done) {
+    async function again(p, by, user, done, note = null) {
         let report = { ...(p.fixed.description ? { description: p.fixed.description } : {}), ...(p.fixed.layout ? { layout: p.fixed.layout } : {}), blocks: p.fixed.blocks };
         const blocks = await runBlocks(user, report);
         if (p.words === "fresh") report = await freshWords(user, p, report, blocks);
@@ -450,7 +465,7 @@ export function createReports({ store, records, requireViewer, query, titles = n
         const self = { [CALL_KIND]: "internal", reason: `report prompt ${p.id}`, user, asPerson: true };
         const row = await records["records.create"].call(self, {
             object: "report", key: `prompt-${p.id}-${at.getTime()}`,
-            data: { title: `${p.title} · ${stamp(at)}`.slice(0, 200), description: report.description ?? `Its queries run again ${by === "clock" ? "by the clock" : "on request"}: ${p.title}.`, spec: JSON.stringify({ blocks: report.blocks, ...(report.layout ? { layout: report.layout } : {}) }), owner: user.id, shared: false, ...(p.tags ? { tags: p.tags } : {}) },
+            data: { title: `${p.title} · ${stamp(at)}`.slice(0, 200), description: `${report.description ?? `Its queries run again ${by === "clock" ? "by the clock" : "on request"}: ${p.title}.`}${note ? ` ${note}` : ""}`.slice(0, 2000), spec: JSON.stringify({ blocks: report.blocks, ...(report.layout ? { layout: report.layout } : {}) }), owner: user.id, shared: false, ...(p.tags ? { tags: p.tags } : {}) },
         });
         if (!row?.id) return done(null, "The report waits for approval, or could not be kept.");
         const failed = blocks.map((b, i) => (b.error ? `block ${i + 1}${b.title ? ` (${b.title})` : ""}: ${b.error}` : null)).filter(Boolean);
@@ -489,16 +504,40 @@ ${clip(digest)}` }] }];
     }
 
     // The clock: prompts whose time has come, a few at a time, each claimed by one instance (its next
-    // run is set as it is claimed, so a run that fails is not tried again until then). One left
-    // running by a process that stopped is freed after a while.
+    // run is set as it is claimed, the time it was due kept). A run left unfinished (by this instance before
+    // it started again: it stopped mid-run; by any, after a while) is made again when it was the clock's,
+    // a few times at most. A run made late says when it was due, and how many runs after it were not made
+    // while the server was down (one run for them all: the latest time's).
+    const booted = db.query("SELECT now() AS at").then((r) => r[0]?.at ?? null, () => null);
     async function tick() {
-        await db.query("UPDATE mes.report_prompts SET running = false, last_error = 'The server stopped while it was being generated.' WHERE running AND started_at < now() - make_interval(secs => $1)", [PROMPTS.staleMs / 1000]);
+        const since = await booted;
+        const left = await db.query(
+            `UPDATE mes.report_prompts SET running = false,
+                    next_at = CASE WHEN due_at IS NOT NULL AND tries < $3 THEN now() ELSE next_at END,
+                    last_error = CASE WHEN due_at IS NOT NULL AND tries < $3 THEN 'The server stopped while it was being generated: it is made again.' ELSE 'The server stopped while it was being generated.' END,
+                    tries = CASE WHEN due_at IS NOT NULL AND tries < $3 THEN tries + 1 ELSE 0 END
+             WHERE running AND ((run_by = $1 AND $2::timestamptz IS NOT NULL AND started_at < $2::timestamptz) OR started_at < now() - make_interval(secs => $4))
+             RETURNING id, title, owner, due_at`,
+            [instance, since, RETRY.tries, PROMPTS.staleMs / 1000]);
+        for (const p of left) events?.emit?.("report.interrupted", { severity: "warning", message: `${p.title}: its run stopped with the server${p.due_at ? "; it is made again" : ""}.`, details: { prompt: p.id, owner: p.owner } });
         for (let i = 0; i < PROMPTS.perTick; i++) {
             const [due] = await db.query("SELECT id, schedule FROM mes.report_prompts WHERE next_at <= to_timestamp($1 / 1000.0) AND NOT running ORDER BY next_at LIMIT 1", [now()]);
             if (!due) return;
-            const [p] = await db.query("UPDATE mes.report_prompts SET running = true, started_at = now(), next_at = $2 WHERE id = $1 AND NOT running AND next_at <= to_timestamp($3 / 1000.0) RETURNING *", [due.id, nextOf(due.schedule), now()]);
-            if (p) await generate(p, "clock");
+            const [p] = await db.query("UPDATE mes.report_prompts SET running = true, started_at = now(), due_at = CASE WHEN tries > 0 AND due_at IS NOT NULL THEN due_at ELSE next_at END, run_by = $4, next_at = $2 WHERE id = $1 AND NOT running AND next_at <= to_timestamp($3 / 1000.0) RETURNING *", [due.id, nextOf(due.schedule), now(), instance]);
+            if (!p) continue;
+            await generate(p, "clock", lateNote(p));
         }
+    }
+    // A run starting long after it was due (the server was not running, or busy): when it was due, and the
+    // runs after it that were not made (a retry is a run of its due time, not late of its own).
+    function lateNote(p) {
+        const due = p.due_at ? new Date(p.due_at).getTime() : null;
+        if (!due || now() - due <= LATE_MS) return null;
+        // Made again after a stop or a failure: the run of its due time, on a later try.
+        if ((p.tries ?? 0) > 0) return `Due at ${stamp(new Date(due))}, made at ${stamp(new Date(now()))}, on try ${p.tries + 1}.`;
+        const skipped = p.schedule ? runsOf({ schedule: p.schedule }, due, { untilMs: now(), limit: 500, tz: plantTz }).length : 0;
+        events?.emit?.("report.late", { severity: "warning", message: `${p.title}: made late (due at ${stamp(new Date(due))})${skipped ? `; ${skipped} later run(s) not made` : ""}.`, details: { prompt: p.id, owner: p.owner, skipped } });
+        return `Due at ${stamp(new Date(due))}, made at ${stamp(new Date(now()))}: the server was not running then${skipped ? `, and ${skipped} later run${skipped === 1 ? " was" : "s were"} not made` : ""}.`;
     }
 
     const services = {
@@ -574,7 +613,7 @@ ${clip(digest)}` }] }];
         async "prompts.run"({ id } = {}) {
             const user = await analyst(this);
             if (asksAi(await ownPrompt(user, id)) && !provider.available) fail(provider.hint ?? "No AI is configured.", { status: 503, code: "ai.unconfigured" });
-            const [p] = await db.query("UPDATE mes.report_prompts SET running = true, started_at = now() WHERE id = $1 AND owner = $2 AND NOT running RETURNING *", [id, user.id]);
+            const [p] = await db.query("UPDATE mes.report_prompts SET running = true, started_at = now(), due_at = NULL, run_by = $3 WHERE id = $1 AND owner = $2 AND NOT running RETURNING *", [id, user.id, instance]);
             if (!p) fail("It is being generated already.", { status: 409 });
             generate(p, "now"); // not awaited
             return promptOut(p);

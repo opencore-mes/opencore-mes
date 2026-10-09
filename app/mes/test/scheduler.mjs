@@ -18,7 +18,7 @@ import { randomBytes } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { createStore } from "../server/store.js";
 import { createServices } from "../server/services.js";
 import { createIntegration, createTriggers } from "../server/integration.js";
@@ -56,7 +56,7 @@ const body = (name, extra = {}) => ({
     runAs: "erp", roles: {}, uses: { connections: [], objects: {} }, stewards: ["production"], ...extra,
 });
 
-const events = createEventLog({ dir: mkdtempSync(path.join(tmpdir(), "openmes-sched-")), instance: `sched-${tag}` });
+const events = createEventLog({ dir: mkdtempSync(path.join(tmpdir(), "opencore-mes-sched-")), instance: `sched-${tag}` });
 const store = createStore(db);
 const records = createServices({ store, triggers: createTriggers(store) });
 const tokens = createTokens(db);

@@ -93,3 +93,16 @@ test("nothing a query answers is read as markup; a sankey that would loop is sai
     assert.match(loop.problem, /A sankey cannot loop: X → Y → Z → X/);
     assert.match(chartOption({ chart: "sankey", source: "a", target: "b", value: "n" }, { columns: ["a", "b", "n"], rows: [["X", "X", 1]] }, theme).problem, /flows to itself/);
 });
+
+test("a chart of several series with a target line: drawn once, on the first; the others carry no mark that would hide their bars", () => {
+    const spec = { chart: "bar", x: "m", y: ["oee", "availability", "quality"], marks: [{ value: 85, label: "world class", tone: "ok" }], bands: [{ from: 0, to: 60, tone: "danger" }] };
+    const { option } = chartOption(spec, { columns: ["m", "oee", "availability", "quality"], rows: [["A", 70, 85, 97], ["B", 78, 88, 98]] }, theme);
+    assert.equal(option.series.length, 3);
+    assert.equal(option.series[0].markLine.data[0].yAxis, 85);
+    assert.ok(option.series[0].markArea);
+    for (const s of option.series.slice(1)) {
+        assert.equal(s.markLine, undefined);
+        assert.equal(s.markArea, undefined);
+    }
+    assert.ok(!JSON.stringify(option).includes('"none":'), "no mark on an axis that is not one");
+});

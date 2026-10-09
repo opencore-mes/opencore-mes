@@ -1,0 +1,271 @@
+<!-- The service editor's guide (DESIGN.md §33, §15.2): a service in a change request, tab by tab.
+     Drawn through an allowlist: an element with data-highlight="<CSS selector>" outlines what the
+     selector finds in the change's window (integration-editor.js). -->
+<article data-title="The service editor">
+  <p>A <strong>service</strong> is a script the plant runs for you: called by an outside system as a web
+  service, set off by a record's event, or by the clock. It reaches only what it names, acts as the
+  identity you give it, and goes through review and approval like every other design. On a live design,
+  or a change you may not edit, every control here is read only.</p>
+
+  <h3>Its tabs</h3>
+  <dl>
+    <dt data-highlight=".editor-head .subtabs">The tabs</dt>
+    <dd>General opens first. Click a tab to see its settings; the open one is highlighted.</dd>
+    <dt data-highlight=".editor-head .tab-diff">A number on a tab</dt>
+    <dd>How many things on that tab differ from the live version. On Changes, the total.</dd>
+    <dt>Remove, and Undo</dt>
+    <dd>Every Remove asks first. What is removed leaves this change only; nothing live changes until the
+    change executes, and Undo (<kbd>⌘Z</kbd> or <kbd>Ctrl+Z</kbd>) brings it back.</dd>
+  </dl>
+
+  <h3>Copilot</h3>
+  <dl>
+    <dt data-highlight=".copilot-log">The conversation</dt>
+    <dd>Ask the AI to draft, check or explain the service. It works as you, saves into this draft, and never
+    submits. The conversation is kept with the change: it picks up here any time.</dd>
+    <dt data-highlight=".copilot-input textarea">Ask the copilot…</dt>
+    <dd>Type what you want. <kbd>⌘ Enter</kbd> or <kbd>Ctrl+Enter</kbd> sends; you can paste or drop a file
+    into the box.</dd>
+    <dt data-highlight=".copilot-input .att-btn">Attach</dt>
+    <dd>Adds a picture, a PDF, a CSV file or an Excel workbook (up to 5); × on a file takes it off.</dd>
+    <dt data-highlight=".copilot-buttons .btn.primary">Send</dt>
+    <dd>Saves your unsaved edits first, then sends. Greyed out while it works, or when no AI is set up.</dd>
+    <dt data-highlight=".copilot-buttons .btn.ghost">New conversation</dt>
+    <dd>Asks first, then deletes the conversation kept with this change. The draft stays as it is.</dd>
+  </dl>
+
+  <h3>Changes</h3>
+  <dl>
+    <dt data-highlight=".changes-view">The differences</dt>
+    <dd>What this change does to the service against the live version, grouped by tab: how many changed,
+    were added and removed. Reviewers and approvers see the same.</dd>
+    <dt data-highlight=".changes-head .mini">Open …</dt>
+    <dd>Jumps to the tab where that group is edited.</dd>
+    <dt data-highlight=".change-item summary">A difference</dt>
+    <dd>Marked new, changed or removed; click it to open or close it. Lines marked − are the live version's,
+    lines marked + the draft's.</dd>
+  </dl>
+
+  <h3>General</h3>
+  <dl>
+    <dt data-highlight=".ed-grid > .ed-field:nth-child(1)">Name</dt>
+    <dd>Fixed once created; its script is named after it (<code>name.js</code>).</dd>
+    <dt data-highlight=".ed-grid > .ed-field:nth-child(2)">Label</dt>
+    <dd>A text field: what people know it by.</dd>
+    <dt data-highlight=".ed-grid > .ed-field:nth-child(3)">Description</dt>
+    <dd>A text box: what it does, and for whom.</dd>
+    <dt data-highlight="[aria-label='Web service']">Web service</dt>
+    <dd>Tick it to let outside systems call it at <code>POST /svc/v1/&lt;name&gt;</code>, with an integration
+    user's token (scope <code>service:call</code>). Only the callers named on Identity get an answer.</dd>
+    <dt data-highlight="[aria-label='Deprecated']">Deprecated</dt>
+    <dd>Shown for a web service. Tick it to warn its callers on every call that it will change or go: give
+    them notice here first, change it after the sunset.</dd>
+    <dt data-highlight=".ed-span input[type=date]">Since, Sunset</dt>
+    <dd>Dates: when the notice began, and the date after which it may change or go.</dd>
+    <dt data-highlight="[placeholder='the web service to use instead']">Successor</dt>
+    <dd>A text field: the web service its callers should move to, if there is one.</dd>
+    <dt data-highlight=".ed-span textarea">Note for its callers</dt>
+    <dd>A text box: what they should do, in your words. It is sent with the notice.</dd>
+  </dl>
+
+  <h3>Input</h3>
+  <dl>
+    <dt data-highlight=".ed-table">The inputs</dt>
+    <dd>What a caller sends, one row each. Every input is checked against its type before the script runs;
+    a bad one is refused with a message for that input.</dd>
+    <dt data-highlight=".ed-table td:nth-child(2) input">Label</dt>
+    <dd>A text field: the input's name in words.</dd>
+    <dt data-highlight=".ed-table select">Type</dt>
+    <dd>A drop-down: string, text, integer, decimal, boolean, date, enum, ref or image.</dd>
+    <dt data-highlight=".ed-table input[type=checkbox]">Required</dt>
+    <dd>Tick it when a call without this input must be refused.</dd>
+    <dt data-highlight=".ed-table .pick">Values (enum)</dt>
+    <dd>For an enum only: the values allowed, as chips. Click into the box for suggestions, type and press
+    Enter (or pick Add "…") for a new one; × or Backspace in the empty box removes one.</dd>
+    <dt data-highlight=".ed-table .btn.ghost">Remove</dt>
+    <dd>Takes the input out, after asking.</dd>
+    <dt data-highlight=".add-row input">New input</dt>
+    <dd>Type its name (lower case letters, digits and _, starting with a letter), then press Add. Add stays
+    greyed out until the name is valid.</dd>
+  </dl>
+
+  <h3>Identity</h3>
+  <dl>
+    <dt data-highlight=".editor > div > label.ed-field select">Identity</dt>
+    <dd>A drop-down: who it acts as. <em>Its own service role</em> acts with exactly the roles below, whoever
+    sets it off; <em>its caller</em> acts with the caller's own rights (not possible with triggers, which
+    have no caller); <em>Run as</em> a person acts with their roles.</dd>
+    <dt data-highlight=".ed-table">Service role</dt>
+    <dd>Shown for its own service role: tick the roles it holds on each object. Each object's policies decide
+    what a role allows; that object's stewards approve the grant.</dd>
+    <dt data-highlight=".pick">Users</dt>
+    <dd>Who may call it, as chips: click into the box and type a name to find a person, press Enter or click
+    to add, × to remove. Nobody may call it until named.</dd>
+    <dt data-highlight=".editor > div > h4 + .checks">Groups</dt>
+    <dd>Tick each group whose members may call it.</dd>
+  </dl>
+
+  <h3>Triggers</h3>
+  <dl>
+    <dt data-highlight=".ed-table">On a record event</dt>
+    <dd>Each row sets it off after a record's change is committed (never for one rolled back), retried while
+    the other system is down. A service never sets itself off.</dd>
+    <dt data-highlight=".ed-table td:first-child select">Object</dt>
+    <dd>A drop-down: the kind of record. Changing it sets the event back to create.</dd>
+    <dt data-highlight=".ed-table td:nth-child(2) select">Event</dt>
+    <dd>A drop-down: create, update, archive, restore, or <code>transition:</code> one of the object's
+    actions.</dd>
+    <dt data-highlight=".ed-table .btn.ghost">Remove</dt>
+    <dd>Takes the trigger out, after asking.</dd>
+    <dt data-highlight=".editor > div > .btn">Add trigger</dt>
+    <dd>Adds a row, on the first object's create.</dd>
+    <dt data-highlight=".schedule-card">On a schedule</dt>
+    <dd>Each card sets it off by the clock, once per time due however many nodes there are, in the plant's
+    time zone unless the card names another. Pausing a live schedule is done from the integration monitor.</dd>
+    <dt data-highlight=".schedule-card legend">Its title</dt>
+    <dd>The schedule in words, kept up to date as you edit.</dd>
+    <dt data-highlight=".schedule-card > div:first-of-type > .ed-field:first-child">Runs</dt>
+    <dd>A drop-down: <em>every…</em>, <em>at times of day</em>, or a kind of schedule an installed suite adds.
+    Changing it starts the new way afresh.</dd>
+    <dt data-highlight=".schedule-card [aria-label='Every']">Every</dt>
+    <dd>A number and minutes or hours (1 to 720 minutes, 1 to 24 hours), counted from midnight.</dd>
+    <dt data-highlight=".schedule-card [aria-label='At']">At</dt>
+    <dd>Times of day as chips, typed HH:MM (6:00 is taken as 06:00): type one and press Enter; × or Backspace
+    removes one. A time that is not one is refused, in words.</dd>
+    <dt data-highlight=".schedule-card [aria-label='Only between']">Only between</dt>
+    <dd>Two times: runs only in that window, which may cross midnight. Leave both empty for all day.</dd>
+    <dt data-highlight=".schedule-card > .checks">Days</dt>
+    <dd>Untick the days it should not run. All ticked is every day.</dd>
+    <dt data-highlight=".schedule-card > div:first-of-type > .ed-field:not(:first-child)">A suite's settings</dt>
+    <dd>For a kind of schedule a suite adds: the settings it asks for, those marked (needed) required. Its
+    suite works the times out; while it is not installed, nothing is planned and the card says so.</dd>
+    <dt data-highlight=".schedule-card > div:last-of-type > .ed-field:nth-child(1)">Time zone</dt>
+    <dd>A text field, such as <code>Europe/Paris</code>. Empty: the plant's. Daylight saving is followed.</dd>
+    <dt data-highlight=".schedule-card > div:last-of-type > .ed-field:nth-child(2)">Missed runs</dt>
+    <dd>A drop-down: what to do with runs missed while every node or the database was down: run the latest
+    one, skip them, or run each (up to 100).</dd>
+    <dt data-highlight=".schedule-card > div:last-of-type > .ed-field:nth-child(3)">While a run is still going</dt>
+    <dd>A drop-down: skip the new run, or queue it.</dd>
+    <dt data-highlight=".schedule-card > p, .schedule-card > ul.error">Next runs</dt>
+    <dd>Its next runs, in its time zone (the next five for a clock schedule). In red instead: what is wrong
+    with the schedule.</dd>
+    <dt data-highlight=".schedule-card > .btn.ghost">Remove schedule</dt>
+    <dd>Takes the card out, after asking.</dd>
+    <dt data-highlight=".editor > div > .ed-row > .btn">Add schedule</dt>
+    <dd>Adds a card, every 15 minutes. <em>Add schedule: …</em> adds one of a kind an installed suite
+    adds, its settings empty.</dd>
+    <dt data-highlight="[placeholder='any node']">Run on nodes tagged</dt>
+    <dd>Empty: any node runs its triggers and schedules. A tag (such as <code>erp</code>) keeps them to the
+    nodes started with that tag, the ones that can reach the other system. Web calls run wherever they
+    arrive.</dd>
+  </dl>
+
+  <h3>Reaches</h3>
+  <dl>
+    <dt data-highlight=".editor > div > h4 + .checks">Connections</dt>
+    <dd>Tick each connection its script may send requests through. The connection's stewards approve it.</dd>
+    <dt data-highlight=".editor > div > div > .checks">Transactions</dt>
+    <dd>Tick each transaction its script may run (<code>ctx.transactions.run</code>), all or nothing, through
+    the transaction's own checks. One a person must sign is not offered.</dd>
+    <dt data-highlight=".editor > div > p + .checks">From the … suite</dt>
+    <dd>Shown when an installed suite offers scripts something: tick only what this one asks of it. One whose
+    suite is gone stays listed, so you can untick it.</dd>
+    <dt data-highlight=".ed-table">Objects</dt>
+    <dd>Tick what it may do to each object's records: read, create, update, action, archive (and restore).
+    Every write goes through the object's policies and rules; that object's stewards approve.</dd>
+  </dl>
+
+  <h3>Script</h3>
+  <dl>
+    <dt data-highlight=".editor > div > .code-editor">The script</dt>
+    <dd>One function named as the service: context in, context out. Throw to refuse (the caller reads your
+    words), or throw with <code>{ retry: true }</code> when the other system is down. When it says the
+    published script is not in this change, the live script stays as it is.</dd>
+    <dt data-highlight=".editor > div > .code-editor .ce-status">Its marks</dt>
+    <dd>A syntax error, a dry run's error, or what it may not call is marked on its line and said below;
+    click the message to go there. <kbd>Tab</kbd> indents; <kbd>Esc</kbd> then <kbd>Tab</kbd> leaves the
+    editor.</dd>
+    <dt data-highlight=".editor > div > p.notice, .editor > div > p.error">Compiles</dt>
+    <dd>Green when it compiles and its function has the service's name; otherwise the first problem, in red.</dd>
+  </dl>
+
+  <h4>Dry run</h4>
+  <dl>
+    <dt data-highlight=".dry-run">Dry run</dt>
+    <dd>Runs this draft on the server, as its identity, exactly as it will live, and changes nothing: writes
+    are checked and not saved, requests are checked and never sent. Click its title to fold it.</dd>
+    <dt data-highlight=".dry-run .code-editor">Dry run input</dt>
+    <dd>JSON: the <code>input</code> a caller would send (or the <code>event</code> of its first trigger),
+    and <code>responses</code>, the answer each request gets, keyed by method and path.</dd>
+    <dt data-highlight=".dry-buttons .btn.primary">Run</dt>
+    <dd>Runs it. An error in the script is reported first, by line.</dd>
+    <dt data-highlight=".dry-buttons .btn.ghost">Reset input</dt>
+    <dd>Puts the example input back.</dd>
+    <dt data-highlight=".dry-as">as</dt>
+    <dd>Shown when it acts as its caller: a drop-down to run it as one of the users named on Identity.</dd>
+    <dt data-highlight=".dry-result">The result</dt>
+    <dd>Ran, refused, asks to retry, or failed, as whom and how long. Below: its output, what it would write,
+    run and send, and what it read.</dd>
+    <dt data-highlight=".dry-save input">Test case name</dt>
+    <dd>Say what this run shows, such as <em>refuses an unknown work order</em>.</dd>
+    <dt data-highlight=".dry-save .btn">Save as test case</dt>
+    <dd>Keeps the input and what happened as a test case. Greyed out until it has a name.</dd>
+  </dl>
+
+  <h4>Test cases</h4>
+  <dl>
+    <dt data-highlight=".test-cases">Test cases</dt>
+    <dd>Run by the fitness test before the change can be submitted. A new or changed script needs at
+    least one.</dd>
+    <dt data-highlight=".case-list .case-mark">Its mark</dt>
+    <dd>A tick if it passed, a cross if it failed (the reason in red below), a circle if not run yet; faded
+    when run before your latest edits. Point at it for the detail.</dd>
+    <dt data-highlight=".case-list li">A case</dt>
+    <dd>Its name, who it runs as when not you, and whether it expects the service to run or to refuse.</dd>
+    <dt data-highlight=".case-list .linkish">remove</dt>
+    <dd>Takes the case out, after asking.</dd>
+    <dt data-highlight=".test-cases .pane-bar .btn">JSON, List</dt>
+    <dd>Shows the cases as JSON to edit their input or expectation by hand; List goes back.</dd>
+  </dl>
+
+  <h3>Try it</h3>
+  <dl>
+    <dt data-highlight=".editor > div > .code-editor">Input as JSON</dt>
+    <dd>What to send the live version. A service not live yet cannot be tried: the tab says so until its
+    change is executed.</dd>
+    <dt data-highlight=".editor > div > .btn.primary">Call it</dt>
+    <dd>Calls the live version as you, through its callers, its input checks and the policies and rules of
+    what it touches. It is real, and audited: your draft is not what runs.</dd>
+    <dt data-highlight=".try-answer">The answer</dt>
+    <dd>What a caller gets: the output in green, or the refusal in red.</dd>
+  </dl>
+
+  <h3>Activity</h3>
+  <dl>
+    <dt data-highlight=".editor .pane-bar .btn">Refresh</dt>
+    <dd>Fetches the latest calls and triggers again.</dd>
+    <dt data-highlight=".editor > div > div > h4:first-child + table.grid">Calls</dt>
+    <dd>Each run of the live version: when, as whom, its outcome (with the error), how it was set off (web,
+    schedule, trigger or the UI), what it sent or ran, and how long it took.</dd>
+    <dt data-highlight=".editor > div > div > h4 ~ h4 + table.grid">Triggers</dt>
+    <dd>The events and schedules waiting or done: their state, tries and last error.</dd>
+    <dt data-highlight=".editor table.grid .btn.ghost">Send again</dt>
+    <dd>Shown on one that is retrying, dead or refused: queues it again.</dd>
+  </dl>
+
+  <h3>Stewards</h3>
+  <dl>
+    <dt data-highlight=".editor > div > .checks">Departments</dt>
+    <dd>Tick each department that approves every change to it. A change to what it reaches is also approved
+    by the stewards of those objects, connections and transactions.</dd>
+  </dl>
+
+  <h3>JSON</h3>
+  <dl>
+    <dt data-highlight=".editor > div > .code-editor">The service as JSON</dt>
+    <dd>All of it as data, for integrators. Edit it here, then apply it.</dd>
+    <dt data-highlight=".editor > div > .code-editor + .btn">Apply JSON</dt>
+    <dd>Replaces the draft with it; every check runs as on any other edit. Its name must stay the same; what
+    is wrong is said in red beside the change.</dd>
+  </dl>
+</article>

@@ -10,13 +10,15 @@
 // Authentication is a bearer token (`Authorization: Bearer mes_…`), never a cookie, so no page on
 // another site can call it on a signed-in browser's behalf. Only the token's hash is stored.
 import { createHash, randomBytes } from "node:crypto";
-import { readBody } from "../../../src/server/http.js";
+import { readBody } from "@opencore-mes/juris-kit/server/http.js";
 import { designTools } from "./design-tools.js";
 import { appendAudit } from "./audit.js";
 import { apiContract } from "./api-contract.js";
 import { operationOf } from "../../../docs/contracts/http-apis/surface.mjs";
 
-export const SCOPES = ["design:read", "design:draft", "design:submit", "service:call"];
+// service:call, transaction:run and query:run: what an outside system may call at /svc/v1 (docs/contracts/http-apis):
+// its web services, its transactions, its named queries (read only), each as the design publishes it.
+export const SCOPES = ["design:read", "design:draft", "design:submit", "service:call", "transaction:run", "query:run"];
 const DEFAULT_SCOPES = ["design:read", "design:draft"];
 const PREFIX = "/ai/v1";
 const MAX_BODY = 512 * 1024;
@@ -83,23 +85,24 @@ export function openapi(origin) {
             "/contract": { get: op("The rules a design must follow: identifiers, field types, policies, expressions, rule scripts, lifecycle", "design:read") },
             "/contracts/{name}": { get: op("A published contract (docs/contracts): its specification, schema, changelog and conformance kit, e.g. equipment-adapter", "design:read", { parameters: [{ name: "name", in: "path", required: true, schema: { type: "string" } }] }) },
             "/catalog": { get: op("Every published object's definition, the departments, and the published scripts", "design:read") },
+            "/suites": { get: op("The installed suites (versions and a newer one, what each gives designs, its design pack against what is live, its set-up guide) and what every live design needs from suites, given or not and why", "design:read") },
             "/objects/{object}": { get: op("One published definition", "design:read", { parameters: [{ name: "object", in: "path", required: true, schema: { type: "string" } }] }) },
             "/scripts/{name}": { get: op("A published script's source", "design:read", { parameters: [{ name: "name", in: "path", required: true, schema: { type: "string" } }] }) },
             "/changes": {
                 get: op("Change requests, newest first", "design:read"),
-                post: op("Start a change request for one object, service, connection, transaction, screen or flow: edit a live one (its body is the draft) or create one", "design:draft", body({ object: { type: "string" }, service: { type: "string" }, connection: { type: "string" }, flow: { type: "string" }, transaction: { type: "string" }, screen: { type: "string" }, organization: { type: "boolean" }, label: { type: "string" } })),
+                post: op("Start a change request for one object, service, connection, transaction, screen, flow, report layout or named query: edit a live one (its body is the draft) or create one", "design:draft", body({ object: { type: "string" }, service: { type: "string" }, connection: { type: "string" }, flow: { type: "string" }, transaction: { type: "string" }, screen: { type: "string" }, layout: { type: "string" }, query: { type: "string" }, organization: { type: "boolean" }, label: { type: "string" } })),
             },
             "/model": { get: op("Every published design as one model file, to carry to another installation: designs only (no records, secrets, people or history)", "design:read") },
             "/model/preview": { post: op("What a model file would change here, nothing written: each design new, changed or the same; roles; problems; what this installation lacks", "design:read", body({ file: { type: "object" } })) },
             "/model/changes": { post: op("Start one change request holding every design of a model file that is new or different here", "design:draft", body({ file: { type: "object" } })) },
             "/changes/{id}": {
                 get: op("A change request: its draft, problems, footprint, approval route and AI edits", "design:read", { parameters: id }),
-                put: op("Save the draft (design stage only): whole definitions, services, connections and transactions, and scripts; one set to null is dropped from the change", "design:draft", { parameters: id, ...body({ title: { type: "string" }, reason: { type: "string" }, definitions: { type: "object" }, scripts: { type: "object" }, services: { type: "object" }, connections: { type: "object" }, transactions: { type: "object" }, screens: { type: "object" }, flows: { type: "object" }, layouts: { type: "object" }, organization: { type: "object" } }) }),
+                put: op("Save the draft (design stage only): whole definitions, services, connections and transactions, and scripts; one set to null is dropped from the change", "design:draft", { parameters: id, ...body({ title: { type: "string" }, reason: { type: "string" }, definitions: { type: "object" }, scripts: { type: "object" }, services: { type: "object" }, connections: { type: "object" }, transactions: { type: "object" }, screens: { type: "object" }, flows: { type: "object" }, layouts: { type: "object" }, queries: { type: "object" }, organization: { type: "object" } }) }),
             },
             "/changes/{id}/include": { post: op("Bring a live object, transaction, screen, flow, service or connection into the change, to change it with the rest: one review, one approval per department, executed all or nothing", "design:draft", { parameters: id, ...body({ kind: { type: "string", enum: ["object", "transaction", "screen", "flow", "layout", "service", "connection"] }, name: { type: "string" } }) }) },
             "/changes/{id}/fitness": { post: op("Run the fitness test on the draft (what submitting runs): failures, warnings, access changes", "design:read", { parameters: id }) },
             "/changes/{id}/submit": { post: op("Submit the change for review (a person usually does this)", "design:submit", { parameters: id }) },
-            "/validate": { post: op("Validate a draft without saving it: problems, footprint and approval route", "design:read", body({ definitions: { type: "object" }, scripts: { type: "object" }, services: { type: "object" }, connections: { type: "object" }, transactions: { type: "object" }, screens: { type: "object" }, flows: { type: "object" }, layouts: { type: "object" } })) },
+            "/validate": { post: op("Validate a draft without saving it: problems, footprint and approval route", "design:read", body({ definitions: { type: "object" }, scripts: { type: "object" }, services: { type: "object" }, connections: { type: "object" }, transactions: { type: "object" }, screens: { type: "object" }, flows: { type: "object" }, layouts: { type: "object" }, queries: { type: "object" } })) },
             "/flows/{name}": { get: op("One published flow (§32), and in plain words", "design:read", { parameters: [{ name: "name", in: "path", required: true, schema: { type: "string" } }] }) },
             "/flows/check": { post: op("Check a flow: problems by node and edge, and what is missing to run it", "design:read", body({ id: { type: "string" }, name: { type: "string" }, flow: { type: "object" }, definitions: { type: "object" } })) },
             "/flows/layout": { post: op("Place a flow's nodes so it reads on the canvas", "design:read", body({ flow: { type: "object" } })) },
@@ -166,6 +169,8 @@ export function aiApi({ store, services, tokens, log = console, origin = "", inv
         // A published contract by name (docs/contracts, §31): its specification and schema.
         ["GET", /^\/contracts\/([a-z][a-z0-9-]{0,47})$/, use("get_contract", ([name]) => ({ name }))],
         ["GET", /^\/catalog$/, use("get_catalog", () => ({}))],
+        // The installed suites, their versions, guides and packs, and what live designs need of them (§29.10).
+        ["GET", /^\/suites$/, use("get_suites", () => ({}))],
         ["GET", /^\/objects\/([a-z][a-z0-9_]{0,47})$/, use("get_object", ([object]) => ({ object }))],
         ["GET", /^\/scripts\/([a-z][a-z0-9_]{0,47})$/, use("get_script", ([name]) => ({ name }))],
         ["GET", /^\/changes$/, use("list_changes", () => ({}))],
@@ -173,7 +178,7 @@ export function aiApi({ store, services, tokens, log = console, origin = "", inv
         ["GET", /^\/model$/, use("export_model", () => ({}))],
         ["POST", /^\/model\/preview$/, use("preview_model_file", (_, body) => ({ file: body.file }))],
         ["POST", /^\/model\/changes$/, use("start_change_from_model_file", (_, body) => ({ file: body.file }))],
-        ["POST", /^\/changes$/, use("start_change", (_, body) => ({ object: body.object, service: body.service, connection: body.connection, transaction: body.transaction, screen: body.screen, flow: body.flow, layout: body.layout, element: body.element, kind: body.kind, organization: body.organization, label: body.label, from: body.from }))],
+        ["POST", /^\/changes$/, use("start_change", (_, body) => ({ object: body.object, service: body.service, connection: body.connection, transaction: body.transaction, screen: body.screen, flow: body.flow, layout: body.layout, query: body.query, element: body.element, kind: body.kind, organization: body.organization, label: body.label, from: body.from }))],
         // Flows (§32): read, check, lay out, explain; an input flow walked (§32.13).
         ["GET", /^\/flows\/([a-z][a-z0-9_]{0,47})$/, use("get_flow", ([name]) => ({ name }))],
         ["POST", /^\/flows\/check$/, use("check_flow", (_, body) => body)],

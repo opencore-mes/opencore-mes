@@ -4,6 +4,9 @@
 //                 departments, their approval steps and roles on the designer and the query page, and
 //                 no objects, scripts, transactions, screens or records; every model is designed from
 //                 nothing, through the change lifecycle. SEED_BLANK=1 is the same.
+//   --empty       a plant's own new installation: nobody and nothing (no people, departments or roles), only
+//                 the platform's built-ins. Nobody can sign in until IT names the first administrator:
+//                 `opencore-mes admin <id> "<name>"` (db/admin.mjs). SEED_EMPTY=1 is the same.
 //   SEED_VOLUME   that many more records for a demo (seed.mjs volume(): lots over more work orders);
 //                 none unless set.
 //   SEED_GUEST    1: a public demo's guest, holding every role (guest.mjs; the demo opens as it)
@@ -17,44 +20,60 @@
 //                 is applied once they are published, as a change from the pack would.
 //   SUITES_DIR    where the installed suites are (default suites/): a test's fixtures
 import pg from "pg";
-import { fromPg } from "../../../src/server/db.js";
+import { fromPg } from "@opencore-mes/juris-kit/server/db.js";
 import { appendAudit } from "../server/audit.js";
 import { checkScript } from "../server/rules.js";
 import { rebuildIntervals } from "../server/analytics.js";
 import { migrate } from "./migrate.mjs";
 import { loadSchema } from "./schema-load.mjs";
 import { loadSuites } from "../suites.mjs";
-import { extendedBody } from "../server/packs.js";
+import { extendedBody, keepPackFiles, forInstalled } from "../server/packs.js";
 import * as seed from "./seed.mjs";
 import { adoptRuns } from "../server/flows.js";
 import { sessionKey } from "../server/store.js";
+import { sealEverything } from "../server/integrity.js";
+import { parseEnv } from "node:util";
+import { readFileSync } from "node:fs";
 
-const blank = process.argv.includes("--blank") || process.env.SEED_BLANK === "1";
+const empty = process.argv.includes("--empty") || process.env.SEED_EMPTY === "1";
+const blank = empty || process.argv.includes("--blank") || process.env.SEED_BLANK === "1";
 const withSuites = process.argv.includes("--suites") || process.env.SEED_SUITES === "1";
 // The suites installed: under suites/, or SUITES_DIR (a test's fixtures).
 const installed = () => loadSuites(process.env.SUITES_DIR ? { dir: process.env.SUITES_DIR } : {});
-const { users, groups, representatives, stepLabels } = seed;
+// An empty installation has nobody: the first administrator is named by IT afterwards (db/admin.mjs).
+const { users, groups: seedGroups, representatives, stepLabels } = empty ? { users: [], groups: [], representatives: [], stepLabels: {} } : seed;
+// The seed's groups, and those the suites' packs bring (below).
+const groups = [...seedGroups];
 const { definitions, scripts, records, transactions, screens, flows: seedFlows, layouts: seedLayouts } = blank
     ? { definitions: [], scripts: {}, records: [], transactions: [], screens: [], flows: [], layouts: [] }
     : { ...seed, records: [...seed.records, ...seed.volume(Number(process.env.SEED_VOLUME ?? 0))] };
 // Roles on objects that exist: blank, only those on the designer and the query page.
 const modelled = new Set(seed.definitions.map((d) => d.object));
-const assignments = blank ? seed.assignments.filter(([, , object]) => !modelled.has(object)) : [...seed.assignments];
+const assignments = empty ? [] : blank ? seed.assignments.filter(([, , object]) => !modelled.has(object)) : [...seed.assignments];
+if (empty && (withSuites || process.env.SEED_GUEST === "1")) {
+    console.error("--empty makes a plant's own installation, with nobody in it: the suites' sample packs and a demo's guests need the seed's people. Leave out --suites and SEED_GUEST.");
+    process.exit(2);
+}
 
 // The suites' design packs (§29.6), after the core's seed: their designs and the roles they suggest
 // (for the seed's groups and people); their records afterwards, through the services (below).
-const tests = {};
+const tests = { ...(seed.tests ?? {}) };
 const flows = [...seedFlows];
 const layouts = [...seedLayouts];
 // Design elements of the suites' own kinds (§30.11), from their packs.
 const elements = [];
+// Their named queries (§23.1): a reference's choices, a screen's tables and charts read them.
+const queries = [];
 const sets = [];
 const withSamples = [];
+const packFileSets = [];
+const packCertifications = {};
 const extensions = [];
 if (withSuites) {
     const subjects = new Set([...groups.map((g) => `group:${g.id}`), ...users.map((u) => `user:${u.id}`)]);
     for (const suite of (await installed()).filter((x) => x.designs)) {
-        const pack = suite.designs;
+        // As offered here: what it brings only with another suite, only where that one is installed (§29.6).
+        const pack = forInstalled(suite.designs, (await installed()).map((x) => x.name));
         const key = (k) => `${suite.name}/${k}`;
         definitions.push(...(pack.definitions ?? []));
         Object.assign(scripts, pack.scripts ?? {});
@@ -63,16 +82,33 @@ if (withSuites) {
         flows.push(...(pack.flows ?? []));
         layouts.push(...(pack.layouts ?? []));
         elements.push(...(pack.elements ?? []));
+        queries.push(...(pack.queries ?? []));
         screens.push(...(pack.screens ?? []));
+        // The groups it brings that the seed lacks (§29.6), empty as a change from it makes them, so the
+        // roles it suggests to them hold.
+        // On a seed (a demo, a suite's development instance) the seed's people it names fill it (seedMembers), so its
+        // screens can be used at once; a plant's change from the pack never takes them.
+        for (const [id, g] of Object.entries(pack.groups ?? {})) if (!subjects.has(`group:${id}`)) { groups.push({ id, name: g.name, kind: "group", members: (g.seedMembers ?? []).filter((m) => users.some((u) => u.id === m)) }); subjects.add(`group:${id}`); }
         for (const [object, roles] of Object.entries(pack.roles ?? {})) {
             for (const [role, list] of Object.entries(roles)) for (const subject of list) if (subjects.has(subject)) assignments.push([...subject.split(":"), object, role]);
         }
         for (const [object, ext] of Object.entries(pack.extends ?? {})) extensions.push({ object, ext, suite: suite.name, label: pack.suite ?? pack.label });
         if ((pack.records ?? []).length) withSamples.push(suite.name);
+        packFileSets.push([suite.name, pack.$files ?? []]);
+        // The certifications its designs require (§27.9), listed by the organization as a change would.
+        Object.assign(packCertifications, Object.fromEntries(Object.entries(pack.certifications ?? {}).map(([id, c]) => [id, { name: c.name, ...(c.description ? { description: c.description } : {}) }])));
         console.log(`suite ${suite.name}: ${pack.label} ${pack.version} seeded`);
     }
 }
 
+// The seals are made with the key the server will check them with (§7.7): .env's INTEGRITY_KEY, as `npm run
+// dev` reads it, unless one is given. Nothing else is taken from .env (never its DATABASE_URL).
+if (!process.env.INTEGRITY_KEY && !process.env.INTEGRITY_KEY_FILE) {
+    try {
+        const env = parseEnv(readFileSync(new URL("../../../.env", import.meta.url), "utf8"));
+        for (const k of ["INTEGRITY_KEY", "INTEGRITY_KEY_FILE"]) if (env[k]) process.env[k] = env[k];
+    } catch { /* no .env */ }
+}
 const url = process.env.DATABASE_URL ?? "postgres:///openmes_poc";
 const name = new URL(url.replace(/^postgres:\/\/\//, "postgres://localhost/")).pathname.slice(1);
 
@@ -82,6 +118,18 @@ await admin.connect();
 const exists = await admin.query("SELECT 1 FROM pg_database WHERE datname = $1", [name]);
 if (!exists.rowCount) await admin.query(`CREATE DATABASE "${name.replace(/"/g, "")}"`);
 await admin.end();
+// A database whose audit trail is protected (ops/db/protect-audit.sql) is a plant's own, in production: never
+// made again by a stray command. Its administrator undoes the protection by hand first, if it must be.
+if (exists.rowCount) {
+    const target = new pg.Client({ connectionString: url });
+    await target.connect();
+    const [{ kept }] = (await target.query("SELECT to_regclass('audit.audit_log') IS NOT NULL AS kept")).rows;
+    await target.end();
+    if (kept) {
+        console.error(`${name}'s audit trail is protected (ops/db/protect-audit.sql): a protected database is never reset. Nothing was changed.`);
+        process.exit(2);
+    }
+}
 
 const pool = new pg.Pool({ connectionString: url });
 const db = fromPg(pool);
@@ -139,8 +187,10 @@ for (const { object, ext, suite, label } of extensions) {
 for (const t of transactions) await db.query("INSERT INTO mes.transactions (name, version, status, body) VALUES ($1, 1, 'published', $2)", [t.name, JSON.stringify(t)]);
 // The organization's first version names its steps (§5.6).
 await db.query("UPDATE mes.organization SET body = jsonb_set(body, '{steps}', $1::jsonb) WHERE status = 'published'", [JSON.stringify(stepLabels)]);
+// …the certifications the suites' designs require (§27.9), beside the plant's own…
+if (Object.keys(packCertifications).length) await db.query("UPDATE mes.organization SET body = jsonb_set(body, '{certifications}', COALESCE(body->'certifications', '{}'::jsonb) || $1::jsonb) WHERE status = 'published'", [JSON.stringify(packCertifications)]);
 // …and who reads every record (§27.7).
-await db.query("UPDATE mes.organization SET body = jsonb_set(body, '{readers}', $1::jsonb) WHERE status = 'published'", [JSON.stringify(seed.readers ?? [])]);
+await db.query("UPDATE mes.organization SET body = jsonb_set(body, '{readers}', $1::jsonb) WHERE status = 'published'", [JSON.stringify(empty ? [] : seed.readers ?? [])]);
 // A public demo's guest (SEED_GUEST=1, guest.mjs): every role the objects published now declare, every
 // group and department; the demo opens as it (DEMO_AS=guest).
 if (process.env.SEED_GUEST === "1") {
@@ -148,6 +198,10 @@ if (process.env.SEED_GUEST === "1") {
     const g = await addGuest(db);
     console.log(`the demo's guests: ${g.roles} roles (the group Guests), approving for ${g.departments} departments`);
 }
+// The files the suites' designs name (§35.4: a screen's guide), in the file store before the screens.
+for (const [suite, files] of packFileSets) await keepPackFiles(db, files, `suite:${suite}`);
+// Named queries (§23.1), likewise: before the screens that read them.
+for (const q of queries) await db.query("INSERT INTO mes.queries (name, version, status, body) VALUES ($1, 1, 'published', $2)", [q.name, JSON.stringify(q)]);
 // Screens (§26), likewise.
 for (const sc of screens) await db.query("INSERT INTO mes.screens (name, version, status, body) VALUES ($1, 1, 'published', $2)", [sc.name, JSON.stringify(sc)]);
 // Report layouts (§34.5), likewise.
@@ -158,7 +212,11 @@ for (const e of elements) await db.query("INSERT INTO mes.elements (name, versio
 for (const f of flows) await db.query("INSERT INTO mes.flows (name, version, status, body) VALUES ($1, 1, 'published', $2)", [f.name, JSON.stringify(f)]);
 if (flows.length) await adoptRuns(db, { flows: new Map(flows.map((f) => [f.name, { version: 1, body: f }])), definitions: Object.fromEntries(definitions.map((d) => [d.object, d])) });
 
-console.log(`database ${name}: schema and ${blank ? `people${withSuites ? " and the suites' models" : " only (blank)"}` : "seed"} loaded (${definitions.length} objects, ${transactions.length} transactions, ${screens.length} screens, ${records.length} records, ${users.length} users)`);
+if (empty) console.log(`database ${name}: empty (the platform's built-ins only, nobody in it). Name the first administrator: opencore-mes admin <id> "<name>" (or node app/mes/db/admin.mjs)`);
+else console.log(`database ${name}: schema and ${blank ? `people${withSuites ? " and the suites' models" : " only (blank)"}` : "seed"} loaded (${definitions.length} objects, ${transactions.length} transactions, ${screens.length} screens, ${records.length} records, ${users.length} users)`);
+// The data integrity review's baseline (§7.7): what the seed wrote, sealed as it stands, the platform's own.
+// The suites' samples below go through the record services, sealed as they are written.
+await db.transaction((tx) => sealEverything(tx, "seed", { tripwire: true }));
 // The suites' sample records, through the record services as the seed's designer (design.samples): each
 // object's rules and policies apply, the routes take their lots up, and plans set off (§29.6).
 if (withSamples.length) {

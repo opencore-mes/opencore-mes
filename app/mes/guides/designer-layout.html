@@ -1,0 +1,134 @@
+<!-- The report layout editor's guide (DESIGN.md §33, §34.5, §34.6): a report layout in a change request,
+     tab by tab. Drawn through an allowlist: an element with data-highlight="<CSS selector>" outlines what
+     the selector finds in the change's window (layout-editor.js). -->
+<article data-title="The report layout editor">
+  <p>A <strong>report layout</strong> says which blocks an AI report has, in which order and how wide,
+  and what each is for. It holds no query: whoever asks the analytics copilot for a report picks the
+  layout, and the copilot fills each block from what that person may read. On a live design, or a change
+  you may not edit, every control here is read only.</p>
+
+  <h3>Its tabs</h3>
+  <dl>
+    <dt data-highlight=".editor-head .subtabs">The tabs</dt>
+    <dd>General opens first. Click a tab to see its settings; the open one is highlighted.</dd>
+    <dt data-highlight=".editor-head .tab-diff">A number on a tab</dt>
+    <dd>How many things on that tab differ from the live version. On Changes, the total.</dd>
+    <dt>Remove, and Undo</dt>
+    <dd>Every remove asks first. What is removed leaves this change only; nothing live changes until the
+    change executes, and Undo (<kbd>⌘Z</kbd> or <kbd>Ctrl+Z</kbd>) brings it back.</dd>
+  </dl>
+
+  <h3>Copilot</h3>
+  <dl>
+    <dt data-highlight=".copilot-log">The conversation</dt>
+    <dd>Ask the AI to draft, check or explain the layout. It works as you, saves into this draft, and never
+    submits. The conversation is kept with the change: it picks up here any time.</dd>
+    <dt data-highlight=".copilot-input textarea">Ask the copilot…</dt>
+    <dd>Type what you want. <kbd>⌘ Enter</kbd> or <kbd>Ctrl+Enter</kbd> sends; you can paste or drop a file
+    into the box.</dd>
+    <dt data-highlight=".copilot-input .att-btn">Attach</dt>
+    <dd>Adds a picture, a PDF, a CSV file or an Excel workbook (up to 5); × on a file takes it off.</dd>
+    <dt data-highlight=".copilot-buttons .btn.primary">Send</dt>
+    <dd>Saves your unsaved edits first, then sends. Greyed out while it works, or when no AI is set up.</dd>
+    <dt data-highlight=".copilot-buttons .btn.ghost">New conversation</dt>
+    <dd>Asks first, then deletes the conversation kept with this change. The draft stays as it is.</dd>
+  </dl>
+
+  <h3>Changes</h3>
+  <dl>
+    <dt data-highlight=".changes-view">The differences</dt>
+    <dd>What this change does to the layout against the live version, grouped by tab, block by block: how
+    many changed, were added and removed. Reviewers and approvers see the same.</dd>
+    <dt data-highlight=".changes-head .mini">Open …</dt>
+    <dd>Jumps to the tab where that group is edited.</dd>
+    <dt data-highlight=".change-item summary">A difference</dt>
+    <dd>Marked new, changed or removed; click it to open or close it. Lines marked − are the live version's,
+    lines marked + the draft's.</dd>
+  </dl>
+
+  <h3>General</h3>
+  <dl>
+    <dt data-highlight=".ed-grid > .ed-field:nth-child(1)">Name</dt>
+    <dd>Fixed once created.</dd>
+    <dt data-highlight=".ed-grid > .ed-field:nth-child(2)">Label</dt>
+    <dd>A text field: what the person asking for a report picks it by.</dd>
+    <dt data-highlight=".ed-grid > .ed-field:nth-child(3)">Description</dt>
+    <dd>A text box: what the layout is for, shown under it when it is picked.</dd>
+    <dt data-highlight=".ed-grid > .ed-field:nth-child(4)">Type</dt>
+    <dd>A drop-down: <em>A report</em> on the plant, or <em>An AI assisted line</em>, about the equipment you
+    pick here: the copilot says which lots to process, and in which order, to meet the goal. For another
+    line, copy the layout from the Report layouts tab and pick that line's equipment.</dd>
+    <dt data-highlight=".ed-grid > .ed-row">Records of</dt>
+    <dd>For a line: a drop-down of the object whose records make up the line (its equipment). Changing it
+    clears the records picked.</dd>
+    <dt data-highlight=".ed-grid .scope-pick">Which</dt>
+    <dd>The records picked, as chips, at most 50, each by what people call it. Type in the box to find
+    them, then click <em>+ name</em> to add one (the list stays, for the next); or type a name in full and
+    press Enter. × on a chip removes it.</dd>
+    <dt data-highlight="[placeholder^='Meet this shift']">The goal</dt>
+    <dd>A text box: what is to be achieved with those records, and where the targets are found if they are
+    data. Required for a line.</dd>
+    <dt data-highlight="[placeholder^='The period it covers']">Guidance for the copilot</dt>
+    <dd>A text box: words the copilot is given about the whole report, such as the period it covers, what to
+    lead with and how to name things.</dd>
+  </dl>
+
+  <h3>Blocks</h3>
+  <dl>
+    <dt data-highlight=".screen-card">A block</dt>
+    <dd>One card per block, in reading order: at least one, at most 12. A report drawn on the layout has
+    exactly these blocks. A card new or changed in this change is marked at its left edge.</dd>
+    <dt data-highlight=".screen-card legend">Its number and kind</dt>
+    <dd>Where it comes in the report, and what it is.</dd>
+    <dt data-highlight="button[title='Earlier'], button[title='Later']">Earlier, Later</dt>
+    <dd>The arrows move it up or down one place.</dd>
+    <dt data-highlight=".screen-card legend .linkish[title]">copy</dt>
+    <dd>Puts a copy just below it: for an AI assisted line, the same block for another set of records.</dd>
+    <dt data-highlight=".screen-card legend .linkish:not([title])">remove</dt>
+    <dd>Takes the block out, after asking. Not shown on the last one left.</dd>
+    <dt data-highlight=".screen-card > div:first-of-type > .ed-field:nth-child(1)">Kind</dt>
+    <dd>A drop-down: text (the copilot's words), a figure (one number), a chart, a table, or an AI assisted
+    line (advice on a set of records).</dd>
+    <dt data-highlight=".screen-card > div:first-of-type > .ed-field:nth-child(2)">Width</dt>
+    <dd>A drop-down: a quarter of the page, a third, half, or the whole row. A narrow screen gives it more.</dd>
+    <dt data-highlight=".screen-card > div:first-of-type > .ed-field:nth-child(3)">Chart</dt>
+    <dd>For a chart: <em>the copilot chooses</em> the kind that answers the question, or pick one (bar, line,
+    pie, Pareto…) to fix it. Its hint says what that kind is for.</dd>
+    <dt data-highlight=".screen-card > label:first-of-type">Title</dt>
+    <dd>A text field: kept as written on every report. Empty, the copilot titles it.</dd>
+    <dt data-highlight=".screen-card > div:nth-of-type(2), .screen-card .scope-pick">Records of, Which</dt>
+    <dd>For an AI assisted line block: the object and its records the block is about, picked as on General.</dd>
+    <dt data-highlight=".screen-card [placeholder^='Meet this shift']">The goal</dt>
+    <dd>For an AI assisted line block: what is to be achieved with its records.</dd>
+    <dt data-highlight=".screen-card > label:last-of-type">What belongs here</dt>
+    <dd>A text box, said to the copilot and shown to the person picking the layout: what, over which period,
+    in which order. The copilot writes the query.</dd>
+    <dt data-highlight="select.add-block">+ add a block</dt>
+    <dd>A drop-down: pick a kind to add a block of it at the end, at that kind's usual width.</dd>
+  </dl>
+
+  <h3>Preview</h3>
+  <dl>
+    <dt data-highlight=".rep-sketch">The page</dt>
+    <dd>How a report drawn on it is laid out: each block where it will be and as wide, with its number, kind,
+    title, records, goal and what belongs there. Its content is the copilot's.</dd>
+    <dt data-highlight=".rep-place">A place</dt>
+    <dd>One block's place. Change it on Blocks.</dd>
+  </dl>
+
+  <h3>Stewards</h3>
+  <dl>
+    <dt data-highlight=".editor > div > .checks">Departments</dt>
+    <dd>Tick each department that approves every change to it. At least one is needed. A layout reads and
+    writes nothing: a report drawn on it is read by each person with their own rights.</dd>
+  </dl>
+
+  <h3>JSON</h3>
+  <dl>
+    <dt data-highlight=".editor > div > .code-editor">The layout as JSON</dt>
+    <dd>All of it as data. Edit it here, then apply it.</dd>
+    <dt data-highlight=".editor > div > .code-editor + .btn">Apply JSON</dt>
+    <dd>Replaces the draft with it; every check runs as on any other edit. Its name must stay the same; what
+    is wrong is said in red beside the change.</dd>
+  </dl>
+</article>
