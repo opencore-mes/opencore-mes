@@ -21,7 +21,7 @@
     "test:quick": "node tests/pipeline.mjs --quick"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.129.0",
+    "@anthropic-ai/sdk": "^0.131.0",
     "@opencore-mes/juris-kit": "^0.91.2",
     "echarts": "6.1.0",
     "pdfjs-dist": "6.4.299",
