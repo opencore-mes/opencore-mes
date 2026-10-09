@@ -25,6 +25,6 @@
     "@opencore-mes/juris-kit": "^0.91.2",
     "echarts": "6.1.0",
     "pdfjs-dist": "6.4.299",
-    "pg": "^8.13.0"
+    "pg": "^8.23.1"
   }
 }
